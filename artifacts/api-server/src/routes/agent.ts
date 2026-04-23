@@ -154,7 +154,12 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       messages: [{ role: "user", content: userMessage }],
     });
 
-    const raw = (completion.content[0] as { type: string; text: string }).text.trim();
+    const raw = (completion.content[0] as { type: string; text: string }).text
+      .trim()
+      .replace(/^```json\s*/i, "")
+      .replace(/^```\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
     agentResponse = JSON.parse(raw);
   } catch (err: unknown) {
     req.log.error({ err }, "Anthropic API call or JSON parse failed in agent/run");
