@@ -26,11 +26,15 @@ export async function assembleProfile(player_id) {
   ]);
 
   if (profileResult.error) {
-    throw new Error(`Failed to fetch player profile: ${profileResult.error.message}`);
+    const err = new Error(`Failed to fetch player profile: ${profileResult.error.message}`);
+    err.supabaseError = profileResult.error;
+    throw err;
   }
 
   if (attendanceResult.error) {
-    throw new Error(`Failed to fetch attendance history: ${attendanceResult.error.message}`);
+    const err = new Error(`Failed to fetch attendance history: ${attendanceResult.error.message}`);
+    err.supabaseError = attendanceResult.error;
+    throw err;
   }
 
   return {
