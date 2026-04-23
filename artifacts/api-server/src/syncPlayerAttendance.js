@@ -29,14 +29,20 @@ async function fetchPodPlayEvents(externalId) {
 
     const data = await res.json();
     const items = data.items ?? [];
+    const pagination = data._pagination ?? {};
+
+    console.log(
+      `[syncPlayerAttendance] PodPlay page=${page} | items_this_page=${items.length} | _pagination.page=${pagination.page} | _pagination.ipp=${pagination.ipp} | _pagination.count=${pagination.count} | _pagination.total=${pagination.total} | running_total=${allItems.length + items.length}`
+    );
+
     allItems.push(...items);
 
     // Paginate until we get fewer items than requested (last page)
-    // or until the page is empty
     if (items.length < IPP) break;
     page++;
   }
 
+  console.log(`[syncPlayerAttendance] Total events fetched from PodPlay for userId=${externalId}: ${allItems.length}`);
   return allItems;
 }
 
@@ -69,8 +75,14 @@ async function syncPlayer(player) {
 
   // Only insert past/completed events not already recorded
   const now = new Date();
-  const newRecords = events
-    .filter((e) => new Date(e.startTime) <= now && !existingIds.has(e.id))
+  const pastEvents = events.filter((e) => new Date(e.startTime) <= now);
+  const newEvents = pastEvents.filter((e) => !existingIds.has(e.id));
+
+  console.log(
+    `[syncPlayerAttendance] player=${player.id} | total_from_podplay=${events.length} | past_events=${pastEvents.length} | already_in_db=${existingIds.size} | new_to_insert=${newEvents.length}`
+  );
+
+  const newRecords = newEvents
     .map((e) => ({
       player_id: player.id,
       event_id: e.id,
