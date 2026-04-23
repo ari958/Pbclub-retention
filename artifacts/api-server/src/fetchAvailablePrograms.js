@@ -1,4 +1,5 @@
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
+const PODPLAY_WEB_BASE = "https://pbclub.podplay.app";
 
 const EXCLUDED_PROGRAM_TYPES = new Set(["Private Event", "Private", "Tournaments"]);
 
@@ -56,6 +57,7 @@ function formatProgram(event) {
     tags,
     spots_remaining,
     start_time: event.startTime ?? null,
+    signup_url: event.id ? `${PODPLAY_WEB_BASE}/events/${event.id}` : null,
   };
 }
 

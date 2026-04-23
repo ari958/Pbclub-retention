@@ -1,11 +1,26 @@
 import { Router, type IRouter } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { rateLimit } from "express-rate-limit";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
 // @ts-ignore — plain JS module
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
+
+const supabase = createClient(
+  process.env.SUPABASE_URL!,
+  process.env.SUPABASE_ANON_KEY!
+);
+
+/** Compute engagement state from last_visit_date without relying on Claude. */
+function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
+  if (!lastVisitDate) return "dormant";
+  const daysSince = (Date.now() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSince <= 14) return "active";
+  if (daysSince <= 30) return "lapsing";
+  return "dormant";
+}
 
 const agentRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -142,6 +157,28 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     ...new Set(sortedAttendance.map((a: any) => a.program_name).filter(Boolean)),
   ] as string[];
 
+  // Compute engagement state before calling Claude so we can store it on the conversation
+  const engagement_state = computeEngagementState(last_visit_date);
+
+  // Create conversation record before calling Claude
+  const { data: conversationData, error: conversationError } = await supabase
+    .from("conversations")
+    .insert({
+      player_id,
+      club_id: profile.club_id ?? null,
+      triggered_by: engagement_state,
+    })
+    .select("id")
+    .single();
+
+  if (conversationError) {
+    req.log.error({ err: conversationError }, "Failed to create conversation record");
+    res.status(500).json({ error: "Failed to create conversation", detail: conversationError.message });
+    return;
+  }
+
+  const conversation_id: string = conversationData.id;
+
   const playerProfileForAgent = {
     name: profile.name,
     skill_level: profile.skill_level ?? null,
@@ -154,7 +191,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   const userMessage = `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}\n\nAVAILABLE PROGRAMS:\n${JSON.stringify(available_programs, null, 2)}`;
 
-  let agentResponse;
+  let agentResponse: any;
   try {
     const completion = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
@@ -177,7 +214,39 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     return;
   }
 
-  res.json(agentResponse);
+  // Resolve signup_url for the first recommended program
+  const firstRecommendedName: string | undefined = agentResponse.recommended_programs?.[0];
+  const matchedProgram = firstRecommendedName
+    ? available_programs.find((p: any) => p.name === firstRecommendedName)
+    : null;
+  const signup_url: string | null = matchedProgram?.signup_url ?? null;
+
+  // Create message record linked to this conversation
+  const { data: messageData, error: messageError } = await supabase
+    .from("messages")
+    .insert({
+      conversation_id,
+      body: agentResponse.message,
+      direction: "outbound",
+      sent_by: "agent",
+      signup_url,
+    })
+    .select("id")
+    .single();
+
+  if (messageError) {
+    req.log.error({ err: messageError }, "Failed to create message record");
+    res.status(500).json({ error: "Failed to create message", detail: messageError.message });
+    return;
+  }
+
+  const message_id: string = messageData.id;
+
+  res.json({
+    conversation_id,
+    message_id,
+    ...agentResponse,
+  });
 });
 
 export default router;
