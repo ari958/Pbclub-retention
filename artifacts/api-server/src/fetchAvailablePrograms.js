@@ -2,6 +2,29 @@ const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
 const EXCLUDED_PROGRAM_TYPES = new Set(["Private Event", "Private", "Tournaments"]);
 
+const SKILL_LEVEL_TAGS = [
+  "Beginner",
+  "Advanced Beginner",
+  "Low Intermediate",
+  "Intermediate",
+  "Advanced Intermediate",
+  "All Levels",
+  "All Level",
+];
+
+/**
+ * Extract a skill level from a tags array by matching against known level keywords.
+ * @param {string[]} tags
+ * @returns {string|null}
+ */
+function extractSkillLevel(tags) {
+  if (!Array.isArray(tags)) return null;
+  for (const level of SKILL_LEVEL_TAGS) {
+    if (tags.includes(level)) return level;
+  }
+  return null;
+}
+
 /**
  * Format a raw PodPlay event into the available_programs shape the agent expects.
  * @param {object} event
@@ -13,17 +36,24 @@ function formatProgram(event) {
     rate && typeof rate === "object"
       ? (rate.regular ?? rate.member ?? null)
       : null;
+  const price_member =
+    rate && typeof rate === "object" ? (rate.member ?? null) : null;
 
   const capacity = event.guests?.max ?? null;
   const currentSignups = event.signups?._total ?? 0;
   const spots_remaining =
     capacity != null && capacity > 0 ? Math.max(0, capacity - currentSignups) : null;
 
+  const tags = Array.isArray(event.tags) ? event.tags : [];
+
   return {
     name: event.name,
     description: event.description?.trim() || null,
     program_type: event.customType ?? event.type ?? null,
     price,
+    price_member,
+    skill_level: extractSkillLevel(tags),
+    tags,
     spots_remaining,
     start_time: event.startTime ?? null,
   };
@@ -43,7 +73,7 @@ function formatProgram(event) {
  *
  * Deduplicates by program name, keeping the earliest upcoming instance.
  *
- * @returns {Promise<Array<{name: string, description: string|null, program_type: string|null, price: number|null, spots_remaining: number|null, start_time: string|null}>>}
+ * @returns {Promise<Array<{name: string, description: string|null, program_type: string|null, price: number|null, price_member: number|null, skill_level: string|null, tags: string[], spots_remaining: number|null, start_time: string|null}>>}
  */
 export async function fetchAvailablePrograms() {
   const res = await fetch(`${PODPLAY_BASE}/events`, {
