@@ -19,10 +19,10 @@ export async function assembleProfile(player_id) {
       .single(),
 
     supabase
-      .from("attendance")
+      .from("attendances")
       .select("*")
       .eq("player_id", player_id)
-      .order("date", { ascending: true }),
+      .order("attended_at", { ascending: true }),
   ]);
 
   if (profileResult.error) {
