@@ -139,7 +139,7 @@ router.post("/agent/run", async (req, res) => {
   let agentResponse;
   try {
     const completion = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+      model: "claude-sonnet-4-5-20251001",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
