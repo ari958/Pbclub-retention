@@ -10,6 +10,10 @@ router.get("/players/:id/profile", async (req, res) => {
     res.json(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    if (message.includes("JSON object requested, multiple (or no) rows returned")) {
+      res.status(404).json({ error: "Player not found" });
+      return;
+    }
     req.log.error({ err }, "Failed to assemble player profile");
     res.status(500).json({ error: message });
   }
