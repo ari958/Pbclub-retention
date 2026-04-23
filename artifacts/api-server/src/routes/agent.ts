@@ -148,7 +148,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   let agentResponse;
   try {
     const completion = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20251001",
+      model: "claude-sonnet-4-6",
       max_tokens: 1024,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
