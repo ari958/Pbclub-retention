@@ -1,7 +1,20 @@
 import { Router, type IRouter } from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import { z } from "zod";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
+
+const ProgramSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  price: z.number().optional(),
+  spots_remaining: z.number().optional(),
+});
+
+const AgentRunSchema = z.object({
+  player_id: z.string().min(1, "player_id is required"),
+  available_programs: z.array(ProgramSchema).min(1, "available_programs must be a non-empty array"),
+});
 
 const router: IRouter = Router();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -72,12 +85,15 @@ Return only a valid JSON object. No preamble, no explanation outside the JSON.
 }`;
 
 router.post("/agent/run", async (req, res) => {
-  const { player_id, available_programs } = req.body;
-
-  if (!player_id || !Array.isArray(available_programs)) {
-    res.status(400).json({ error: "player_id and available_programs (array) are required" });
+  const parsed = AgentRunSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Invalid request body",
+      issues: parsed.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
+    });
     return;
   }
+  const { player_id, available_programs } = parsed.data;
 
   let assembled;
   try {
