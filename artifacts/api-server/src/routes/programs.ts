@@ -4,7 +4,7 @@ import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 
 const router: IRouter = Router();
 
-router.get("/api/programs", async (req, res) => {
+router.get("/programs", async (req, res) => {
   try {
     const programs = await fetchAvailablePrograms();
     res.json({ count: programs.length, programs });
