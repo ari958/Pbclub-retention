@@ -4,6 +4,8 @@ import { z } from "zod";
 import { rateLimit } from "express-rate-limit";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
+// @ts-ignore — plain JS module
+import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 
 const agentRateLimit = rateLimit({
   windowMs: 60 * 1000,
@@ -13,16 +15,8 @@ const agentRateLimit = rateLimit({
   message: { error: "Too many requests. Please wait a moment and try again." },
 });
 
-const ProgramSchema = z.object({
-  name: z.string(),
-  description: z.string().optional(),
-  price: z.number().optional(),
-  spots_remaining: z.number().optional(),
-});
-
 const AgentRunSchema = z.object({
   player_id: z.string().min(1, "player_id is required"),
-  available_programs: z.array(ProgramSchema).min(1, "available_programs must be a non-empty array"),
 });
 
 const router: IRouter = Router();
@@ -102,17 +96,27 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     });
     return;
   }
-  const { player_id, available_programs } = parsed.data;
+  const { player_id } = parsed.data;
 
-  let assembled;
+  // Fetch player profile and live programs in parallel
+  let assembled: any;
+  let available_programs: any[];
   try {
-    assembled = await assembleProfile(player_id);
+    [assembled, available_programs] = await Promise.all([
+      assembleProfile(player_id),
+      fetchAvailablePrograms(),
+    ]);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     const supabaseError = (err as any)?.supabaseError;
     req.log.error(
-      { err, supabase: supabaseError ? { message: supabaseError.message, code: supabaseError.code, hint: supabaseError.hint, details: supabaseError.details } : undefined },
-      "assembleProfile failed in agent/run",
+      {
+        err,
+        supabase: supabaseError
+          ? { message: supabaseError.message, code: supabaseError.code, hint: supabaseError.hint, details: supabaseError.details }
+          : undefined,
+      },
+      "Data fetch failed in agent/run",
     );
     if (supabaseError?.code === "PGRST116" || message.includes("JSON object requested, multiple (or no) rows returned")) {
       res.status(404).json({ error: "Player not found" });

@@ -9,16 +9,15 @@ const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
 /**
  * Fetch events for a PodPlay user ID.
- * Returns all events the player has signed up for.
- * @param {string} podplayUserId
+ * @param {string} externalId - PodPlay user ID (stored as external_id on players)
  * @returns {Promise<object[]>}
  */
-async function fetchPodPlayEvents(podplayUserId) {
-  const res = await fetch(`${PODPLAY_BASE}/events?userId=${encodeURIComponent(podplayUserId)}`, {
+async function fetchPodPlayEvents(externalId) {
+  const res = await fetch(`${PODPLAY_BASE}/events?userId=${encodeURIComponent(externalId)}`, {
     headers: { "x-api-key": process.env.PODPLAY_API_KEY },
   });
   if (!res.ok) {
-    throw new Error(`PodPlay /events?userId=${podplayUserId} returned ${res.status}`);
+    throw new Error(`PodPlay /events?userId=${externalId} returned ${res.status}`);
   }
   const data = await res.json();
   return data.items ?? [];
@@ -26,15 +25,14 @@ async function fetchPodPlayEvents(podplayUserId) {
 
 /**
  * Sync attendance records for a single player.
- * Inserts any events not already in the attendances table.
+ * Inserts any past events not already in the attendances table.
  * Updates last_visit_date on the player row.
  *
- * @param {object} player - Row from the players table.
- *   Must have: id (Supabase UUID), podplay_id (PodPlay user ID string)
+ * @param {object} player - Must have: id (Supabase UUID), external_id (PodPlay user ID)
  * @returns {Promise<{ inserted: number, skipped: number, lastVisitDate: string|null }>}
  */
 async function syncPlayer(player) {
-  const events = await fetchPodPlayEvents(player.podplay_id);
+  const events = await fetchPodPlayEvents(player.external_id);
 
   if (events.length === 0) {
     return { inserted: 0, skipped: 0, lastVisitDate: null };
@@ -52,7 +50,7 @@ async function syncPlayer(player) {
 
   const existingIds = new Set((existing ?? []).map((r) => r.event_id));
 
-  // Build new records — only past/ongoing events (startTime <= now)
+  // Only insert past/completed events not already recorded
   const now = new Date();
   const newRecords = events
     .filter((e) => new Date(e.startTime) <= now && !existingIds.has(e.id))
@@ -96,11 +94,23 @@ async function syncPlayer(player) {
     }
   }
 
-  return { inserted, skipped: newRecords.length === 0 ? events.length : 0, lastVisitDate };
+  return { inserted, skipped: existingIds.size, lastVisitDate };
 }
 
 /**
- * Nightly sync: fetches all players with a podplay_id from Supabase,
+ * Sync a single player by their Supabase ID and PodPlay external_id.
+ * Used for manual/on-demand triggers (e.g. the POST /api/sync/player route).
+ *
+ * @param {string} playerId - Supabase player UUID
+ * @param {string} externalId - PodPlay user ID
+ * @returns {Promise<{ inserted: number, skipped: number, lastVisitDate: string|null }>}
+ */
+export async function syncSinglePlayer(playerId, externalId) {
+  return syncPlayer({ id: playerId, external_id: externalId });
+}
+
+/**
+ * Nightly sync: fetches all players with an external_id from Supabase,
  * syncs their attendance from PodPlay, and updates last_visit_date.
  *
  * @returns {Promise<{ playersProcessed: number, totalInserted: number, errors: object[] }>}
@@ -108,15 +118,15 @@ async function syncPlayer(player) {
 export async function syncPlayerAttendance() {
   const { data: players, error: playersErr } = await supabase
     .from("players")
-    .select("id, podplay_id")
-    .not("podplay_id", "is", null);
+    .select("id, external_id")
+    .not("external_id", "is", null);
 
   if (playersErr) {
     throw new Error(`Failed to fetch players: ${playersErr.message}`);
   }
 
   if (!players || players.length === 0) {
-    console.log("No players with a podplay_id found — nothing to sync.");
+    console.log("No players with an external_id found — nothing to sync.");
     return { playersProcessed: 0, totalInserted: 0, errors: [] };
   }
 
