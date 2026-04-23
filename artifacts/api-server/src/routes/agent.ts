@@ -62,7 +62,7 @@ YOUR TASK
 ---
 
 MESSAGE RULES
-- 1–3 sentences maximum
+- 1–3 sentences maximum. Keep messages under 2 sentences where possible. One clear ask at the end.
 - Lead with something specific to this person — their history, current level, or a natural continuation
 - Name the program and give one concrete reason it fits them
 - End with a soft open question or a single clear action — never pressure
@@ -73,6 +73,11 @@ MESSAGE RULES
 - Never offer discounts or deals unless explicitly instructed
 - Never follow up more than once if there is no reply
 - Never use filler phrases: "Hope you're doing well", "Just wanted to reach out", "Touching base", "Checking in", "Don't miss out"
+- Never use phrases like "we've noticed", "we see", "we've observed", or any language that implies the club is monitoring the player
+- Write like a person who genuinely knows this player and is excited for them — not like a system reporting observations back
+- Never tell a player they belong somewhere, are ready for something, or validate their level. They know where they are. Just meet them there.
+- Never infer progression readiness from programs attended. Enrollment and attendance are data only — they do not indicate whether a player is ready to advance or belongs at a given level.
+- Only the progression_status field determines progression routing. A player who attended an advanced program may still be "developing" or "at-ceiling" — the coach assessment is the only source of truth.
 
 ---
 
