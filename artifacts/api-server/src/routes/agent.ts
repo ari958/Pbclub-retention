@@ -1,8 +1,17 @@
 import { Router, type IRouter } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { rateLimit } from "express-rate-limit";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
+
+const agentRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 20,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: "Too many requests. Please wait a moment and try again." },
+});
 
 const ProgramSchema = z.object({
   name: z.string(),
@@ -84,7 +93,7 @@ Return only a valid JSON object. No preamble, no explanation outside the JSON.
   "reasoning": "1–2 sentences explaining why you selected these programs for this player"
 }`;
 
-router.post("/agent/run", async (req, res) => {
+router.post("/agent/run", agentRateLimit, async (req, res) => {
   const parsed = AgentRunSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
