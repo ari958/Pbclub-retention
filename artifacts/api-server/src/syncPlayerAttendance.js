@@ -98,7 +98,7 @@ async function syncPlayer(player) {
       event_id: e.id,
       program_name: e.name,
       attended_at: e.startTime,
-      event_type: e.customType ?? e.type ?? null,
+      program_type: e.customType ?? e.type ?? null,
     }));
 
   let inserted = 0;
