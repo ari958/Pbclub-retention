@@ -8,8 +8,9 @@ const supabase = createClient(
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
 /**
- * Fetch ALL events for a PodPlay user ID, paginating until exhausted.
- * @param {string} externalId - PodPlay user ID (stored as external_id on players)
+ * Fetch ALL past events for a PodPlay user ID using startTime/endTime range,
+ * paginating until exhausted.
+ * @param {string} externalId - PodPlay user ID
  * @returns {Promise<object[]>}
  */
 async function fetchPodPlayEvents(externalId) {
@@ -17,14 +18,24 @@ async function fetchPodPlayEvents(externalId) {
   const IPP = 100;
   let page = 1;
 
+  // Fetch from the beginning of recorded time up to right now
+  const endTime = new Date().toISOString();
+  const startTime = "2020-01-01T00:00:00.000Z";
+
   while (true) {
-    const url = `${PODPLAY_BASE}/events?userId=${encodeURIComponent(externalId)}&page=${page}&ipp=${IPP}`;
+    const url =
+      `${PODPLAY_BASE}/events` +
+      `?userId=${encodeURIComponent(externalId)}` +
+      `&startTime=${encodeURIComponent(startTime)}` +
+      `&endTime=${encodeURIComponent(endTime)}` +
+      `&page=${page}&ipp=${IPP}`;
+
     const res = await fetch(url, {
       headers: { "x-api-key": process.env.PODPLAY_API_KEY },
     });
 
     if (!res.ok) {
-      throw new Error(`PodPlay /events?userId=${externalId} page=${page} returned ${res.status}`);
+      throw new Error(`PodPlay /events userId=${externalId} page=${page} returned ${res.status}`);
     }
 
     const data = await res.json();
@@ -37,12 +48,11 @@ async function fetchPodPlayEvents(externalId) {
 
     allItems.push(...items);
 
-    // Paginate until we get fewer items than requested (last page)
     if (items.length < IPP) break;
     page++;
   }
 
-  console.log(`[syncPlayerAttendance] Total events fetched from PodPlay for userId=${externalId}: ${allItems.length}`);
+  console.log(`[syncPlayerAttendance] Total past events fetched from PodPlay for userId=${externalId}: ${allItems.length}`);
   return allItems;
 }
 
