@@ -8,19 +8,36 @@ const supabase = createClient(
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
 /**
- * Fetch events for a PodPlay user ID.
+ * Fetch ALL events for a PodPlay user ID, paginating until exhausted.
  * @param {string} externalId - PodPlay user ID (stored as external_id on players)
  * @returns {Promise<object[]>}
  */
 async function fetchPodPlayEvents(externalId) {
-  const res = await fetch(`${PODPLAY_BASE}/events?userId=${encodeURIComponent(externalId)}`, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY },
-  });
-  if (!res.ok) {
-    throw new Error(`PodPlay /events?userId=${externalId} returned ${res.status}`);
+  const allItems = [];
+  const IPP = 100;
+  let page = 1;
+
+  while (true) {
+    const url = `${PODPLAY_BASE}/events?userId=${encodeURIComponent(externalId)}&page=${page}&ipp=${IPP}`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": process.env.PODPLAY_API_KEY },
+    });
+
+    if (!res.ok) {
+      throw new Error(`PodPlay /events?userId=${externalId} page=${page} returned ${res.status}`);
+    }
+
+    const data = await res.json();
+    const items = data.items ?? [];
+    allItems.push(...items);
+
+    // Paginate until we get fewer items than requested (last page)
+    // or until the page is empty
+    if (items.length < IPP) break;
+    page++;
   }
-  const data = await res.json();
-  return data.items ?? [];
+
+  return allItems;
 }
 
 /**
@@ -74,14 +91,20 @@ async function syncPlayer(player) {
     inserted = newRecords.length;
   }
 
-  // Determine last_visit_date from all past events (not just newly inserted)
-  const pastEvents = events.filter((e) => new Date(e.startTime) <= now);
-  const lastVisitDate =
-    pastEvents.length > 0
-      ? pastEvents.reduce((latest, e) =>
-          new Date(e.startTime) > new Date(latest.startTime) ? e : latest
-        ).startTime
-      : null;
+  // Determine last_visit_date by querying the max attended_at from all records
+  const { data: latestRow, error: maxErr } = await supabase
+    .from("attendances")
+    .select("attended_at")
+    .eq("player_id", player.id)
+    .order("attended_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (maxErr) {
+    throw new Error(`Failed to query max attended_at for player ${player.id}: ${maxErr.message}`);
+  }
+
+  const lastVisitDate = latestRow?.attended_at ?? null;
 
   if (lastVisitDate) {
     const { error: updateErr } = await supabase
