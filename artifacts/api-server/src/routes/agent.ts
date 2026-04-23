@@ -154,12 +154,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       messages: [{ role: "user", content: userMessage }],
     });
 
-    const raw = (completion.content[0] as { type: string; text: string }).text
-      .trim()
-      .replace(/^```json\s*/i, "")
-      .replace(/^```\s*/i, "")
-      .replace(/\s*```$/i, "")
-      .trim();
+    const text = (completion.content[0] as { type: string; text: string }).text;
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error("No JSON object found in Claude response");
+    }
+    const raw = text.slice(start, end + 1);
     agentResponse = JSON.parse(raw);
   } catch (err: unknown) {
     req.log.error({ err }, "Anthropic API call or JSON parse failed in agent/run");
