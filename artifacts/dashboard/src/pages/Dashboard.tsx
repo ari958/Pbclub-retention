@@ -177,6 +177,7 @@ function AtRiskPanel({ players, onRunAgent }: { players: Player[]; onRunAgent: (
   const [running, setRunning] = useState<string | null>(null);
 
   const handleRun = async (playerId: string) => {
+    console.log("handleRun called", playerId);
     setRunning(playerId);
     try {
       await onRunAgent(playerId);
@@ -246,7 +247,10 @@ function AtRiskPanel({ players, onRunAgent }: { players: Player[]; onRunAgent: (
                       label={isRunning ? "Running…" : "Run Agent"}
                       variant="default"
                       disabled={isRunning}
-                      onClick={() => handleRun(p.id)}
+                      onClick={() => {
+                        console.log("Run Agent clicked", p.id);
+                        handleRun(p.id);
+                      }}
                     />
                   </td>
                 </tr>
