@@ -1,0 +1,81 @@
+Build a one-time player import script called importAllPlayers.js 
+that does the following:
+
+1. Fetches ALL users from PodPlay GET /users endpoint, 
+   paginating through all pages until complete (use _pagination 
+   fields to detect when done)
+
+2. For each PodPlay user, checks if a player already exists 
+   in Supabase by matching on phone number or email 
+   (store email as a new column on the players table — 
+   add it if it doesn't exist)
+
+3. If player exists — update their external_id with the PodPlay 
+   user id if not already set
+
+4. If player does not exist — create a new player record with:
+   - club_id: c8976e15-e002-4619-bb4b-b1a70f5cd7ab
+   - name: firstName + lastName from PodPlay
+   - phone: phoneNumber from PodPlay (formatted as +1XXXXXXXXXX)
+   - external_id: PodPlay user id
+   - membership_status: membershipType from PodPlay 
+     (map GLOBAL_MEMBER to "member", NONE to "non-member")
+   - email: email from PodPlay
+
+5. After import, run syncPlayerAttendance for every player 
+   that has an external_id to populate their attendance history
+
+6. Log progress throughout — players processed, created, 
+   updated, skipped, errors
+
+7. Expose this as POST /api/import/players so it can be 
+   triggered from Hoppscotch when ready
+
+Also add an email column to the players table in Supabase 
+if it doesn't exist.
+
+This is a one-time bulk operation — it may take 10-20 minutes 
+to complete for 500+ players. Build it to be resumable — 
+if it fails midway, re-running it should skip players 
+already imported and continue from where it left off.
+
+---
+
+Important production architecture constraint to implement:
+
+The Sync All button and Run Batch Agent button in the dashboard 
+should NOT be the primary mechanism for syncing or running the 
+agent in production. PodPlay's API is performance-sensitive — 
+heavy API calls during business hours affect the booking 
+experience for players.
+
+Make these changes:
+
+1. Add a warning to the Sync All button — when clicked, show a 
+   confirmation dialog before proceeding that says: 
+   "Manual sync may affect booking performance for players currently 
+   using PodPlay. Best run during off-hours. Continue?"
+
+2. Add a warning to the Run Batch Agent button — same pattern: 
+   "Running the agent for all players makes multiple API calls. 
+   For best performance, schedule this during off-hours. Continue?"
+
+3. Add scheduled_sync_time (time e.g. "02:00") and timezone 
+   (text e.g. "America/New_York") columns to the clubs table 
+   in Supabase using ALTER TABLE IF NOT EXISTS.
+
+4. Add these two fields to the Settings page as editable inputs 
+   so an operator can set their preferred nightly sync time and 
+   timezone. Save updates the clubs table in Supabase.
+
+5. Add a note to the Settings page under Agent Configuration: 
+   "Sync and agent runs are scheduled nightly at your configured 
+   time. Manual triggers are available for testing but may affect 
+   PodPlay performance during business hours."
+
+6. Update the POST /api/import/players script to be the nightly 
+   sync mechanism — it should read the club's scheduled_sync_time 
+   and timezone from Supabase and be designed to run as a cron job 
+   at that time. For now it remains manually triggerable via 
+   POST /api/import/players but the architecture should treat it 
+   as a scheduled job.

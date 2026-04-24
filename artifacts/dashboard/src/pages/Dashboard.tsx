@@ -834,6 +834,64 @@ function MessageQueuePanel({
   );
 }
 
+// ─── Confirm Dialog ───────────────────────────────────────────────────────────
+
+function ConfirmDialog({
+  message,
+  onConfirm,
+  onCancel,
+}: {
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <>
+      <div
+        onClick={onCancel}
+        style={{
+          position: "fixed",
+          inset: 0,
+          background: "rgba(0,0,0,0.5)",
+          zIndex: 300,
+        }}
+      />
+      <div
+        style={{
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          zIndex: 301,
+          background: "var(--bg-surface)",
+          border: "1px solid var(--border)",
+          borderRadius: 10,
+          padding: "24px",
+          maxWidth: 420,
+          width: "calc(100% - 48px)",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.24)",
+          fontFamily: "var(--font-sans)",
+        }}
+      >
+        <div
+          style={{
+            fontSize: 13,
+            color: "var(--text-secondary)",
+            lineHeight: 1.65,
+            marginBottom: 20,
+          }}
+        >
+          {message}
+        </div>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <ActionBtn label="Cancel" onClick={onCancel} />
+          <ActionBtn label="Continue" variant="primary" onClick={onConfirm} />
+        </div>
+      </div>
+    </>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -849,6 +907,10 @@ export default function Dashboard() {
   const [syncRunning, setSyncRunning] = useState(false);
   const [filterState, setFilterState] = useState<EngagementState | null>(null);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string;
+    onConfirm: () => void;
+  } | null>(null);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -1031,13 +1093,31 @@ export default function Dashboard() {
             <ActionBtn
               label={syncRunning ? "Syncing…" : "Sync All"}
               disabled={syncRunning}
-              onClick={syncAll}
+              onClick={() =>
+                setConfirmDialog({
+                  message:
+                    "Manual sync may affect booking performance for players currently using PodPlay. Best run during off-hours. Continue?",
+                  onConfirm: () => {
+                    setConfirmDialog(null);
+                    syncAll();
+                  },
+                })
+              }
             />
             <ActionBtn
               label={batchRunning ? "Running…" : "Run Batch Agent"}
               variant="primary"
               disabled={batchRunning}
-              onClick={runBatchAgent}
+              onClick={() =>
+                setConfirmDialog({
+                  message:
+                    "Running the agent for all players makes multiple API calls. For best performance, schedule this during off-hours. Continue?",
+                  onConfirm: () => {
+                    setConfirmDialog(null);
+                    runBatchAgent();
+                  },
+                })
+              }
             />
           </div>
         </header>
@@ -1180,6 +1260,14 @@ export default function Dashboard() {
         onClose={() => setDrawerPlayerId(null)}
         onDataChanged={fetchData}
       />
+
+      {confirmDialog && (
+        <ConfirmDialog
+          message={confirmDialog.message}
+          onConfirm={confirmDialog.onConfirm}
+          onCancel={() => setConfirmDialog(null)}
+        />
+      )}
     </div>
   );
 }
