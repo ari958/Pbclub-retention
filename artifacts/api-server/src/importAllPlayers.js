@@ -2,10 +2,18 @@ import { createClient } from "@supabase/supabase-js";
 // @ts-ignore
 import { syncSinglePlayer } from "./syncPlayerAttendance.js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
+// Use service role key to bypass RLS for inserts/updates.
+// Falls back to anon key with a warning if not set.
+const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  console.warn(
+    "[import] WARNING: SUPABASE_SERVICE_ROLE_KEY not set. " +
+    "Using anon key — inserts will fail if RLS policies block anonymous writes. " +
+    "Add SUPABASE_SERVICE_ROLE_KEY as a secret to fix RLS errors."
+  );
+}
+
+const supabase = createClient(process.env.SUPABASE_URL, supabaseKey);
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
@@ -27,15 +35,22 @@ function mapMembership(membershipType) {
   return membershipType?.toLowerCase() ?? "non-member";
 }
 
+class CancelledError extends Error {
+  constructor() {
+    super("Import cancelled by operator");
+    this.name = "CancelledError";
+  }
+}
+
 // ─── PodPlay fetch: all users ─────────────────────────────────────────────────
 
-async function fetchAllPodPlayUsers() {
+async function fetchAllPodPlayUsers(isCancelled) {
   const allUsers = [];
   let page = 1;
 
-  console.log("[import] Fetching PodPlay users…");
-
   while (true) {
+    if (isCancelled()) throw new CancelledError();
+
     const url = `${PODPLAY_BASE}/users?page=${page}&ipp=${IPP}`;
     const res = await fetch(url, {
       headers: { "x-api-key": process.env.PODPLAY_API_KEY },
@@ -49,10 +64,6 @@ async function fetchAllPodPlayUsers() {
     const items = data.items ?? [];
     const pagination = data._pagination ?? {};
 
-    console.log(
-      `[import] /users page=${page} | count=${items.length} | total=${pagination.total ?? "?"} | running=${allUsers.length + items.length}`
-    );
-
     allUsers.push(...items);
 
     const total = pagination.total ?? null;
@@ -60,13 +71,16 @@ async function fetchAllPodPlayUsers() {
     page++;
   }
 
-  console.log(`[import] Fetched ${allUsers.length} PodPlay users total`);
   return allUsers;
 }
 
 // ─── Main import ──────────────────────────────────────────────────────────────
 
-export async function importAllPlayers(log = console.log) {
+/**
+ * @param {(msg: string) => void} log
+ * @param {() => boolean} isCancelled - returns true if the job should stop
+ */
+export async function importAllPlayers(log = console.log, isCancelled = () => false) {
   const stats = {
     processed: 0,
     created: 0,
@@ -77,7 +91,7 @@ export async function importAllPlayers(log = console.log) {
     attendanceErrors: 0,
   };
 
-  // 1. Fetch scheduled sync time for context
+  // 1. Read club schedule context for logging
   const { data: clubRow } = await supabase
     .from("clubs")
     .select("id, name, scheduled_sync_time, timezone")
@@ -89,20 +103,23 @@ export async function importAllPlayers(log = console.log) {
   }
 
   // 2. Fetch all PodPlay users
+  log(`[import] Fetching PodPlay users…`);
   let podplayUsers;
   try {
-    podplayUsers = await fetchAllPodPlayUsers();
+    podplayUsers = await fetchAllPodPlayUsers(isCancelled);
   } catch (err) {
+    if (err.name === "CancelledError") throw err;
     log(`[import] FATAL: Failed to fetch PodPlay users: ${err.message}`);
     throw err;
   }
 
-  log(`[import] Processing ${podplayUsers.length} PodPlay users…`);
+  log(`[import] Fetched ${podplayUsers.length} PodPlay users. Processing…`);
 
   // 3. Process each PodPlay user
   for (const user of podplayUsers) {
-    stats.processed++;
+    if (isCancelled()) throw new CancelledError();
 
+    stats.processed++;
     const externalId = String(user.id);
     const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
     const phone = formatPhone(user.phoneNumber);
@@ -110,7 +127,7 @@ export async function importAllPlayers(log = console.log) {
     const membership = mapMembership(user.membershipType);
 
     try {
-      // Check for existing player by external_id first (fastest — already imported)
+      // Check for existing player by external_id first (already imported → skip)
       const { data: byExtId } = await supabase
         .from("players")
         .select("id, external_id")
@@ -118,12 +135,12 @@ export async function importAllPlayers(log = console.log) {
         .maybeSingle();
 
       if (byExtId) {
-        log(`[import] [${stats.processed}/${podplayUsers.length}] SKIP (already has external_id): ${name} (${externalId})`);
+        log(`[import] [${stats.processed}/${podplayUsers.length}] SKIP: ${name} (external_id already set)`);
         stats.skipped++;
         continue;
       }
 
-      // Match by phone or email
+      // Match by phone, then email
       let existingPlayer = null;
       if (phone) {
         const { data } = await supabase
@@ -143,7 +160,6 @@ export async function importAllPlayers(log = console.log) {
       }
 
       if (existingPlayer) {
-        // Update existing player — set external_id if not already set
         const updatePayload = { external_id: externalId, membership_status: membership };
         if (email) updatePayload.email = email;
 
@@ -156,11 +172,10 @@ export async function importAllPlayers(log = console.log) {
           log(`[import] [${stats.processed}/${podplayUsers.length}] ERROR updating ${name}: ${error.message}`);
           stats.errors++;
         } else {
-          log(`[import] [${stats.processed}/${podplayUsers.length}] UPDATE: ${name} (phone/email match, set external_id=${externalId})`);
+          log(`[import] [${stats.processed}/${podplayUsers.length}] UPDATE: ${name} → external_id=${externalId}`);
           stats.updated++;
         }
       } else {
-        // Create new player
         const insertPayload = {
           club_id: CLUB_ID,
           name,
@@ -183,6 +198,7 @@ export async function importAllPlayers(log = console.log) {
         }
       }
     } catch (err) {
+      if (err.name === "CancelledError") throw err;
       log(`[import] [${stats.processed}/${podplayUsers.length}] EXCEPTION for ${name}: ${err.message}`);
       stats.errors++;
     }
@@ -191,8 +207,10 @@ export async function importAllPlayers(log = console.log) {
   log(`[import] ── Player import complete ──`);
   log(`[import] Processed: ${stats.processed} | Created: ${stats.created} | Updated: ${stats.updated} | Skipped: ${stats.skipped} | Errors: ${stats.errors}`);
 
-  // 4. Sync attendance for all players with external_id
-  log(`[import] Starting attendance sync for all linked players…`);
+  // 4. Sync attendance for all linked players
+  if (isCancelled()) throw new CancelledError();
+
+  log(`[import] Starting attendance sync…`);
 
   const { data: linkedPlayers, error: fetchErr } = await supabase
     .from("players")
@@ -200,11 +218,13 @@ export async function importAllPlayers(log = console.log) {
     .not("external_id", "is", null);
 
   if (fetchErr) {
-    log(`[import] ERROR fetching linked players for attendance sync: ${fetchErr.message}`);
+    log(`[import] ERROR fetching linked players: ${fetchErr.message}`);
   } else {
     log(`[import] Syncing attendance for ${linkedPlayers.length} players…`);
 
     for (let i = 0; i < linkedPlayers.length; i++) {
+      if (isCancelled()) throw new CancelledError();
+
       const p = linkedPlayers[i];
       try {
         const result = await syncSinglePlayer(p.id, p.external_id);
@@ -215,8 +235,9 @@ export async function importAllPlayers(log = console.log) {
         stats.attendanceSynced++;
         log(`[import] Attendance [${i + 1}/${linkedPlayers.length}] ${p.id}: inserted=${result.inserted}, lastVisit=${result.lastVisitDate ?? "—"}`);
       } catch (err) {
+        if (err.name === "CancelledError") throw err;
         stats.attendanceErrors++;
-        log(`[import] Attendance [${i + 1}/${linkedPlayers.length}] ERROR for ${p.id}: ${err.message}`);
+        log(`[import] Attendance ERROR [${i + 1}/${linkedPlayers.length}] ${p.id}: ${err.message}`);
       }
     }
   }
