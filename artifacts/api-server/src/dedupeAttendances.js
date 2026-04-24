@@ -1,10 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 
-// Uses service role key if available, falls back to anon key.
-// The executing role needs SELECT and DELETE on the attendances table.
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY,
+  {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+      detectSessionInUrl: false,
+    },
+  }
 );
 
 const PAGE_SIZE = 1000;  // rows fetched per page
