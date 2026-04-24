@@ -2,44 +2,10 @@ import { createClient } from "@supabase/supabase-js";
 // @ts-ignore
 import { syncSinglePlayer } from "./syncPlayerAttendance.js";
 
-// Use service role key to bypass RLS for inserts/updates.
-const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const anonKey = process.env.SUPABASE_ANON_KEY;
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = serviceRoleKey || anonKey;
-
-// ── Startup diagnostics ────────────────────────────────────────────────────
-console.log("[import:diag] SUPABASE_URL          :", supabaseUrl);
-console.log("[import:diag] SERVICE_ROLE_KEY set?  :", !!serviceRoleKey);
-console.log("[import:diag] SERVICE_ROLE_KEY prefix:", serviceRoleKey ? serviceRoleKey.slice(0, 20) + "…" : "(not set)");
-console.log("[import:diag] ANON_KEY prefix         :", anonKey ? anonKey.slice(0, 20) + "…" : "(not set)");
-console.log("[import:diag] Key being used prefix   :", supabaseKey ? supabaseKey.slice(0, 20) + "…" : "(none!)");
-console.log("[import:diag] Keys match? (bad=same)  :", serviceRoleKey === anonKey);
-
-const clientOptions = {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-    detectSessionInUrl: false,
-  },
-};
-console.log("[import:diag] Client auth options     :", JSON.stringify(clientOptions.auth));
-
-// Decode the JWT payload (not encrypted — base64 only) to verify role claim
-try {
-  const parts = supabaseKey?.split(".") ?? [];
-  if (parts.length === 3) {
-    const payload = JSON.parse(Buffer.from(parts[1], "base64").toString("utf8"));
-    console.log("[import:diag] JWT role claim          :", payload.role ?? "(no role field)");
-    console.log("[import:diag] JWT iss                 :", payload.iss ?? "(no iss)");
-  } else {
-    console.log("[import:diag] Key is NOT a JWT (no 3 parts) — format:", supabaseKey?.slice(0, 15));
-  }
-} catch (e) {
-  console.log("[import:diag] Could not decode JWT payload:", e.message);
-}
-
-const supabase = createClient(supabaseUrl, supabaseKey, clientOptions);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
@@ -142,7 +108,6 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   log(`[import] Fetched ${podplayUsers.length} PodPlay users. Processing…`);
 
   // 3. Process each PodPlay user
-  let firstInsertDiagDone = false;
   for (const user of podplayUsers) {
     if (isCancelled()) throw new CancelledError();
 
@@ -212,39 +177,11 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
         };
         if (email) insertPayload.email = email;
 
-        // One-time diagnostic: try raw fetch first to isolate whether the
-        // issue is the JS client or the key itself.
-        if (!firstInsertDiagDone) {
-          firstInsertDiagDone = true;
-          log(`[import:diag] FIRST INSERT — testing raw fetch bypass of JS client…`);
-          try {
-            const rawRes = await fetch(`${supabaseUrl}/rest/v1/players`, {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-                "apikey": supabaseKey,
-                "Authorization": `Bearer ${supabaseKey}`,
-                "Prefer": "return=minimal",
-              },
-              body: JSON.stringify(insertPayload),
-            });
-            const rawText = await rawRes.text();
-            log(`[import:diag] RAW FETCH status: ${rawRes.status}`);
-            log(`[import:diag] RAW FETCH body: ${rawText.slice(0, 300)}`);
-          } catch (fetchErr) {
-            log(`[import:diag] RAW FETCH exception: ${fetchErr.message}`);
-          }
-        }
-
-        const { error, status: insertStatus } = await supabase
+        const { error } = await supabase
           .from("players")
           .insert(insertPayload);
 
         if (error) {
-          // Log full error object on first failure to expose code/details/hint
-          if (stats.errors === 0) {
-            log(`[import:diag] FULL ERROR: ${JSON.stringify({ code: error.code, message: error.message, details: error.details, hint: error.hint, status: insertStatus })}`);
-          }
           log(`[import] [${stats.processed}/${podplayUsers.length}] ERROR creating ${name}: ${error.message}`);
           stats.errors++;
         } else {
