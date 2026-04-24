@@ -177,7 +177,6 @@ function AtRiskPanel({ players, onRunAgent }: { players: Player[]; onRunAgent: (
   const [running, setRunning] = useState<string | null>(null);
 
   const handleRun = async (playerId: string) => {
-    console.log("handleRun called", playerId);
     setRunning(playerId);
     try {
       await onRunAgent(playerId);
@@ -247,10 +246,7 @@ function AtRiskPanel({ players, onRunAgent }: { players: Player[]; onRunAgent: (
                       label={isRunning ? "Running…" : "Run Agent"}
                       variant="default"
                       disabled={isRunning}
-                      onClick={() => {
-                        console.log("Run Agent clicked", p.id);
-                        handleRun(p.id);
-                      }}
+                      onClick={() => handleRun(p.id)}
                     />
                   </td>
                 </tr>
@@ -397,6 +393,7 @@ export default function Dashboard() {
   const [messages, setMessages] = useState<MessageQueueItem[]>([]);
   const [clubName, setClubName] = useState("");
   const [loading, setLoading] = useState(true);
+  const [batchRunning, setBatchRunning] = useState(false);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -427,6 +424,28 @@ export default function Dashboard() {
     });
     await fetchMessages();
   }, [fetchMessages]);
+
+  const runBatchAgent = useCallback(async () => {
+    setBatchRunning(true);
+    try {
+      const atRisk = players.filter((p) => {
+        const s = getEngagementState(p.last_visit_date);
+        return s === "lapsing" || s === "dormant";
+      });
+      await Promise.allSettled(
+        atRisk.map((p) =>
+          fetch("/api/agent/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ player_id: p.id }),
+          })
+        )
+      );
+      await fetchMessages();
+    } finally {
+      setBatchRunning(false);
+    }
+  }, [players, fetchMessages]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -459,7 +478,12 @@ export default function Dashboard() {
           <span style={{ fontWeight: 600, fontSize: 14 }}>Dashboard</span>
           <div style={{ display: "flex", gap: 8 }}>
             <ActionBtn label="Sync All" onClick={fetchData} />
-            <ActionBtn label="Run Batch Agent" variant="primary" />
+            <ActionBtn
+              label={batchRunning ? "Running…" : "Run Batch Agent"}
+              variant="primary"
+              disabled={batchRunning}
+              onClick={runBatchAgent}
+            />
           </div>
         </header>
 
