@@ -397,11 +397,10 @@ export default function Dashboard() {
   const fetchMessages = useCallback(async () => {
     const res = await supabase
       .from("messages")
-      .select("id, body, signup_url, conversation_id, conversations(triggered_by, players(name, skill_level, progression_status))")
+      .select("id, body, signup_url, conversation_id, conversations!conversation_id(triggered_by, players!player_id(name, skill_level, progression_status))")
       .eq("direction", "outbound")
       .eq("sent_by", "agent")
-      .is("twilio_message_sid", null)
-      .order("created_at", { ascending: false });
+      .is("twilio_message_sid", null);
     if (res.data) setMessages(res.data as MessageQueueItem[]);
   }, []);
 
