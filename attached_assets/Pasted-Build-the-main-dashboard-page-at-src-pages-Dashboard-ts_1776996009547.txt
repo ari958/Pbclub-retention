@@ -1,0 +1,74 @@
+Build the main dashboard page at src/pages/Dashboard.tsx using this 
+design system:
+
+CSS Variables:
+--bg-primary: #0f1117
+--bg-secondary: #161b22
+--bg-surface: #ffffff
+--bg-surface-2: #f6f8fa
+--border: #e1e4e8
+--border-dark: #30363d
+--text-primary: #0f1117
+--text-secondary: #57606a
+--text-tertiary: #8b949e
+--accent: #E8A838
+--accent-light: rgba(232,168,56,0.12)
+--state-active: #2ea043
+--state-lapsing: #d4813a
+--state-dormant: #cf222e
+--font-sans: 'DM Sans', sans-serif
+--font-mono: 'DM Mono', monospace
+
+Add to index.html:
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+Layout:
+- Fixed left sidebar 220px wide, background var(--bg-primary)
+- Main content area with white background
+- Sticky top bar 52px tall with page title and action buttons
+
+Sidebar contents:
+- Product name "Pulse" in monospace at top (this is the product name)
+- Club name below it in white, smaller
+- Nav items: Dashboard, Players, Assessments, Messages, Settings
+- Active state: left border 2px accent color, slight background highlight
+- Sync status at bottom with green dot
+
+Top stats row — 4 cards:
+- Active Players (green number)
+- Lapsing (amber number)  
+- Dormant (red number)
+- Response Rate (percentage)
+Each card: white background, 1px border, subtle label in mono uppercase
+
+Panel 1 — At-Risk Players:
+Query players table from Supabase.
+Calculate engagement state from last_visit_date:
+- active: within 14 days
+- lapsing: 15-30 days ago  
+- dormant: 31+ days ago
+Sort dormant first, then lapsing, then active.
+Table columns: Player name + skill level subtitle, State pill, 
+Progression badge, Last visit (relative time e.g. "3d ago"), Action button.
+State pills: colored dot + label, background tinted to match state color.
+Progression badge: small mono text, gray background, 
+orange tint if null/unset.
+
+Panel 2 — Needs Assessment (right column, top):
+Query players where progression_status IS NULL.
+Each item shows player name, skill level, reason text.
+Three buttons per player: "Ready" / "Developing" / "Ceiling"
+Clicking immediately updates progression_status in Supabase 
+via upsert and removes from list.
+
+Panel 3 — Message Queue (right column, bottom):
+Query messages joined with conversations and players 
+where direction = outbound and sent_by = agent.
+Each item: player name + routing tag, message body preview in italic,
+Send / Edit / Skip buttons.
+Send calls POST /api/messages/send with message_id.
+
+Two column layout: left panel takes 60% width, right column 40% 
+with the two smaller panels stacked.
+
+Product name is "Pulse" — use this everywhere, not "Club Retention Agent".
