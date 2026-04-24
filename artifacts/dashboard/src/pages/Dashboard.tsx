@@ -394,6 +394,7 @@ export default function Dashboard() {
   const [clubName, setClubName] = useState("");
   const [loading, setLoading] = useState(true);
   const [batchRunning, setBatchRunning] = useState(false);
+  const [batchStatus, setBatchStatus] = useState<string | null>(null);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -427,13 +428,10 @@ export default function Dashboard() {
 
   const runBatchAgent = useCallback(async () => {
     setBatchRunning(true);
+    setBatchStatus(null);
     try {
-      const atRisk = players.filter((p) => {
-        const s = getEngagementState(p.last_visit_date);
-        return s === "lapsing" || s === "dormant";
-      });
-      await Promise.allSettled(
-        atRisk.map((p) =>
+      const results = await Promise.allSettled(
+        players.map((p) =>
           fetch("/api/agent/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -441,7 +439,15 @@ export default function Dashboard() {
           })
         )
       );
+      const succeeded = results.filter((r) => r.status === "fulfilled").length;
+      const failed = results.filter((r) => r.status === "rejected").length;
       await fetchMessages();
+      setBatchStatus(
+        failed === 0
+          ? `${succeeded} message${succeeded !== 1 ? "s" : ""} generated`
+          : `${succeeded} succeeded, ${failed} failed`
+      );
+      setTimeout(() => setBatchStatus(null), 5000);
     } finally {
       setBatchRunning(false);
     }
@@ -476,7 +482,12 @@ export default function Dashboard() {
           position: "sticky", top: 0, zIndex: 5,
         }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Dashboard</span>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            {batchStatus && (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--state-active)" }}>
+                ✓ {batchStatus}
+              </span>
+            )}
             <ActionBtn label="Sync All" onClick={fetchData} />
             <ActionBtn
               label={batchRunning ? "Running…" : "Run Batch Agent"}
