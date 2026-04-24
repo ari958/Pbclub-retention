@@ -80,21 +80,15 @@ function StatePill({ state }: { state: EngagementState }) {
 function ProgressionBadge({ status }: { status: ProgressionStatus }) {
   const isUnset = status === null;
   const label = status ?? "unset";
-  const short: Record<string, string> = {
-    "ready-to-advance": "ready+",
-    "developing": "dev",
-    "at-ceiling": "ceiling",
-    "unset": "unset",
-  };
   return (
     <span style={{
       fontFamily: "var(--font-mono)", fontSize: 11, padding: "2px 6px", borderRadius: 3,
       background: isUnset ? "var(--accent-light)" : "var(--bg-surface-2)",
       color: isUnset ? "var(--accent)" : "var(--text-secondary)",
       border: `1px solid ${isUnset ? "rgba(232,168,56,0.25)" : "var(--border)"}`,
-      fontWeight: 500,
+      fontWeight: 500, whiteSpace: "nowrap",
     }}>
-      {short[label] ?? label}
+      {label}
     </span>
   );
 }
@@ -126,7 +120,7 @@ function ActionBtn({ label, variant = "default", onClick, disabled }: {
 
 const NAV_ITEMS = ["Dashboard", "Players", "Assessments", "Messages", "Settings"];
 
-function Sidebar({ active }: { active: string }) {
+function Sidebar({ active, clubName }: { active: string; clubName: string }) {
   return (
     <aside style={{
       width: 220, minWidth: 220, height: "100vh", position: "fixed", top: 0, left: 0,
@@ -139,7 +133,7 @@ function Sidebar({ active }: { active: string }) {
           Pulse
         </div>
         <div style={{ fontSize: 12, color: "var(--text-tertiary)", marginTop: 4, fontWeight: 400 }}>
-          Pickleball Barn Club
+          {clubName || "—"}
         </div>
       </div>
 
@@ -179,7 +173,18 @@ function Sidebar({ active }: { active: string }) {
 
 // ─── Panels ───────────────────────────────────────────────────────────────────
 
-function AtRiskPanel({ players }: { players: Player[] }) {
+function AtRiskPanel({ players, onRunAgent }: { players: Player[]; onRunAgent: (playerId: string) => Promise<void> }) {
+  const [running, setRunning] = useState<string | null>(null);
+
+  const handleRun = async (playerId: string) => {
+    setRunning(playerId);
+    try {
+      await onRunAgent(playerId);
+    } finally {
+      setRunning(null);
+    }
+  };
+
   const sorted = [...players].sort((a, b) => {
     const order: Record<EngagementState, number> = { dormant: 0, lapsing: 1, active: 2 };
     return order[getEngagementState(a.last_visit_date)] - order[getEngagementState(b.last_visit_date)];
@@ -218,6 +223,7 @@ function AtRiskPanel({ players }: { players: Player[] }) {
               </tr>
             ) : sorted.map((p, i) => {
               const state = getEngagementState(p.last_visit_date);
+              const isRunning = running === p.id;
               return (
                 <tr key={p.id} style={{ borderBottom: i < sorted.length - 1 ? "1px solid var(--border)" : "none" }}>
                   <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
@@ -236,7 +242,12 @@ function AtRiskPanel({ players }: { players: Player[] }) {
                     {relativeTime(p.last_visit_date)}
                   </td>
                   <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                    <ActionBtn label="Run Agent" variant="default" />
+                    <ActionBtn
+                      label={isRunning ? "Running…" : "Run Agent"}
+                      variant="default"
+                      disabled={isRunning}
+                      onClick={() => handleRun(p.id)}
+                    />
                   </td>
                 </tr>
               );
@@ -380,24 +391,39 @@ function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[];
 export default function Dashboard() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [messages, setMessages] = useState<MessageQueueItem[]>([]);
+  const [clubName, setClubName] = useState("");
   const [loading, setLoading] = useState(true);
 
-  const fetchData = useCallback(async () => {
-    const [playersRes, messagesRes] = await Promise.all([
-      supabase.from("players").select("id, name, skill_level, membership_status, progression_status, last_visit_date"),
-      supabase
-        .from("messages")
-        .select("id, body, signup_url, conversation_id, conversations(triggered_by, players(name, skill_level, progression_status))")
-        .eq("direction", "outbound")
-        .eq("sent_by", "agent")
-        .is("twilio_message_sid", null)
-        .order("created_at", { ascending: false }),
-    ]);
-
-    if (playersRes.data) setPlayers(playersRes.data as Player[]);
-    if (messagesRes.data) setMessages(messagesRes.data as MessageQueueItem[]);
-    setLoading(false);
+  const fetchMessages = useCallback(async () => {
+    const res = await supabase
+      .from("messages")
+      .select("id, body, signup_url, conversation_id, conversations(triggered_by, players(name, skill_level, progression_status))")
+      .eq("direction", "outbound")
+      .eq("sent_by", "agent")
+      .is("twilio_message_sid", null)
+      .order("created_at", { ascending: false });
+    if (res.data) setMessages(res.data as MessageQueueItem[]);
   }, []);
+
+  const fetchData = useCallback(async () => {
+    const [playersRes, clubRes] = await Promise.all([
+      supabase.from("players").select("id, name, skill_level, membership_status, progression_status, last_visit_date"),
+      supabase.from("clubs").select("name").limit(1).maybeSingle(),
+    ]);
+    if (playersRes.data) setPlayers(playersRes.data as Player[]);
+    if (clubRes.data?.name) setClubName(clubRes.data.name);
+    await fetchMessages();
+    setLoading(false);
+  }, [fetchMessages]);
+
+  const runAgent = useCallback(async (playerId: string) => {
+    await fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ player_id: playerId }),
+    });
+    await fetchMessages();
+  }, [fetchMessages]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -416,7 +442,7 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
-      <Sidebar active="Dashboard" />
+      <Sidebar active="Dashboard" clubName={clubName} />
 
       {/* Main */}
       <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -458,7 +484,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             {/* Left: 60% */}
             <div style={{ flex: "0 0 60%", minWidth: 0 }}>
-              <AtRiskPanel players={players} />
+              <AtRiskPanel players={players} onRunAgent={runAgent} />
             </div>
 
             {/* Right: 40% */}
