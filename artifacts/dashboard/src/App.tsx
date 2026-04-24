@@ -1,5 +1,10 @@
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { ToastProvider } from "./components/Toast";
 import Dashboard from "./pages/Dashboard";
+import Players from "./pages/Players";
+import Assessments from "./pages/Assessments";
+import Messages from "./pages/Messages";
+import Settings from "./pages/Settings";
 
 function NotFound() {
   return (
@@ -9,15 +14,19 @@ function NotFound() {
   );
 }
 
-function App() {
+export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="*" element={<NotFound />} />
-      </Routes>
+      <ToastProvider>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/players" element={<Players />} />
+          <Route path="/assessments" element={<Assessments />} />
+          <Route path="/messages" element={<Messages />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<NotFound />} />
+        </Routes>
+      </ToastProvider>
     </BrowserRouter>
   );
 }
-
-export default App;
