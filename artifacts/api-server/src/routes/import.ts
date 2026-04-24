@@ -60,12 +60,17 @@ router.post("/import/players", async (req, res) => {
   }
 
   // Read club schedule context for logging
-  const { data: club } = await supabase
-    .from("clubs")
-    .select("name, scheduled_sync_time, timezone")
-    .limit(1)
-    .maybeSingle()
-    .catch(() => ({ data: null }));
+  let club: { name?: string; scheduled_sync_time?: string; timezone?: string } | null = null;
+  try {
+    const { data } = await supabase
+      .from("clubs")
+      .select("name, scheduled_sync_time, timezone")
+      .limit(1)
+      .maybeSingle();
+    club = data;
+  } catch {
+    // non-fatal — schedule columns may not exist yet
+  }
 
   resetJob();
 
