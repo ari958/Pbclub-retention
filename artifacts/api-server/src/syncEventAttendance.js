@@ -9,6 +9,7 @@ const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const SYNC_START_DATE = "2025-01-01T00:00:00.000Z";
 const IPP = 100;
 const UPSERT_BATCH = 100;
+const SIGNUP_FETCH_DELAY_MS = 300;
 
 class CancelledError extends Error {
   constructor() {
@@ -44,7 +45,7 @@ async function fetchEventSignups(eventId) {
   let res = await attempt();
 
   if (res.status === 429) {
-    await sleep(2000);
+    await sleep(3000);
     res = await attempt();
   }
 
@@ -151,7 +152,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     for (const event of pastEvents) {
       if (isCancelled()) throw new CancelledError();
 
-      await sleep(200);
+      await sleep(SIGNUP_FETCH_DELAY_MS);
 
       let signups;
       try {
