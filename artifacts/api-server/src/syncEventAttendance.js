@@ -33,12 +33,22 @@ async function fetchEventPage(page, endTime) {
   return res.json();
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function fetchEventSignups(eventId) {
   const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
-  const res = await fetch(url, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY },
-  });
-  if (res.status === 404) return []; // Event may not support signups
+
+  const attempt = async () =>
+    fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY } });
+
+  let res = await attempt();
+
+  if (res.status === 429) {
+    await sleep(2000);
+    res = await attempt();
+  }
+
+  if (res.status === 404) return [];
   if (!res.ok) throw new Error(`PodPlay GET /events/${eventId}/signups returned ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.items ?? [];
@@ -140,6 +150,8 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     // ── Step 3: For each past event, fetch signups ───────────────────────────
     for (const event of pastEvents) {
       if (isCancelled()) throw new CancelledError();
+
+      await sleep(200);
 
       let signups;
       try {
