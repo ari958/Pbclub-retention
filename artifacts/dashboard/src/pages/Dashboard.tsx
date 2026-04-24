@@ -321,6 +321,10 @@ function NeedsAssessmentPanel({ players, onUpdate }: { players: Player[]; onUpda
 
 function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[]; onSent: () => void }) {
   const [sending, setSending] = useState<string | null>(null);
+  const [skipping, setSkipping] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draftBody, setDraftBody] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const sendMessage = async (messageId: string) => {
     setSending(messageId);
@@ -336,6 +340,48 @@ function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[];
     }
   };
 
+  const skipMessage = async (messageId: string, conversationId: string) => {
+    setSkipping(messageId);
+    try {
+      await supabase
+        .from("messages")
+        .update({ twilio_message_sid: "skipped" })
+        .eq("id", messageId);
+      await supabase
+        .from("conversations")
+        .update({ triggered_by: "skipped" })
+        .eq("id", conversationId);
+      onSent();
+    } finally {
+      setSkipping(null);
+    }
+  };
+
+  const startEdit = (messageId: string, body: string) => {
+    setEditingId(messageId);
+    setDraftBody(body);
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setDraftBody("");
+  };
+
+  const saveEdit = async (messageId: string) => {
+    setSaving(true);
+    try {
+      await supabase
+        .from("messages")
+        .update({ body: draftBody })
+        .eq("id", messageId);
+      setEditingId(null);
+      setDraftBody("");
+      onSent();
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
       <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -344,7 +390,7 @@ function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[];
           {messages.length} pending
         </span>
       </div>
-      <div style={{ maxHeight: 300, overflowY: "auto" }}>
+      <div style={{ maxHeight: 380, overflowY: "auto" }}>
         {messages.length === 0 ? (
           <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
             No messages in queue
@@ -352,11 +398,17 @@ function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[];
         ) : messages.map((m, i) => {
           const player = m.conversations?.players;
           const routingTag = m.conversations?.triggered_by;
+          const isEditing = editingId === m.id;
+          const isSending = sending === m.id;
+          const isSkipping = skipping === m.id;
+          const busy = isSending || isSkipping || saving;
+
           return (
             <div key={m.id} style={{ padding: "12px 16px", borderBottom: i < messages.length - 1 ? "1px solid var(--border)" : "none" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+              {/* Header row */}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
                 <span style={{ fontWeight: 500, fontSize: 13 }}>{player?.name ?? "Unknown"}</span>
-                {routingTag && (
+                {routingTag && routingTag !== "skipped" && (
                   <span style={{
                     fontFamily: "var(--font-mono)", fontSize: 10, padding: "1px 5px", borderRadius: 3,
                     background: "var(--bg-surface-2)", color: "var(--text-tertiary)", border: "1px solid var(--border)",
@@ -365,19 +417,59 @@ function MessageQueuePanel({ messages, onSent }: { messages: MessageQueueItem[];
                   </span>
                 )}
               </div>
-              <div style={{ fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic", lineHeight: 1.5, marginBottom: 10 }}>
-                {m.body.length > 120 ? m.body.slice(0, 120) + "…" : m.body}
-              </div>
-              <div style={{ display: "flex", gap: 6 }}>
-                <ActionBtn
-                  label={sending === m.id ? "Sending…" : "Send"}
-                  variant="primary"
-                  disabled={sending === m.id}
-                  onClick={() => sendMessage(m.id)}
+
+              {/* Body — preview or editor */}
+              {isEditing ? (
+                <textarea
+                  value={draftBody}
+                  onChange={(e) => setDraftBody(e.target.value)}
+                  rows={4}
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "8px 10px",
+                    fontSize: 12, fontFamily: "var(--font-sans)", lineHeight: 1.5,
+                    border: "1px solid var(--border)", borderRadius: 4,
+                    background: "var(--bg-surface-2)", color: "var(--text-primary)",
+                    resize: "vertical", outline: "none", marginBottom: 8,
+                  }}
                 />
-                <ActionBtn label="Edit" />
-                <ActionBtn label="Skip" variant="danger" />
-              </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic", lineHeight: 1.5, marginBottom: 10 }}>
+                  {m.body.length > 120 ? m.body.slice(0, 120) + "…" : m.body}
+                </div>
+              )}
+
+              {/* Action buttons */}
+              {isEditing ? (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <ActionBtn
+                    label={saving ? "Saving…" : "Save"}
+                    variant="primary"
+                    disabled={saving || draftBody.trim() === ""}
+                    onClick={() => saveEdit(m.id)}
+                  />
+                  <ActionBtn label="Cancel" disabled={saving} onClick={cancelEdit} />
+                </div>
+              ) : (
+                <div style={{ display: "flex", gap: 6 }}>
+                  <ActionBtn
+                    label={isSending ? "Sending…" : "Send"}
+                    variant="primary"
+                    disabled={busy}
+                    onClick={() => sendMessage(m.id)}
+                  />
+                  <ActionBtn
+                    label="Edit"
+                    disabled={busy}
+                    onClick={() => startEdit(m.id, m.body)}
+                  />
+                  <ActionBtn
+                    label={isSkipping ? "Skipping…" : "Skip"}
+                    variant="danger"
+                    disabled={busy}
+                    onClick={() => skipMessage(m.id, m.conversation_id)}
+                  />
+                </div>
+              )}
             </div>
           );
         })}
