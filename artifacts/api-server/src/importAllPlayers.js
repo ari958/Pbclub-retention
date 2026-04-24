@@ -4,16 +4,27 @@ import { syncSinglePlayer } from "./syncPlayerAttendance.js";
 
 // Use service role key to bypass RLS for inserts/updates.
 // Falls back to anon key with a warning if not set.
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
-if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseKey = serviceRoleKey || process.env.SUPABASE_ANON_KEY;
+
+if (!serviceRoleKey) {
   console.warn(
     "[import] WARNING: SUPABASE_SERVICE_ROLE_KEY not set. " +
-    "Using anon key — inserts will fail if RLS policies block anonymous writes. " +
-    "Add SUPABASE_SERVICE_ROLE_KEY as a secret to fix RLS errors."
+    "Using anon key — inserts will fail if RLS policies block anonymous writes."
   );
+} else {
+  console.log("[import] Using service role key — RLS bypassed for import.");
 }
 
-const supabase = createClient(process.env.SUPABASE_URL, supabaseKey);
+// When using the service role key, disable session/token management so Supabase
+// treats every request as a privileged server-side call (bypasses RLS).
+const supabase = createClient(process.env.SUPABASE_URL, supabaseKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+    detectSessionInUrl: false,
+  },
+});
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
