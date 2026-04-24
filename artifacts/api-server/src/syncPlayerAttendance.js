@@ -7,9 +7,42 @@ const supabase = createClient(
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
+// ─── Unique constraint bootstrap ─────────────────────────────────────────────
+// Attempt to add the unique constraint once per server process. The Supabase
+// REST client cannot run DDL directly, so this calls a stored procedure if one
+// exists. If not, a clear hint is logged and upsert handles duplicates anyway.
+
+let constraintAttempted = false;
+
+async function ensureUniqueConstraint() {
+  if (constraintAttempted) return;
+  constraintAttempted = true;
+
+  const ddl =
+    "ALTER TABLE attendances ADD CONSTRAINT IF NOT EXISTS " +
+    "attendances_unique_attendance UNIQUE (player_id, program_name, attended_at)";
+
+  const { error } = await supabase.rpc("exec_sql", { sql: ddl });
+  if (error) {
+    // exec_sql function likely doesn't exist — that's expected on most projects.
+    // Run the DDL once manually in the Supabase SQL editor to create the constraint:
+    //   ALTER TABLE attendances ADD CONSTRAINT IF NOT EXISTS
+    //     attendances_unique_attendance UNIQUE (player_id, program_name, attended_at);
+    console.log(
+      "[syncPlayerAttendance] Could not auto-apply unique constraint via RPC " +
+      `(${error.message}). If not already present, run the constraint SQL manually.`
+    );
+  } else {
+    console.log(
+      "[syncPlayerAttendance] Unique constraint attendances_unique_attendance ensured."
+    );
+  }
+}
+
+// ─── PodPlay event fetcher ────────────────────────────────────────────────────
+
 /**
- * Fetch ALL past events for a PodPlay user ID using startTime/endTime range,
- * paginating until exhausted.
+ * Fetch ALL past events for a PodPlay user ID, paginating until exhausted.
  * @param {string} externalId - PodPlay user ID
  * @returns {Promise<object[]>}
  */
@@ -18,7 +51,6 @@ async function fetchPodPlayEvents(externalId) {
   const IPP = 100;
   let page = 1;
 
-  // Fetch from the beginning of recorded time up to right now
   const endTime = new Date().toISOString();
   const startTime = "2020-01-01T00:00:00.000Z";
 
@@ -43,11 +75,13 @@ async function fetchPodPlayEvents(externalId) {
     const pagination = data._pagination ?? {};
 
     console.log(
-      `[syncPlayerAttendance] PodPlay page=${page} | items_this_page=${items.length} | _pagination.page=${pagination.page} | _pagination.ipp=${pagination.ipp} | _pagination.count=${pagination.count} | _pagination.total=${pagination.total} | running_total=${allItems.length + items.length}`
+      `[syncPlayerAttendance] PodPlay page=${page} | items_this_page=${items.length}` +
+      ` | _pagination.page=${pagination.page} | _pagination.ipp=${pagination.ipp}` +
+      ` | _pagination.count=${pagination.count} | _pagination.total=${pagination.total}` +
+      ` | running_total=${allItems.length + items.length}`
     );
 
     allItems.push(...items);
-
     if (items.length < IPP) break;
     page++;
   }
@@ -56,22 +90,28 @@ async function fetchPodPlayEvents(externalId) {
   return allItems;
 }
 
+// ─── Single-player sync ───────────────────────────────────────────────────────
+
 /**
- * Sync attendance records for a single player.
- * Inserts any past events not already in the attendances table.
- * Updates last_visit_date on the player row.
+ * Sync attendance records for one player.
+ * Upserts all past events with onConflict on (player_id, program_name, attended_at)
+ * so duplicate inserts are silently ignored at the database level, regardless of
+ * how many times this runs or whether a restart occurred mid-sync.
  *
- * @param {object} player - Must have: id (Supabase UUID), external_id (PodPlay user ID)
+ * @param {{ id: string, external_id: string }} player
  * @returns {Promise<{ inserted: number, skipped: number, lastVisitDate: string|null }>}
  */
 async function syncPlayer(player) {
+  await ensureUniqueConstraint();
+
   const events = await fetchPodPlayEvents(player.external_id);
 
   if (events.length === 0) {
     return { inserted: 0, skipped: 0, lastVisitDate: null };
   }
 
-  // Fetch existing attendance event_ids for this player to avoid duplicates
+  // Fetch existing event_ids for this player (optimisation: avoid re-upserting
+  // thousands of rows that are already current).
   const { data: existing, error: fetchErr } = await supabase
     .from("attendances")
     .select("event_id")
@@ -83,37 +123,42 @@ async function syncPlayer(player) {
 
   const existingIds = new Set((existing ?? []).map((r) => r.event_id));
 
-  // Only insert past/completed events not already recorded
   const now = new Date();
   const pastEvents = events.filter((e) => new Date(e.startTime) <= now);
   const newEvents = pastEvents.filter((e) => !existingIds.has(e.id));
 
   console.log(
-    `[syncPlayerAttendance] player=${player.id} | total_from_podplay=${events.length} | past_events=${pastEvents.length} | already_in_db=${existingIds.size} | new_to_insert=${newEvents.length}`
+    `[syncPlayerAttendance] player=${player.id} | total_from_podplay=${events.length}` +
+    ` | past_events=${pastEvents.length} | already_in_db=${existingIds.size}` +
+    ` | new_to_upsert=${newEvents.length}`
   );
 
-  const newRecords = newEvents
-    .map((e) => ({
-      player_id: player.id,
-      event_id: e.id,
-      program_name: e.name,
-      attended_at: e.startTime,
-      program_type: e.customType ?? e.type ?? null,
-    }));
+  const newRecords = newEvents.map((e) => ({
+    player_id: player.id,
+    event_id: e.id,
+    program_name: e.name,
+    attended_at: e.startTime,
+    program_type: e.customType ?? e.type ?? null,
+  }));
 
   let inserted = 0;
   if (newRecords.length > 0) {
-    const { error: insertErr } = await supabase
+    // Use upsert with onConflict so any duplicate (player_id, program_name, attended_at)
+    // is silently ignored — the DB constraint is the final guarantee against duplication.
+    const { error: upsertErr } = await supabase
       .from("attendances")
-      .insert(newRecords);
+      .upsert(newRecords, {
+        onConflict: "player_id,program_name,attended_at",
+        ignoreDuplicates: true,
+      });
 
-    if (insertErr) {
-      throw new Error(`Failed to insert attendance for player ${player.id}: ${insertErr.message}`);
+    if (upsertErr) {
+      throw new Error(`Failed to upsert attendance for player ${player.id}: ${upsertErr.message}`);
     }
     inserted = newRecords.length;
   }
 
-  // Determine last_visit_date by querying the max attended_at from all records
+  // Determine last_visit_date from the most recent attendance row
   const { data: latestRow, error: maxErr } = await supabase
     .from("attendances")
     .select("attended_at")
@@ -142,23 +187,18 @@ async function syncPlayer(player) {
   return { inserted, skipped: existingIds.size, lastVisitDate };
 }
 
+// ─── Exports ──────────────────────────────────────────────────────────────────
+
 /**
- * Sync a single player by their Supabase ID and PodPlay external_id.
- * Used for manual/on-demand triggers (e.g. the POST /api/sync/player route).
- *
- * @param {string} playerId - Supabase player UUID
- * @param {string} externalId - PodPlay user ID
- * @returns {Promise<{ inserted: number, skipped: number, lastVisitDate: string|null }>}
+ * Sync a single player by Supabase ID and PodPlay external_id.
+ * Used for manual/on-demand triggers (e.g. POST /api/sync/player).
  */
 export async function syncSinglePlayer(playerId, externalId) {
   return syncPlayer({ id: playerId, external_id: externalId });
 }
 
 /**
- * Nightly sync: fetches all players with an external_id from Supabase,
- * syncs their attendance from PodPlay, and updates last_visit_date.
- *
- * @returns {Promise<{ playersProcessed: number, totalInserted: number, errors: object[] }>}
+ * Nightly batch sync: fetches all linked players, syncs attendance for each.
  */
 export async function syncPlayerAttendance() {
   const { data: players, error: playersErr } = await supabase
@@ -171,7 +211,7 @@ export async function syncPlayerAttendance() {
   }
 
   if (!players || players.length === 0) {
-    console.log("No players with an external_id found — nothing to sync.");
+    console.log("[syncPlayerAttendance] No players with an external_id found — nothing to sync.");
     return { playersProcessed: 0, totalInserted: 0, errors: [] };
   }
 
@@ -183,16 +223,17 @@ export async function syncPlayerAttendance() {
       const result = await syncPlayer(player);
       totalInserted += result.inserted;
       console.log(
-        `Player ${player.id}: inserted=${result.inserted}, lastVisitDate=${result.lastVisitDate ?? "unchanged"}`
+        `[syncPlayerAttendance] Player ${player.id}: inserted=${result.inserted}, lastVisitDate=${result.lastVisitDate ?? "unchanged"}`
       );
     } catch (err) {
-      console.error(`Error syncing player ${player.id}:`, err.message);
+      console.error(`[syncPlayerAttendance] Error syncing player ${player.id}:`, err.message);
       errors.push({ playerId: player.id, error: err.message });
     }
   }
 
   console.log(
-    `Sync complete. Players processed: ${players.length}, total inserted: ${totalInserted}, errors: ${errors.length}`
+    `[syncPlayerAttendance] Sync complete. Players processed: ${players.length},` +
+    ` total inserted: ${totalInserted}, errors: ${errors.length}`
   );
 
   return { playersProcessed: players.length, totalInserted, errors };
