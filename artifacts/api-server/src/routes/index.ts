@@ -4,6 +4,7 @@ import playersRouter from "./players";
 import agentRouter from "./agent";
 import syncRouter from "./sync";
 import programsRouter from "./programs";
+import messagesRouter from "./messages";
 
 const router: IRouter = Router();
 
@@ -12,5 +13,6 @@ router.use(playersRouter);
 router.use(agentRouter);
 router.use(syncRouter);
 router.use(programsRouter);
+router.use(messagesRouter);
 
 export default router;
