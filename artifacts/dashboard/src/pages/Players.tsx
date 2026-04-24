@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
-import { getEngagementState, relativeTime, STATE_COLORS, STATE_BG } from "@/lib/helpers";
+import { getEngagementState, relativeTime, toTitleCase, STATE_COLORS, STATE_BG } from "@/lib/helpers";
 import type { Player, EngagementState, ProgressionStatus } from "@/lib/types";
 
 function StatePill({ state }: { state: EngagementState }) {
@@ -50,7 +50,7 @@ function ProgBadge({ status }: { status: ProgressionStatus }) {
         whiteSpace: "nowrap",
       }}
     >
-      {status ?? "unset"}
+      {toTitleCase(status ?? "unset")}
     </span>
   );
 }
@@ -338,7 +338,7 @@ export default function Players() {
                               color: "var(--text-secondary)",
                             }}
                           >
-                            {p.skill_level ?? "—"}
+                            {p.skill_level ? toTitleCase(p.skill_level) : "—"}
                           </td>
                           <td
                             style={{
@@ -358,7 +358,7 @@ export default function Players() {
                               color: "var(--text-secondary)",
                             }}
                           >
-                            {p.membership_status ?? "—"}
+                            {p.membership_status ? toTitleCase(p.membership_status) : "—"}
                           </td>
                         </tr>
                       );

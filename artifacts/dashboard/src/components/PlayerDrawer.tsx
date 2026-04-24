@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "./Toast";
-import { relativeTime, formatDate, getEngagementState, STATE_COLORS } from "@/lib/helpers";
+import { relativeTime, formatDate, getEngagementState, toTitleCase, STATE_COLORS } from "@/lib/helpers";
 import type { ProgressionStatus } from "@/lib/types";
 
 interface FullPlayer {
@@ -43,10 +43,10 @@ interface PlayerDrawerProps {
 }
 
 const PROGRESSION_OPTIONS: { label: string; value: ProgressionStatus }[] = [
-  { label: "ready-to-advance", value: "ready-to-advance" },
-  { label: "developing", value: "developing" },
-  { label: "at-ceiling", value: "at-ceiling" },
-  { label: "unset", value: null },
+  { label: "Ready to Advance", value: "ready-to-advance" },
+  { label: "Developing", value: "developing" },
+  { label: "At Ceiling", value: "at-ceiling" },
+  { label: "Unset", value: null },
 ];
 
 export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerProps) {
@@ -97,7 +97,7 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
     setPlayer((p) => p ? { ...p, progression_status: val } : p);
     setSavingProgression(false);
     onDataChanged?.();
-    toast.info(`Progression set to ${val ?? "unset"}`);
+    toast.info(`Progression set to ${toTitleCase(val ?? "unset")}`);
   };
 
   const runAgent = async () => {
@@ -252,8 +252,8 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
           <div style={{ flex: 1 }}>
             {/* Profile section */}
             <Section title="Profile">
-              <ProfileRow label="Skill level" value={player.skill_level ?? "—"} />
-              <ProfileRow label="Membership" value={player.membership_status ?? "—"} />
+              <ProfileRow label="Skill level" value={player.skill_level ? toTitleCase(player.skill_level) : "—"} />
+              <ProfileRow label="Membership" value={player.membership_status ? toTitleCase(player.membership_status) : "—"} />
               <ProfileRow label="Phone" value={player.phone ?? "—"} />
               <ProfileRow label="Last visit" value={relativeTime(player.last_visit_date)} />
               <div style={{ marginBottom: 14 }}>

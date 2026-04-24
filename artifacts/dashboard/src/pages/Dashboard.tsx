@@ -7,6 +7,7 @@ import { PlayerDrawer } from "@/components/PlayerDrawer";
 import {
   getEngagementState,
   relativeTime,
+  toTitleCase,
   STATE_COLORS,
   STATE_BG,
 } from "@/lib/helpers";
@@ -59,7 +60,7 @@ function ProgressionBadge({ status }: { status: ProgressionStatus }) {
         whiteSpace: "nowrap",
       }}
     >
-      {status ?? "unset"}
+      {toTitleCase(status ?? "unset")}
     </span>
   );
 }
@@ -111,10 +112,10 @@ function ActionBtn({
 // ─── Inline progression dropdown ──────────────────────────────────────────────
 
 const PROG_OPTIONS: { label: string; value: ProgressionStatus }[] = [
-  { label: "ready-to-advance", value: "ready-to-advance" },
-  { label: "developing", value: "developing" },
-  { label: "at-ceiling", value: "at-ceiling" },
-  { label: "unset", value: null },
+  { label: "Ready to Advance", value: "ready-to-advance" },
+  { label: "Developing", value: "developing" },
+  { label: "At Ceiling", value: "at-ceiling" },
+  { label: "Unset", value: null },
 ];
 
 function ProgressionDropdown({
@@ -378,7 +379,7 @@ function AtRiskPanel({
                             marginTop: 1,
                           }}
                         >
-                          {p.skill_level}
+                          {toTitleCase(p.skill_level)}
                         </div>
                       )}
                     </td>
@@ -522,7 +523,7 @@ function NeedsAssessmentPanel({
                       marginTop: 2,
                     }}
                   >
-                    {p.skill_level ?? "No skill level"} · {relativeTime(p.last_visit_date)}
+                    {p.skill_level ? toTitleCase(p.skill_level) : "No skill level"} · {relativeTime(p.last_visit_date)}
                   </div>
                 </div>
               </div>
