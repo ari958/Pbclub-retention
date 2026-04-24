@@ -1,0 +1,61 @@
+#2 - Pulse: Full Interactive Dashboard
+What & Why
+Complete the Pulse dashboard with working sidebar navigation, four new pages (Players, Assessments, Messages, Settings), a Toast notification system, a PlayerDrawer slide-in component, and all interactive behaviours specified for the stat cards, at-risk table, assessment panel, and message queue.
+
+Done looks like
+Sidebar nav links route to /players, /assessments, /messages, /settings with amber left-border active state
+Toast notifications appear bottom-right in green/red/amber, stack vertically, auto-dismiss after 3 seconds
+PlayerDrawer slides in from the right (420px) when an at-risk table row or a player name in the message queue is clicked — shows full profile, attendance history (last 15 sessions), conversation history, progression dropdown, and a Run Agent button with toast feedback
+Stat cards are clickable: Active/Lapsing/Dormant filter the at-risk table (highlighted with amber bottom border); Response Rate navigates to /messages
+Progression badge in the at-risk table opens an inline dropdown to change status directly without opening the drawer
+Batch Agent button shows live progress "Running 2 of 8…" while calling /api/agent/run sequentially for lapsing + dormant players, ends with toast "8 messages generated"
+Sync All button calls POST /api/sync/all, shows spinner, shows success toast when done
+Run Agent per player shows "Running…" state, shows green toast "Message ready in queue" on success, red toast on error
+Needs Assessment action buttons show a brief green checkmark flash on click before the row disappears
+Players page: searchable + filterable table of all players sorted by last_visit_date descending
+Assessments page: full-screen version of the assessment panel — all players with null progression_status
+Messages page: full history of all messages joined with conversations + players, sorted newest first, showing player name, message body, direction, sent timestamp, link_clicked status
+Settings page: displays club name and agent configuration (placeholder for future config)
+Out of scope
+Editing club name or agent config (Settings is read-only display)
+Real-time / websocket updates (all data fetched on load / action)
+Pagination on the Players or Messages pages (load all for now)
+Steps
+Toast system — Create a Toast.tsx component with context + hook. Three variants: success (green), error (red), info (amber). Auto-dismiss after 3 s. Multiple toasts stack bottom-right. Wrap App.tsx in the provider.
+
+PlayerDrawer component — Create PlayerDrawer.tsx. Slides in from the right at 420px with a semi-transparent backdrop that dismisses on click. Sections: player profile header (name, skill level, membership status, phone, last visit, notes), progression status <select> that immediately updates Supabase on change, attendance history table (last 15 rows from attendances for this player sorted by attended_at desc), conversation history (conversations joined with messages for this player). Run Agent button at the top right calls POST /api/agent/run, shows loading, fires success or error toast.
+
+Sidebar navigation — Convert the existing static nav divs to <Link> components from react-router-dom. Active item is determined by useLocation match. Keep the amber left-border + background highlight styling.
+
+App.tsx routing — Add routes: /players → Players, /assessments → Assessments, /messages → Messages, /settings → Settings. All routes share the same sidebar layout.
+
+Players page — Fetch all players from Supabase. Add a name search input and two filter dropdowns (engagement state, progression status). Table columns: name, engagement state pill, progression badge, skill level, last visit, membership status. Rows sorted by last_visit_date descending. Clicking a row opens the PlayerDrawer.
+
+Assessments page — Same data query and action buttons as the dashboard NeedsAssessmentPanel, but full-screen. Query players where progression_status IS NULL. Same three buttons (ready-to-advance, developing, at-ceiling) that immediately update Supabase and remove the row.
+
+Messages page — Query messages joined with conversations and players. Show: player name (clickable → PlayerDrawer), message body (truncated to 100 chars), direction badge (inbound/outbound), sent timestamp, link_clicked badge. Sort by newest first (use id descending if no timestamp column, otherwise use the available timestamp). No send/edit/skip actions here — read-only history.
+
+Settings page — Display club name (fetched from clubs table) and static agent configuration info. Placeholder layout for future editable config.
+
+Dashboard: stat card filtering — Add filterState to Dashboard state (null | "active" | "lapsing" | "dormant"). Clicking Active/Lapsing/Dormant cards sets or toggles the filter; the at-risk table filters accordingly. Selected card gets an amber bottom border. Clicking Response Rate navigates to /messages with useNavigate.
+
+Dashboard: batch agent progress — Rewrite the Run Batch Agent handler to collect all lapsing+dormant players, run /api/agent/run sequentially, update batchStatus to "Running X of Y…" after each, and fire a toast "N messages generated" when complete.
+
+Dashboard: Sync All button — Wire to POST /api/sync/all. Show spinner on the button while in flight. Fire success toast "Sync complete" or error toast on failure.
+
+Dashboard: at-risk table row click → PlayerDrawer — Make each row a clickable div that opens the PlayerDrawer for that player. The Run Agent button in the row still works independently (stopPropagation so it doesn't open the drawer).
+
+Dashboard: progression badge inline dropdown — Clicking the ProgressionBadge in the at-risk table opens a small absolute-positioned dropdown with four options (ready-to-advance, developing, at-ceiling, unset). Selecting one immediately updates Supabase and refreshes the player list. Clicking outside closes it.
+
+Dashboard: message queue player name → PlayerDrawer — The player name in each message queue item becomes a clickable span that opens the PlayerDrawer for that player.
+
+Dashboard: needs assessment checkmark animation — After clicking a progression button in the NeedsAssessmentPanel, briefly show a green checkmark in place of the buttons for ~600 ms before the row disappears from the list.
+
+Relevant files
+artifacts/dashboard/src/App.tsx
+artifacts/dashboard/src/pages/Dashboard.tsx:1-100,481-631
+artifacts/dashboard/src/index.css
+artifacts/dashboard/src/lib/supabase.ts
+artifacts/dashboard/vite.config.ts
+Dependencies
+API: sync/all endpoint

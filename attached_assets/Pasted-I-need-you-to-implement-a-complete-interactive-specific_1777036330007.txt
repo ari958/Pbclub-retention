@@ -1,0 +1,95 @@
+I need you to implement a complete interactive specification 
+for the Pulse dashboard. Here is every interactive element, 
+what it does, and what happens in the data layer.
+
+SIDEBAR NAVIGATION
+- Dashboard → already works, current page
+- Players → create src/pages/Players.tsx — full player list 
+  with search by name and filter by engagement state and 
+  progression status. Table shows all players sorted by 
+  last_visit_date descending.
+- Assessments → create src/pages/Assessments.tsx — full screen 
+  version of the assessment queue panel, same logic as dashboard 
+  but shows all players with null progression_status
+- Messages → create src/pages/Messages.tsx — full message history 
+  querying all messages joined with conversations and players, 
+  sorted by sent_at descending. Show player name, message body, 
+  direction, sent_at, link_clicked status.
+- Settings → create src/pages/Settings.tsx — placeholder page 
+  for now with club name and agent config display
+
+Wire all nav items in App.tsx with react-router-dom routes.
+Active nav item should highlight with left amber border.
+
+TOP BAR
+- Sync All button → calls POST /api/sync/all, shows spinner 
+  on button while running, updates sidebar sync timestamp when done, 
+  shows success toast
+- Run Batch Agent button → calls POST /api/agent/run for every 
+  player where engagement_state is lapsing or dormant, runs them 
+  sequentially, shows progress count "Running 3 of 12...", 
+  when complete refreshes message queue and shows toast with count 
+  of messages generated
+
+STAT CARDS
+- Clicking Active card → filters At-Risk Players table to active only
+- Clicking Lapsing card → filters to lapsing only  
+- Clicking Dormant card → filters to dormant only
+- Clicking Response Rate card → navigates to /messages
+- Active filter state shown with amber bottom border on the card
+
+AT-RISK PLAYERS TABLE
+- Entire row is clickable → opens a PlayerDrawer component 
+  that slides in from the right (width 420px, overlay background)
+- PlayerDrawer shows:
+  * Full player profile — name, skill level, membership status, 
+    progression status, phone, last visit, notes
+  * Progression status control — dropdown select with options: 
+    null/unset, ready-to-advance, developing, at-ceiling. 
+    Selecting immediately updates Supabase and refreshes dashboard.
+  * Attendance history — query attendances table for this player, 
+    show last 15 sessions sorted by attended_at descending, 
+    show program_name and attended_at date
+  * Conversation history — query conversations joined with messages 
+    for this player, show each conversation with the message body 
+    and outcome
+  * Close button (X) in top right dismisses the drawer
+- Run Agent button → calls POST /api/agent/run with player_id, 
+  shows "Running..." disabled state, on success adds message to 
+  queue and shows green toast "Message ready in queue", 
+  on error shows red toast with error message
+- Progression badge in table → clicking opens inline dropdown 
+  (not the drawer) to change progression_status directly. 
+  Options: ready-to-advance, developing, at-ceiling, unset. 
+  Updates Supabase immediately on selection.
+
+NEEDS ASSESSMENT PANEL
+- Ready to advance button → sets progression_status to 
+  "ready-to-advance" in Supabase, removes player from list, 
+  shows brief green checkmark animation
+- Developing button → sets to "developing", removes from list
+- At ceiling button → sets to "at-ceiling", removes from list
+- Empty state → "All players assessed" message
+
+MESSAGE QUEUE PANEL
+- Send button → calls POST /api/messages/send with message_id, 
+  shows "Sending..." disabled state, on success removes from queue 
+  and shows toast "Message sent", on Twilio error shows red toast 
+  with the error reason
+- Edit button → replaces message preview with an editable textarea 
+  pre-filled with current message body. Show Save and Cancel buttons 
+  below. Save calls Supabase update on messages table with new body 
+  then returns to preview mode. Cancel discards changes.
+- Skip button → updates conversations table setting outcome to 
+  "skipped" for this conversation_id, removes message from queue
+- Player name in message item → opens PlayerDrawer for that player
+
+TOAST NOTIFICATIONS
+- Build a simple Toast component that appears bottom-right
+- Green for success, red for error, amber for info
+- Auto-dismisses after 3 seconds
+- Multiple toasts stack vertically
+
+Implement all of this now. Create the new page files, 
+update App.tsx with all routes, and make every interactive 
+element work as specified above.
