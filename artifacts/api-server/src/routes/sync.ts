@@ -3,6 +3,8 @@ import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 // @ts-ignore — plain JS module
 import { syncSinglePlayer } from "../syncPlayerAttendance.js";
+// @ts-ignore — plain JS module
+import { syncEventAttendance } from "../syncEventAttendance.js";
 
 const router: IRouter = Router();
 
@@ -253,6 +255,100 @@ router.get("/sync/status", (_req, res) => {
     cancelling: syncStatus === "running" && syncCancelled,
     recentLogs: syncLogs.slice(-50),
   });
+});
+
+// ─── Event-centric sync job state ─────────────────────────────────────────────
+
+type EventSyncStatus = "idle" | "running" | "cancelled" | "done" | "error";
+
+let evSyncStatus: EventSyncStatus = "idle";
+let evSyncStartedAt: string | null = null;
+let evSyncFinishedAt: string | null = null;
+let evSyncStats: Record<string, number> | null = null;
+let evSyncError: string | null = null;
+let evSyncCancelled = false;
+const evSyncLogs: string[] = [];
+
+function evLog(msg: string) {
+  console.log(msg);
+  evSyncLogs.push(`[${new Date().toISOString()}] ${msg}`);
+  if (evSyncLogs.length > 500) evSyncLogs.splice(0, evSyncLogs.length - 500);
+}
+
+/**
+ * POST /api/sync/events
+ * Starts an event-centric attendance sync in the background.
+ * Returns 202 immediately; poll GET /api/sync/events/status for progress.
+ */
+router.post("/sync/events", (_req, res) => {
+  if (evSyncStatus === "running") {
+    return res.status(409).json({ error: "Event sync already running" });
+  }
+
+  evSyncStatus = "running";
+  evSyncStartedAt = new Date().toISOString();
+  evSyncFinishedAt = null;
+  evSyncStats = null;
+  evSyncError = null;
+  evSyncCancelled = false;
+  evSyncLogs.length = 0;
+
+  evLog("[sync/events] Job started");
+
+  // Run async without blocking the response
+  (async () => {
+    try {
+      const stats = await syncEventAttendance(
+        evLog,
+        () => evSyncCancelled
+      );
+      evSyncStats = stats;
+      evSyncStatus = evSyncCancelled ? "cancelled" : "done";
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const wasCancelled = msg.includes("cancelled by operator");
+      evSyncStatus = wasCancelled ? "cancelled" : "error";
+      evSyncError = msg;
+      evLog(`[sync/events] ${wasCancelled ? "Cancelled" : "ERROR"}: ${msg}`);
+    } finally {
+      evSyncFinishedAt = new Date().toISOString();
+      evLog(`[sync/events] Job finished — status: ${evSyncStatus}`);
+    }
+  })();
+
+  return res.status(202).json({
+    message: "Event sync started",
+    statusUrl: "/api/sync/events/status",
+  });
+});
+
+/**
+ * GET /api/sync/events/status
+ * Returns current event sync job state, stats, and recent log lines.
+ */
+router.get("/sync/events/status", (_req, res) => {
+  res.json({
+    status: evSyncStatus,
+    startedAt: evSyncStartedAt,
+    finishedAt: evSyncFinishedAt,
+    stats: evSyncStats,
+    error: evSyncError,
+    cancelling: evSyncStatus === "running" && evSyncCancelled,
+    recentLogs: evSyncLogs.slice(-50),
+  });
+});
+
+/**
+ * POST /api/sync/events/cancel
+ * Requests cancellation of the running event sync.
+ */
+router.post("/sync/events/cancel", (_req, res) => {
+  if (evSyncStatus !== "running") {
+    return res.status(409).json({ error: "No event sync currently running" });
+  }
+  evSyncCancelled = true;
+  evLog("[sync/events] Cancellation requested");
+  return res.json({ message: "Cancellation requested" });
 });
 
 export default router;
