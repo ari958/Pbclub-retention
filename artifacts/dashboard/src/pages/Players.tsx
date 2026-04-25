@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
-import { getEngagementState, relativeTime, toTitleCase, STATE_COLORS, STATE_BG } from "@/lib/helpers";
+import { getEngagementState, relativeTime, toTitleCase, STATE_COLORS, STATE_BG, dateOnlyMs } from "@/lib/helpers";
 import type { Player, EngagementState, ProgressionStatus } from "@/lib/types";
 
 function StatePill({ state }: { state: EngagementState }) {
@@ -190,7 +190,7 @@ export default function Players() {
         if (aNull && bNull) return 0;
         if (aNull) return 1;
         if (bNull) return -1;
-        cmp = new Date(a.last_visit_date!).getTime() - new Date(b.last_visit_date!).getTime();
+        cmp = dateOnlyMs(a.last_visit_date!) - dateOnlyMs(b.last_visit_date!);
       } else if (sortCol === "skill") {
         cmp = (a.skill_level ?? "").localeCompare(b.skill_level ?? "");
       } else if (sortCol === "membership") {

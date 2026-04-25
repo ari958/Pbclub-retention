@@ -1,8 +1,14 @@
 import type { EngagementState } from "./types";
 
+/** Parse a date-only string (YYYY-MM-DD) as a local date, not UTC midnight. */
+function parseDateOnly(dateStr: string): Date {
+  const [year, month, day] = dateStr.split("-").map(Number);
+  return new Date(year, month - 1, day);
+}
+
 export function getEngagementState(lastVisitDate: string | null): EngagementState {
   if (!lastVisitDate) return "never-visited";
-  const daysSince = (Date.now() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24);
+  const daysSince = (Date.now() - parseDateOnly(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24);
   if (daysSince <= 14) return "active";
   if (daysSince <= 30) return "lapsing";
   return "dormant";
@@ -10,7 +16,7 @@ export function getEngagementState(lastVisitDate: string | null): EngagementStat
 
 export function relativeTime(dateStr: string | null): string {
   if (!dateStr) return "Never";
-  const days = Math.floor((Date.now() - new Date(dateStr).getTime()) / (1000 * 60 * 60 * 24));
+  const days = Math.floor((Date.now() - parseDateOnly(dateStr).getTime()) / (1000 * 60 * 60 * 24));
   if (days === 0) return "Today";
   if (days === 1) return "1d ago";
   if (days < 7) return `${days}d ago`;
@@ -20,11 +26,15 @@ export function relativeTime(dateStr: string | null): string {
 
 export function formatDate(dateStr: string | null): string {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-US", {
+  return parseDateOnly(dateStr).toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
   });
+}
+
+export function dateOnlyMs(dateStr: string): number {
+  return parseDateOnly(dateStr).getTime();
 }
 
 export const STATE_COLORS: Record<EngagementState, string> = {

@@ -10,6 +10,7 @@ import {
   toTitleCase,
   STATE_COLORS,
   STATE_BG,
+  dateOnlyMs,
 } from "@/lib/helpers";
 import type { EngagementState, ProgressionStatus, Player, MessageQueueItem } from "@/lib/types";
 
@@ -378,7 +379,7 @@ function AtRiskPanel({
         if (aNull && bNull) return 0;
         if (aNull) return 1;
         if (bNull) return -1;
-        cmp = new Date(a.last_visit_date!).getTime() - new Date(b.last_visit_date!).getTime();
+        cmp = dateOnlyMs(a.last_visit_date!) - dateOnlyMs(b.last_visit_date!);
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
