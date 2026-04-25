@@ -1,0 +1,110 @@
+Two changes needed. Complete both before stopping.
+Do not touch any file except the server routes file 
+and BulkMessageModal.tsx.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHANGE 1 — SERVER: Auto-create sign-up links for all events
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In GET /api/events/upcoming, update the open-invitations 
+logic so every event always gets a signupUrl — never null.
+
+Currently if an event returns 422 (no open invitation), 
+signupUrl is set to null. Instead, auto-create one.
+
+Update the per-event open-invitations logic to:
+
+STEP 1 — Try to GET existing invitation:
+  GET /events/{eventId}/open-invitations
+  Headers: { "x-api-key": process.env.PODPLAY_API_KEY }
+
+  If response.ok AND body.items has entries with a redeemUrl:
+    → use first item with redeemsRemaining > 0,
+      or first item with any redeemUrl if all are full
+    → signupUrl = that item's redeemUrl
+    → done, skip Step 2
+
+STEP 2 — If no invitation exists (422 or empty items):
+  POST /events/{eventId}/open-invitations
+  Headers: {
+    "x-api-key": process.env.PODPLAY_API_KEY,
+    "Content-Type": "application/json"
+  }
+  Body: {
+    "visibility": "LISTED",
+    "type": "SIGNUP",
+    "onBehalfOfEventOwner": true
+  }
+
+  If POST response.ok AND body.redeemUrl exists:
+    → signupUrl = body.redeemUrl
+
+  If POST fails (422 or network error):
+    → signupUrl = null (silent fail, log to console only)
+    → do NOT throw, do NOT block other events
+
+Keep everything inside Promise.allSettled — one event 
+failure must never block others. Keep the 5-second 
+AbortController timeout per call. Do not change the 
+cache logic, response shape, or filter logic.
+
+Note: The POST creates a persistent open invitation in 
+PodPlay. Subsequent GET calls will find it, so Step 2 
+only runs once per event ever.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CHANGE 2 — FRONTEND: Hide event picker for templates 
+           that don't need it (Win-back offer, etc.)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In BulkMessageModal.tsx, the event picker section 
+(SELECT AN EVENT dropdown) is showing for ALL templates 
+including Win-back offer, which has no event variables.
+
+FIND the selected template object in component state.
+It has a body string field containing the template text.
+
+ADD this computed boolean (recalculate whenever the 
+selected template changes):
+
+  const templateNeedsEventPicker = Boolean(
+    selectedTemplate?.body?.includes('{{event_date}}') ||
+    selectedTemplate?.body?.includes('{{event_link}}') ||
+    selectedTemplate?.body?.includes('{{booking_link}}')
+  );
+
+WRAP the entire event picker section in:
+  {templateNeedsEventPicker && ( ... )}
+
+The wrapped section must include ALL of:
+  - The "SELECT AN EVENT" section label
+  - The <select> dropdown
+  - The "Sign-up link found ✓" text (when shown)
+  - The manual sign-up link input (when shown)
+  - Any loading spinner or error/empty state text 
+    specific to the event picker
+
+If templateNeedsEventPicker is false, none of that 
+renders — not hidden, not greyed out, completely absent 
+from the DOM.
+
+ALSO fix the canSend condition: event_date, event_link, 
+and booking_link must NOT be required for Send to enable 
+when templateNeedsEventPicker is false. The Win-back 
+offer template should be sendable without any event 
+selection.
+
+ALSO: when the operator switches to a template where 
+templateNeedsEventPicker is false, clear the selected 
+event and reset event_date, event_link, booking_link 
+to empty so they don't bleed into the next template's 
+preview.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Complete both changes before stopping. Final summary:
+  ✓ Completed
+  ✗ Skipped — reason
+  ⚠ Any assumptions made
+
+Restart the server after Change 1 so the cache clears 
+and the new auto-create logic runs on next modal open.

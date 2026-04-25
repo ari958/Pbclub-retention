@@ -73,28 +73,62 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 20);
 
-  // ── Step 3: fetch open-invitations in parallel ────────────────────────────
+  // ── Step 3: fetch (or auto-create) open-invitations in parallel ──────────
   const invitationResults = await Promise.allSettled(
-    filtered.map(async (event, i) => {
-      const ic = new AbortController();
-      const it = setTimeout(() => ic.abort(), 5_000);
+    filtered.map(async (event) => {
+      const url = `${PODPLAY_BASE}/events/${event.id}/open-invitations`;
+
+      // ── 3a: try GET existing invitation ────────────────────────────────
       try {
-        const res = await fetch(
-          `${PODPLAY_BASE}/events/${event.id}/open-invitations`,
-          { headers, signal: ic.signal }
-        );
+        const ic = new AbortController();
+        const it = setTimeout(() => ic.abort(), 5_000);
+        const res = await fetch(url, { headers, signal: ic.signal });
         clearTimeout(it);
-        if (res.status === 422) return null;
-        if (!res.ok) return null;
-        const body = await res.json() as { items?: { redeemUrl?: string; redeemsRemaining?: number }[] };
-        const items = body.items ?? [];
-        // Prefer an invitation that still has spots; fall back to any with a link
-        const available = items.find((it) => (it.redeemsRemaining ?? 0) > 0 && it.redeemUrl);
-        const anyLink = items.find((it) => it.redeemUrl);
-        return (available ?? anyLink)?.redeemUrl ?? null;
+
+        if (res.ok) {
+          const body = await res.json() as { items?: { redeemUrl?: string; redeemsRemaining?: number }[] };
+          const items = body.items ?? [];
+          // Prefer an invitation that still has spots; fall back to any with a link
+          const available = items.find((item) => (item.redeemsRemaining ?? 0) > 0 && item.redeemUrl);
+          const anyLink   = items.find((item) => item.redeemUrl);
+          const found = (available ?? anyLink)?.redeemUrl ?? null;
+          if (found) return found;
+          // items is empty — fall through to POST
+        } else if (res.status !== 422) {
+          // Unexpected error — skip POST, return null
+          console.log(`[events] GET invitations ${res.status} for ${event.id}`);
+          return null;
+        }
+        // 422 or empty items → fall through to POST
       } catch (err) {
-        clearTimeout(it);
-        console.log(`[events] invitation fetch failed for ${event.id}:`, (err as Error).message);
+        console.log(`[events] GET invitation fetch failed for ${event.id}:`, (err as Error).message);
+        return null;
+      }
+
+      // ── 3b: auto-create an open invitation via POST ─────────────────────
+      try {
+        const pc = new AbortController();
+        const pt = setTimeout(() => pc.abort(), 5_000);
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visibility: "LISTED",
+            type: "SIGNUP",
+            onBehalfOfEventOwner: true,
+          }),
+          signal: pc.signal,
+        });
+        clearTimeout(pt);
+
+        if (res.ok) {
+          const body = await res.json() as { redeemUrl?: string };
+          return body.redeemUrl ?? null;
+        }
+        console.log(`[events] POST invitation ${res.status} for ${event.id}`);
+        return null;
+      } catch (err) {
+        console.log(`[events] POST invitation failed for ${event.id}:`, (err as Error).message);
         return null;
       }
     })

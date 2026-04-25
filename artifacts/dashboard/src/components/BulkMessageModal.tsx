@@ -58,10 +58,6 @@ function getOperatorVarsNeeded(body: string): string[] {
   return result;
 }
 
-function templateNeedsEventPicker(body: string): boolean {
-  return (body.match(/\{\{(\w+)\}\}/g) ?? []).some((m) => EVENT_VARS.has(m.slice(2, -2)));
-}
-
 function applyOperatorVals(body: string, vals: Record<string, string>): string {
   return body.replace(/\{\{(\w+)\}\}/g, (match, v) =>
     OPERATOR_VARS.has(v) && vals[v]?.trim() ? vals[v].trim() : match
@@ -212,14 +208,19 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
   const previewPlayer = recipients[0];
   const rawBody = mode === "template" ? (selectedTemplate?.body ?? "") : customBody;
   const operatorVarsNeeded = getOperatorVarsNeeded(rawBody);
-  const needsEventPicker = mode === "template" && !!selectedTemplate && templateNeedsEventPicker(rawBody);
+
+  const templateNeedsEventPicker = Boolean(
+    selectedTemplate?.body?.includes("{{event_date}}") ||
+    selectedTemplate?.body?.includes("{{event_link}}") ||
+    selectedTemplate?.body?.includes("{{booking_link}}")
+  );
 
   // Non-event operator vars (e.g. {{next_level}})
   const nonEventOperatorVars = operatorVarsNeeded.filter((v) => !EVENT_VARS.has(v));
 
   // Send-ready checks
   const allOperatorVarsFilled = operatorVarsNeeded.every((v) => operatorVals[v]?.trim());
-  const eventPickerSatisfied = !needsEventPicker || (selectedEventId !== "");
+  const eventPickerSatisfied = !templateNeedsEventPicker || (selectedEventId !== "");
 
   const resolvedBodyForApi = applyOperatorVals(rawBody, operatorVals);
 
@@ -439,7 +440,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
           )}
 
           {/* EVENT PICKER — only when template needs it */}
-          {needsEventPicker && (
+          {templateNeedsEventPicker && (
             <div style={{ marginBottom: 18 }}>
               <div style={sectionHead}>Select an event</div>
 
