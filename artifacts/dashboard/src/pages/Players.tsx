@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
@@ -55,20 +55,22 @@ function ProgBadge({ status }: { status: ProgressionStatus }) {
   );
 }
 
-const ENGAGEMENT_OPTIONS: { label: string; value: string }[] = [
-  { label: "All states", value: "" },
-  { label: "Active", value: "active" },
-  { label: "Lapsing", value: "lapsing" },
-  { label: "Dormant", value: "dormant" },
-];
+type SortCol = "name" | "state" | "progression" | "lastVisit" | "skill" | "membership";
+type SortDir = "asc" | "desc";
 
-const PROGRESSION_OPTIONS: { label: string; value: string }[] = [
-  { label: "All progressions", value: "" },
-  { label: "Unset", value: "null" },
-  { label: "Ready to advance", value: "ready-to-advance" },
-  { label: "Developing", value: "developing" },
-  { label: "At ceiling", value: "at-ceiling" },
-];
+const STATE_SORT_ORDER: Record<EngagementState, number> = {
+  dormant: 0,
+  lapsing: 1,
+  active: 2,
+  "never-visited": 3,
+};
+
+const PROG_SORT_ORDER: Record<string, number> = {
+  null: 0,
+  "ready-to-advance": 1,
+  developing: 2,
+  "at-ceiling": 3,
+};
 
 const selectStyle: React.CSSProperties = {
   padding: "6px 10px",
@@ -79,7 +81,44 @@ const selectStyle: React.CSSProperties = {
   fontFamily: "var(--font-sans)",
   fontSize: 12,
   cursor: "pointer",
+  outline: "none",
 };
+
+function SortTh({
+  label,
+  col,
+  sortCol,
+  sortDir,
+  onSort,
+}: {
+  label: string;
+  col: SortCol;
+  sortCol: SortCol;
+  sortDir: SortDir;
+  onSort: (c: SortCol) => void;
+}) {
+  const active = sortCol === col;
+  return (
+    <th
+      onClick={() => onSort(col)}
+      style={{
+        padding: "8px 16px",
+        textAlign: "left",
+        fontFamily: "var(--font-mono)",
+        fontSize: 10,
+        fontWeight: 500,
+        color: active ? "var(--accent)" : "var(--text-tertiary)",
+        borderBottom: "1px solid var(--border)",
+        letterSpacing: "0.05em",
+        whiteSpace: "nowrap",
+        cursor: "pointer",
+        userSelect: "none",
+      }}
+    >
+      {label} {active ? (sortDir === "asc" ? "↑" : "↓") : ""}
+    </th>
+  );
+}
 
 export default function Players() {
   const [players, setPlayers] = useState<Player[]>([]);
@@ -88,6 +127,9 @@ export default function Players() {
   const [search, setSearch] = useState("");
   const [engFilter, setEngFilter] = useState("");
   const [progFilter, setProgFilter] = useState("");
+  const [memberFilter, setMemberFilter] = useState("");
+  const [sortCol, setSortCol] = useState<SortCol>("state");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
 
   const fetchData = async () => {
@@ -96,8 +138,7 @@ export default function Players() {
         .from("players")
         .select(
           "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id"
-        )
-        .order("last_visit_date", { ascending: false, nullsFirst: false }),
+        ),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
     ]);
     if (playersRes.data) setPlayers(playersRes.data as Player[]);
@@ -107,18 +148,61 @@ export default function Players() {
 
   useEffect(() => { fetchData(); }, []);
 
-  const displayed = players.filter((p) => {
-    if (search && !p.name.toLowerCase().includes(search.toLowerCase())) return false;
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  };
+
+  const hasFilters = search || engFilter || progFilter || memberFilter;
+
+  const displayed = useMemo(() => {
+    let list = [...players];
+
+    if (search) list = list.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
     if (engFilter) {
-      const state = getEngagementState(p.last_visit_date);
-      if (state !== engFilter) return false;
+      list = list.filter((p) => getEngagementState(p.last_visit_date) === engFilter);
     }
     if (progFilter) {
-      if (progFilter === "null" && p.progression_status !== null) return false;
-      if (progFilter !== "null" && p.progression_status !== progFilter) return false;
+      list = list.filter((p) =>
+        progFilter === "null" ? p.progression_status === null : p.progression_status === progFilter
+      );
     }
-    return true;
-  });
+    if (memberFilter === "member") list = list.filter((p) => p.membership_status === "member");
+    if (memberFilter === "non-member") list = list.filter((p) => p.membership_status !== "member");
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "name") {
+        cmp = a.name.localeCompare(b.name);
+      } else if (sortCol === "state") {
+        cmp = STATE_SORT_ORDER[getEngagementState(a.last_visit_date)] - STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
+      } else if (sortCol === "progression") {
+        const ak = a.progression_status ?? "null";
+        const bk = b.progression_status ?? "null";
+        cmp = (PROG_SORT_ORDER[ak] ?? 99) - (PROG_SORT_ORDER[bk] ?? 99);
+      } else if (sortCol === "lastVisit") {
+        const aNull = a.last_visit_date === null;
+        const bNull = b.last_visit_date === null;
+        if (aNull && bNull) return 0;
+        if (aNull) return 1;
+        if (bNull) return -1;
+        cmp = new Date(a.last_visit_date!).getTime() - new Date(b.last_visit_date!).getTime();
+      } else if (sortCol === "skill") {
+        cmp = (a.skill_level ?? "").localeCompare(b.skill_level ?? "");
+      } else if (sortCol === "membership") {
+        cmp = (a.membership_status ?? "").localeCompare(b.membership_status ?? "");
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return list;
+  }, [players, search, engFilter, progFilter, memberFilter, sortCol, sortDir]);
+
+  const thProps = { sortCol, sortDir, onSort: handleSort };
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
@@ -182,48 +266,38 @@ export default function Players() {
               placeholder="Search by name…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{
-                ...selectStyle,
-                width: 200,
-                outline: "none",
-              }}
+              style={{ ...selectStyle, width: 200 }}
             />
-            <select
-              value={engFilter}
-              onChange={(e) => setEngFilter(e.target.value)}
-              style={selectStyle}
-            >
-              {ENGAGEMENT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
+            <select value={engFilter} onChange={(e) => setEngFilter(e.target.value)} style={selectStyle}>
+              <option value="">All states</option>
+              <option value="active">Active</option>
+              <option value="lapsing">Lapsing</option>
+              <option value="dormant">Dormant</option>
+              <option value="never-visited">Never Visited</option>
             </select>
-            <select
-              value={progFilter}
-              onChange={(e) => setProgFilter(e.target.value)}
-              style={selectStyle}
-            >
-              {PROGRESSION_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  {o.label}
-                </option>
-              ))}
+            <select value={progFilter} onChange={(e) => setProgFilter(e.target.value)} style={selectStyle}>
+              <option value="">All progressions</option>
+              <option value="null">Unset</option>
+              <option value="ready-to-advance">Ready to Advance</option>
+              <option value="developing">Developing</option>
+              <option value="at-ceiling">At Ceiling</option>
             </select>
-            {(search || engFilter || progFilter) && (
+            <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} style={selectStyle}>
+              <option value="">All members</option>
+              <option value="member">Member</option>
+              <option value="non-member">Non-member</option>
+            </select>
+            {hasFilters && (
               <button
                 onClick={() => {
                   setSearch("");
                   setEngFilter("");
                   setProgFilter("");
+                  setMemberFilter("");
                 }}
-                style={{
-                  ...selectStyle,
-                  color: "var(--text-tertiary)",
-                  cursor: "pointer",
-                }}
+                style={{ ...selectStyle, color: "var(--text-tertiary)" }}
               >
-                Clear
+                Clear filters
               </button>
             )}
           </div>
@@ -241,59 +315,24 @@ export default function Players() {
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
                   <tr style={{ background: "var(--bg-surface-2)" }}>
-                    {[
-                      "PLAYER",
-                      "STATE",
-                      "PROGRESSION",
-                      "SKILL LEVEL",
-                      "LAST VISIT",
-                      "MEMBERSHIP",
-                    ].map((h) => (
-                      <th
-                        key={h}
-                        style={{
-                          padding: "8px 16px",
-                          textAlign: "left",
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 10,
-                          fontWeight: 500,
-                          color: "var(--text-tertiary)",
-                          borderBottom: "1px solid var(--border)",
-                          letterSpacing: "0.05em",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {h}
-                      </th>
-                    ))}
+                    <SortTh label="PLAYER" col="name" {...thProps} />
+                    <SortTh label="STATE" col="state" {...thProps} />
+                    <SortTh label="PROGRESSION" col="progression" {...thProps} />
+                    <SortTh label="SKILL LEVEL" col="skill" {...thProps} />
+                    <SortTh label="LAST VISIT" col="lastVisit" {...thProps} />
+                    <SortTh label="MEMBERSHIP" col="membership" {...thProps} />
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <tr>
-                      <td
-                        colSpan={6}
-                        style={{
-                          padding: "32px 16px",
-                          textAlign: "center",
-                          color: "var(--text-tertiary)",
-                          fontSize: 13,
-                        }}
-                      >
+                      <td colSpan={6} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
                         Loading…
                       </td>
                     </tr>
                   ) : displayed.length === 0 ? (
                     <tr>
-                      <td
-                        colSpan={6}
-                        style={{
-                          padding: "32px 16px",
-                          textAlign: "center",
-                          color: "var(--text-tertiary)",
-                          fontSize: 13,
-                        }}
-                      >
+                      <td colSpan={6} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
                         No players match your filters
                       </td>
                     </tr>
@@ -305,25 +344,18 @@ export default function Players() {
                           key={p.id}
                           onClick={() => setDrawerPlayerId(p.id)}
                           style={{
-                            borderBottom:
-                              i < displayed.length - 1
-                                ? "1px solid var(--border)"
-                                : "none",
+                            borderBottom: i < displayed.length - 1 ? "1px solid var(--border)" : "none",
                             cursor: "pointer",
                           }}
                           onMouseEnter={(e) =>
-                            ((e.currentTarget as HTMLElement).style.background =
-                              "var(--bg-surface-2)")
+                            ((e.currentTarget as HTMLElement).style.background = "var(--bg-surface-2)")
                           }
                           onMouseLeave={(e) =>
-                            ((e.currentTarget as HTMLElement).style.background =
-                              "transparent")
+                            ((e.currentTarget as HTMLElement).style.background = "transparent")
                           }
                         >
                           <td style={{ padding: "10px 16px" }}>
-                            <div style={{ fontWeight: 500, fontSize: 13 }}>
-                              {p.name}
-                            </div>
+                            <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
                           </td>
                           <td style={{ padding: "10px 16px" }}>
                             <StatePill state={state} />
@@ -331,33 +363,13 @@ export default function Players() {
                           <td style={{ padding: "10px 16px" }}>
                             <ProgBadge status={p.progression_status} />
                           </td>
-                          <td
-                            style={{
-                              padding: "10px 16px",
-                              fontSize: 12,
-                              color: "var(--text-secondary)",
-                            }}
-                          >
+                          <td style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-secondary)" }}>
                             {p.skill_level ? toTitleCase(p.skill_level) : "—"}
                           </td>
-                          <td
-                            style={{
-                              padding: "10px 16px",
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 12,
-                              color: "var(--text-secondary)",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
+                          <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
                             {relativeTime(p.last_visit_date)}
                           </td>
-                          <td
-                            style={{
-                              padding: "10px 16px",
-                              fontSize: 12,
-                              color: "var(--text-secondary)",
-                            }}
-                          >
+                          <td style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-secondary)" }}>
                             {p.membership_status ? toTitleCase(p.membership_status) : "—"}
                           </td>
                         </tr>

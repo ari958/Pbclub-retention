@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/Toast";
@@ -215,20 +215,101 @@ function ProgressionDropdown({
 
 // ─── Panels ───────────────────────────────────────────────────────────────────
 
+type SortCol = "name" | "state" | "progression" | "lastVisit";
+type SortDir = "asc" | "desc";
+
+const STATE_SORT_ORDER: Record<EngagementState, number> = {
+  dormant: 0,
+  lapsing: 1,
+  active: 2,
+  "never-visited": 3,
+};
+
+const PROG_SORT_ORDER: Record<string, number> = {
+  null: 0,
+  "ready-to-advance": 1,
+  developing: 2,
+  "at-ceiling": 3,
+};
+
+const filterSelectStyle: React.CSSProperties = {
+  padding: "5px 9px",
+  borderRadius: 5,
+  border: "1px solid var(--border)",
+  background: "var(--bg-surface-2)",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-sans)",
+  fontSize: 12,
+  cursor: "pointer",
+  outline: "none",
+};
+
+function SortTh({
+  label,
+  col,
+  sortCol,
+  sortDir,
+  onSort,
+  style,
+}: {
+  label: string;
+  col: SortCol;
+  sortCol: SortCol;
+  sortDir: SortDir;
+  onSort: (c: SortCol) => void;
+  style?: React.CSSProperties;
+}) {
+  const active = sortCol === col;
+  return (
+    <th
+      onClick={() => onSort(col)}
+      style={{
+        padding: "8px 16px",
+        textAlign: "left",
+        fontFamily: "var(--font-mono)",
+        fontSize: 10,
+        fontWeight: 500,
+        color: active ? "var(--accent)" : "var(--text-tertiary)",
+        borderBottom: "1px solid var(--border)",
+        letterSpacing: "0.05em",
+        whiteSpace: "nowrap",
+        cursor: "pointer",
+        userSelect: "none",
+        ...style,
+      }}
+    >
+      {label} {active ? (sortDir === "asc" ? "↑" : "↓") : ""}
+    </th>
+  );
+}
+
 function AtRiskPanel({
   players,
   filterState,
+  onFilterStateChange,
   onRunAgent,
   onRowClick,
   onProgressionChange,
 }: {
   players: Player[];
   filterState: EngagementState | null;
+  onFilterStateChange: (s: EngagementState | null) => void;
   onRunAgent: (playerId: string) => Promise<void>;
   onRowClick: (playerId: string) => void;
   onProgressionChange: () => void;
 }) {
   const [running, setRunning] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [engFilter, setEngFilter] = useState<EngagementState | null>(filterState);
+  const [progFilter, setProgFilter] = useState("");
+  const [memberFilter, setMemberFilter] = useState("");
+  const [sortCol, setSortCol] = useState<SortCol>("state");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+
+  // Sync engagement filter when stat card is clicked
+  useEffect(() => {
+    setEngFilter(filterState);
+  }, [filterState]);
 
   const handleRun = async (e: React.MouseEvent, playerId: string) => {
     e.stopPropagation();
@@ -240,21 +321,72 @@ function AtRiskPanel({
     }
   };
 
-  const sorted = [...players].sort((a, b) => {
-    const order: Record<EngagementState, number> = {
-      dormant: 0,
-      lapsing: 1,
-      active: 2,
-    };
-    return (
-      order[getEngagementState(a.last_visit_date)] -
-      order[getEngagementState(b.last_visit_date)]
-    );
-  });
+  const handleEngChange = (val: string) => {
+    const v = val === "" ? null : (val as EngagementState);
+    setEngFilter(v);
+    onFilterStateChange(v);
+  };
 
-  const displayed = filterState
-    ? sorted.filter((p) => getEngagementState(p.last_visit_date) === filterState)
-    : sorted;
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortCol(col);
+      setSortDir("asc");
+    }
+  };
+
+  const clearFilters = () => {
+    setSearch("");
+    setEngFilter(null);
+    setProgFilter("");
+    setMemberFilter("");
+    setSortCol("state");
+    setSortDir("asc");
+    onFilterStateChange(null);
+  };
+
+  const hasFilters = search || engFilter || progFilter || memberFilter;
+
+  const displayed = useMemo(() => {
+    let list = [...players];
+
+    if (search) list = list.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+    if (engFilter) list = list.filter((p) => getEngagementState(p.last_visit_date) === engFilter);
+    if (progFilter) {
+      list = list.filter((p) =>
+        progFilter === "null" ? p.progression_status === null : p.progression_status === progFilter
+      );
+    }
+    if (memberFilter === "member") list = list.filter((p) => p.membership_status === "member");
+    if (memberFilter === "non-member") list = list.filter((p) => p.membership_status !== "member");
+
+    list.sort((a, b) => {
+      let cmp = 0;
+      if (sortCol === "name") {
+        cmp = a.name.localeCompare(b.name);
+      } else if (sortCol === "state") {
+        cmp = STATE_SORT_ORDER[getEngagementState(a.last_visit_date)] - STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
+      } else if (sortCol === "progression") {
+        const ak = a.progression_status ?? "null";
+        const bk = b.progression_status ?? "null";
+        cmp = (PROG_SORT_ORDER[ak] ?? 99) - (PROG_SORT_ORDER[bk] ?? 99);
+      } else if (sortCol === "lastVisit") {
+        // never-visited always sorts last regardless of direction
+        const aNull = a.last_visit_date === null;
+        const bNull = b.last_visit_date === null;
+        if (aNull && bNull) return 0;
+        if (aNull) return 1;
+        if (bNull) return -1;
+        cmp = new Date(a.last_visit_date!).getTime() - new Date(b.last_visit_date!).getTime();
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+
+    return list;
+  }, [players, search, engFilter, progFilter, memberFilter, sortCol, sortDir]);
+
+  const thProps = { sortCol, sortDir, onSort: handleSort };
 
   return (
     <section
@@ -265,6 +397,7 @@ function AtRiskPanel({
         overflow: "hidden",
       }}
     >
+      {/* Header */}
       <div
         style={{
           padding: "14px 20px 12px",
@@ -274,23 +407,7 @@ function AtRiskPanel({
           alignItems: "center",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>At-Risk Players</span>
-          {filterState && (
-            <span
-              style={{
-                fontSize: 11,
-                fontFamily: "var(--font-mono)",
-                color: STATE_COLORS[filterState],
-                background: STATE_BG[filterState],
-                padding: "1px 6px",
-                borderRadius: 3,
-              }}
-            >
-              {filterState}
-            </span>
-          )}
-        </div>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>Players</span>
         <span
           style={{
             fontFamily: "var(--font-mono)",
@@ -305,43 +422,72 @@ function AtRiskPanel({
           {displayed.length} players
         </span>
       </div>
+
+      {/* Filter bar */}
+      <div
+        style={{
+          padding: "10px 16px",
+          borderBottom: "1px solid var(--border)",
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          flexWrap: "wrap",
+          background: "var(--bg-surface-2)",
+        }}
+      >
+        <input
+          type="text"
+          placeholder="Search by name…"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          style={{ ...filterSelectStyle, width: 160 }}
+        />
+        <select value={engFilter ?? ""} onChange={(e) => handleEngChange(e.target.value)} style={filterSelectStyle}>
+          <option value="">All states</option>
+          <option value="active">Active</option>
+          <option value="lapsing">Lapsing</option>
+          <option value="dormant">Dormant</option>
+          <option value="never-visited">Never Visited</option>
+        </select>
+        <select value={progFilter} onChange={(e) => setProgFilter(e.target.value)} style={filterSelectStyle}>
+          <option value="">All progressions</option>
+          <option value="null">Unset</option>
+          <option value="developing">Developing</option>
+          <option value="ready-to-advance">Ready to Advance</option>
+          <option value="at-ceiling">At Ceiling</option>
+        </select>
+        <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} style={filterSelectStyle}>
+          <option value="">All members</option>
+          <option value="member">Member</option>
+          <option value="non-member">Non-member</option>
+        </select>
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            style={{ ...filterSelectStyle, color: "var(--text-tertiary)" }}
+          >
+            Clear filters
+          </button>
+        )}
+      </div>
+
+      {/* Table */}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ background: "var(--bg-surface-2)" }}>
-              {["PLAYER", "STATE", "PROGRESSION", "LAST VISIT", ""].map((h) => (
-                <th
-                  key={h}
-                  style={{
-                    padding: "8px 16px",
-                    textAlign: "left",
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 10,
-                    fontWeight: 500,
-                    color: "var(--text-tertiary)",
-                    borderBottom: "1px solid var(--border)",
-                    letterSpacing: "0.05em",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {h}
-                </th>
-              ))}
+              <SortTh label="PLAYER" col="name" {...thProps} />
+              <SortTh label="STATE" col="state" {...thProps} />
+              <SortTh label="PROGRESSION" col="progression" {...thProps} />
+              <SortTh label="LAST VISIT" col="lastVisit" {...thProps} />
+              <th style={{ padding: "8px 16px", borderBottom: "1px solid var(--border)" }} />
             </tr>
           </thead>
           <tbody>
             {displayed.length === 0 ? (
               <tr>
-                <td
-                  colSpan={5}
-                  style={{
-                    padding: "32px 16px",
-                    textAlign: "center",
-                    color: "var(--text-tertiary)",
-                    fontSize: 13,
-                  }}
-                >
-                  No players to display
+                <td colSpan={5} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+                  No players match your filters
                 </td>
               </tr>
             ) : (
@@ -353,32 +499,17 @@ function AtRiskPanel({
                     key={p.id}
                     onClick={() => onRowClick(p.id)}
                     style={{
-                      borderBottom:
-                        i < displayed.length - 1
-                          ? "1px solid var(--border)"
-                          : "none",
+                      borderBottom: i < displayed.length - 1 ? "1px solid var(--border)" : "none",
                       cursor: "pointer",
                       transition: "background 0.1s",
                     }}
-                    onMouseEnter={(e) =>
-                      ((e.currentTarget as HTMLElement).style.background =
-                        "var(--bg-surface-2)")
-                    }
-                    onMouseLeave={(e) =>
-                      ((e.currentTarget as HTMLElement).style.background =
-                        "transparent")
-                    }
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-surface-2)")}
+                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
                   >
                     <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
                       {p.skill_level && (
-                        <div
-                          style={{
-                            fontSize: 11,
-                            color: "var(--text-tertiary)",
-                            marginTop: 1,
-                          }}
-                        >
+                        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>
                           {toTitleCase(p.skill_level)}
                         </div>
                       )}
@@ -393,15 +524,7 @@ function AtRiskPanel({
                         onUpdate={onProgressionChange}
                       />
                     </td>
-                    <td
-                      style={{
-                        padding: "10px 16px",
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 12,
-                        color: "var(--text-secondary)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
+                    <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
                       {relativeTime(p.last_visit_date)}
                     </td>
                     <td style={{ padding: "10px 16px", textAlign: "right" }}>
@@ -1013,15 +1136,10 @@ export default function Dashboard() {
   }, [fetchData]);
 
   const needsAssessment = players.filter((p) => p.progression_status === null);
-  const active = players.filter(
-    (p) => getEngagementState(p.last_visit_date) === "active"
-  ).length;
-  const lapsing = players.filter(
-    (p) => getEngagementState(p.last_visit_date) === "lapsing"
-  ).length;
-  const dormant = players.filter(
-    (p) => getEngagementState(p.last_visit_date) === "dormant"
-  ).length;
+  const active = players.filter((p) => getEngagementState(p.last_visit_date) === "active").length;
+  const lapsing = players.filter((p) => getEngagementState(p.last_visit_date) === "lapsing").length;
+  const dormant = players.filter((p) => getEngagementState(p.last_visit_date) === "dormant").length;
+  const neverVisited = players.filter((p) => p.last_visit_date === null).length;
 
   const handleCardClick = (key: EngagementState) => {
     setFilterState((prev) => (prev === key ? null : key));
@@ -1045,6 +1163,12 @@ export default function Dashboard() {
       label: "DORMANT",
       value: dormant,
       color: "var(--state-dormant)",
+    },
+    {
+      key: "never-visited" as EngagementState,
+      label: "NEVER VISITED",
+      value: neverVisited,
+      color: "var(--text-tertiary)",
     },
   ];
 
@@ -1135,7 +1259,7 @@ export default function Dashboard() {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(4, 1fr)",
+              gridTemplateColumns: "repeat(5, 1fr)",
               gap: 12,
               marginBottom: 20,
             }}
@@ -1227,6 +1351,7 @@ export default function Dashboard() {
               <AtRiskPanel
                 players={players}
                 filterState={filterState}
+                onFilterStateChange={setFilterState}
                 onRunAgent={runAgent}
                 onRowClick={setDrawerPlayerId}
                 onProgressionChange={fetchData}

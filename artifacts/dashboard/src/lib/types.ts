@@ -1,4 +1,4 @@
-export type EngagementState = "active" | "lapsing" | "dormant";
+export type EngagementState = "active" | "lapsing" | "dormant" | "never-visited";
 export type ProgressionStatus = "ready-to-advance" | "developing" | "at-ceiling" | null;
 
 export interface Player {
