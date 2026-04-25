@@ -10,6 +10,22 @@ const SYNC_START_DATE = "2025-01-01T00:00:00.000Z";
 const IPP = 100;
 const UPSERT_BATCH = 100;
 const SIGNUP_FETCH_DELAY_MS = 300;
+const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
+const DEFAULT_TIMEZONE = "America/New_York";
+
+/**
+ * Converts a UTC ISO timestamp to a YYYY-MM-DD date string in the given
+ * IANA timezone. For example, "2026-04-24T02:00:00.000Z" in "America/New_York"
+ * (UTC-4) becomes "2026-04-23".
+ */
+function toLocalDateString(isoString, timezone) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(isoString));
+}
 
 class CancelledError extends Error {
   constructor() {
@@ -81,6 +97,15 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     attendancesUpserted: 0,
     errors: 0,
   };
+
+  // ── Step 0: Resolve club timezone ─────────────────────────────────────────
+  const { data: clubRow } = await supabase
+    .from("clubs")
+    .select("timezone")
+    .eq("id", CLUB_ID)
+    .maybeSingle();
+  const clubTimezone = clubRow?.timezone ?? DEFAULT_TIMEZONE;
+  log(`[sync/events] Using timezone: ${clubTimezone}`);
 
   // ── Step 1: Build player lookup map (external_id → player row) ────────────
   log("[sync/events] Loading players from Supabase…");
@@ -181,7 +206,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           player_id: player.id,
           event_id: event.id,
           program_name: event.name,
-          attended_at: event.startTime,
+          attended_at: toLocalDateString(event.startTime, clubTimezone),
           program_type: event.customType ?? event.type ?? null,
         });
       }
