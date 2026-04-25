@@ -73,20 +73,9 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 20);
 
-  // Log first event shape for field inspection
-  if (filtered.length > 0) {
-    const sample = filtered[0];
-    console.log("PodPlay event sample:", JSON.stringify({
-      subtype: sample.subtype,
-      admissionRating: sample.admissionRating,
-      admissionRate: sample.admissionRate,
-      tags: sample.tags,
-    }, null, 2));
-  }
-
   // ── Step 3: fetch open-invitations in parallel ────────────────────────────
   const invitationResults = await Promise.allSettled(
-    filtered.map(async (event) => {
+    filtered.map(async (event, i) => {
       const ic = new AbortController();
       const it = setTimeout(() => ic.abort(), 5_000);
       try {
@@ -97,8 +86,12 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
         clearTimeout(it);
         if (res.status === 422) return null;
         if (!res.ok) return null;
-        const body = await res.json() as { redeemUrl?: string };
-        return body.redeemUrl ?? null;
+        const body = await res.json() as { items?: { redeemUrl?: string; redeemsRemaining?: number }[] };
+        const items = body.items ?? [];
+        // Prefer an invitation that still has spots; fall back to any with a link
+        const available = items.find((it) => (it.redeemsRemaining ?? 0) > 0 && it.redeemUrl);
+        const anyLink = items.find((it) => it.redeemUrl);
+        return (available ?? anyLink)?.redeemUrl ?? null;
       } catch (err) {
         clearTimeout(it);
         console.log(`[events] invitation fetch failed for ${event.id}:`, (err as Error).message);
