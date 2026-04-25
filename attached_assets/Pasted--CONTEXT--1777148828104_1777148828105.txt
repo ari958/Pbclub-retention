@@ -1,0 +1,260 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+We are adding a PodPlay event picker to BulkMessageModal.
+When a template contains {{event_date}}, {{event_link}}, or
+{{booking_link}}, instead of plain text inputs the operator
+sees a dropdown of real upcoming events from PodPlay. 
+Selecting one auto-fills the date and sign-up link.
+
+Stack: React + TypeScript + Tailwind frontend, Node/Express backend.
+PodPlay base URL: https://pbclub.podplay.app/apis/v2
+PodPlay auth: x-api-key header with process.env.PODPLAY_API_KEY
+Copy this header pattern exactly from syncPlayerAttendance.js.
+Do NOT use Authorization: Bearer — it will 401.
+
+Only change:
+  - One new Express route added to the server
+  - BulkMessageModal.tsx
+Do not touch any other file.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — SERVER: GET /api/events/upcoming
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add this Express route to the server.
+
+STEP 1 — Fetch events from PodPlay:
+  GET https://pbclub.podplay.app/apis/v2/events
+  Headers: { "x-api-key": process.env.PODPLAY_API_KEY }
+  
+  Do not pass any query params for status or date — the 
+  param names are not confirmed and guessing wrong returns 
+  wrong results. Fetch all and filter client-side below.
+
+  Set a 10-second timeout on this fetch call using 
+  AbortController. If it times out, return HTTP 504:
+    { error: "PodPlay API timed out" }
+
+  If the fetch fails for any other reason, return HTTP 502:
+    { error: "Failed to fetch events from PodPlay",
+      details: err.message }
+
+STEP 2 — Filter the response:
+  Parse response.items (the PodPlay events collection uses
+  an items array). Filter to keep only events where:
+    a) status === "PUBLISHED"  (if field exists)
+    b) startTime is in the future (startTime > new Date())
+    c) subtype is NOT one of: 
+       "INTERNAL", "OPERATIONS", "PRIVATE", "PRIVATE_EVENT"
+
+  After filtering, take only the first 20 results sorted 
+  by startTime ascending.
+
+  IMPORTANT — On the very first event in the filtered list,
+  log the following to the server console so we can inspect
+  the real field shapes:
+    console.log("PodPlay event sample:", JSON.stringify({
+      subtype: event.subtype,
+      admissionRating: event.admissionRating,
+      admissionRate: event.admissionRate,
+      tags: event.tags
+    }, null, 2));
+
+STEP 3 — Fetch open invitations in parallel:
+  For each of the 20 filtered events, call:
+    GET /events/{eventId}/open-invitations
+    Headers: { "x-api-key": process.env.PODPLAY_API_KEY }
+  
+  Use Promise.all to run all 20 calls in parallel — NOT 
+  sequentially. Set a 5-second AbortController timeout 
+  per call.
+
+  IMPORTANT — The open-invitations endpoint returns a 
+  SINGLE OpenInvitationDto object directly (not an array 
+  with items). It returns 422 if no invitation exists 
+  for that event.
+
+  Handle each call result like this:
+    - If response.ok AND body has a redeemUrl field:
+        signupUrl = body.redeemUrl
+    - If response status is 422 OR redeemUrl is missing:
+        signupUrl = null   ← this is expected, not an error
+    - If call throws or times out:
+        signupUrl = null   ← silent fail, log to console only
+
+  Never let a single invitation call failure reject the 
+  Promise.all. Use Promise.allSettled instead of Promise.all
+  so one failure cannot block the others.
+
+STEP 4 — Return shape:
+  Return an array of objects:
+  {
+    id: string,
+    name: string,
+    subtype: string,
+    startTime: string,         // ISO, as-is from API
+    admissionRating: object | null,  // raw, pass through as-is
+    admissionRate: object | null,    // raw, pass through as-is
+    signupUrl: string | null
+  }
+
+CACHING:
+  Store result in a module-level variable with a timestamp.
+  Re-use cache if age < 5 minutes.
+  Add code comment: "Cache resets on server restart — expected."
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — FRONTEND: BulkMessageModal.tsx
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FETCH TIMING:
+  Call GET /api/events/upcoming once when the modal mounts.
+  Store result in local state: events[], eventsLoading bool,
+  eventsError string | null.
+  Do not block modal rendering — fetch runs in background.
+
+EVENT VARIABLES — which templates need the picker:
+  A template "needs the event picker" if its body contains
+  any of: {{event_date}}, {{event_link}}, {{booking_link}}
+  Compute this as a boolean whenever the selected template 
+  changes.
+
+LAYOUT — where the picker appears:
+  Only show the event picker section when:
+    - A template is selected AND
+    - That template needs the event picker
+  Otherwise the section is completely hidden — not collapsed,
+  not greyed out, just not rendered.
+
+STATES within the picker section:
+
+  Loading (eventsLoading = true):
+    Show: small spinner + "Loading events from PodPlay..."
+  
+  Error (eventsError is set):
+    Show muted gray text (not red):
+      "Couldn't load events — enter details manually."
+    Fall back to plain text inputs for all event variables.
+  
+  Empty (events.length === 0 after loading):
+    Show muted gray text:
+      "No upcoming events found in PodPlay."
+    Fall back to plain text inputs for all event variables.
+  
+  Loaded (events available):
+    Show the event selector (see below).
+
+EVENT SELECTOR UI:
+  Section label: "SELECT AN EVENT"
+  
+  Use a native HTML <select> element — do NOT build a custom 
+  dropdown component. Native select is accessible and works 
+  reliably across browsers.
+  
+  Default option: value="" text="— Choose an event —"
+    This option is selected by default and is disabled.
+  
+  Each subsequent <option> uses this text format:
+    "{SubtypeLabel} · {event.name} · {FormattedDate}"
+  
+  SubtypeLabel mapping:
+    TOURNAMENT    → "Tournament"
+    ADULT_CLASS   → "Class"
+    OPEN_PLAY     → "Open Play"
+    LEAGUE_NIGHT  → "League"
+    CLASS         → "Class"
+    EVENT         → "Event"
+    (anything else) → capitalize the subtype value as-is
+  
+  FormattedDate: format event.startTime as local time:
+    "Sat May 10, 2:00 PM"
+    Use toLocaleDateString + toLocaleTimeString, or 
+    Intl.DateTimeFormat — do not use a date library.
+  
+  SKILL MATCHING (best-effort only — must never throw):
+    After events load, try to detect a skill range on each 
+    event by checking these fields in order:
+      event.admissionRating?.min  and  event.admissionRating?.max
+      event.admissionRating?.minRating  and  event.admissionRating?.maxRating
+      event.admissionRate?.min  and  event.admissionRate?.max
+    
+    If numeric min AND max values are found, compute 
+    skillRange = "{min}–{max}".
+    
+    Append the skill range to the option text if found:
+      "Tournament · 3.5 Doubles Mixer · Sat May 10, 2:00 PM · 3.0–3.5"
+    
+    If no numeric min/max found anywhere, just omit it.
+    Wrap this entire block in try/catch. On any error, 
+    skip silently — never show a broken option.
+
+ON EVENT SELECTION (onChange handler):
+  When operator selects an event (value is not ""):
+  
+  1. Find the selected event object by id in the events array.
+  
+  2. Compute displayDate from event.startTime:
+       "May 10 at 2:00 PM"  (local time, no day-of-week)
+  
+  3. Update operator-fill variable state:
+       event_date  ← displayDate
+       event_link  ← event.signupUrl ?? ""
+       booking_link ← event.signupUrl ?? ""
+  
+  4. If event.signupUrl is null:
+       Show a plain text input labeled "Sign-up link" 
+       with placeholder "e.g. pbclub.com/tournament"
+       Show helper text in muted gray beneath it:
+         "No sign-up link found for this event. 
+          Enter one manually or leave blank."
+       This is NOT an error state. Do not use red styling.
+       The input's value maps to both event_link and 
+       booking_link simultaneously as the operator types.
+     
+     If event.signupUrl is NOT null:
+       Show green checkmark text: "Sign-up link found ✓"
+       Do not show a text input.
+  
+  5. Update the live preview immediately using the new values.
+     Resolved variables render green. 
+     If the manual sign-up link input is empty, 
+     event_link and booking_link stay amber in preview.
+
+SEND BUTTON enable condition (unchanged logic, clarified):
+  Enabled only when ALL of the following are true:
+    - A template is selected (or custom message is not empty)
+    - event_date is filled (if template needs it)
+    - event_link is filled OR template does not use it
+    - booking_link is filled OR template does not use it
+    - All other operator-fill variables are filled
+  
+  When the event picker is shown but no event is selected yet,
+  the Send button must remain disabled.
+
+SWITCHING TEMPLATES:
+  When the operator selects a different template:
+    - Clear the selected event (reset <select> to default)
+    - Clear event_date, event_link, booking_link values
+    - Hide the manual sign-up link input if it was showing
+    - The events list stays loaded — do NOT re-fetch
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DO NOT CHANGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Template selector, opt-in toggle, cost footer, Send logic
+- POST /api/messages/bulk
+- Players page, Settings page, any other component
+- syncPlayerAttendance.js, fetchAvailablePrograms.js
+- Any other existing PodPlay API calls
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETION REQUIREMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Complete both sections before stopping. At the very end,
+paste the server console output showing the sample event 
+object (admissionRating, admissionRate, subtype, tags) 
+so we can verify the skill-matching fields are correct.
+
+Final summary format:
+  ✓ Completed
+  ✗ Skipped — reason
+  ⚠ Assumptions made

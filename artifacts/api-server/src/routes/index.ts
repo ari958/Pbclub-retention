@@ -8,6 +8,7 @@ import messagesRouter from "./messages";
 import importRouter from "./import";
 import adminRouter from "./admin";
 import templatesRouter from "./templates";
+import eventsRouter from "./events";
 
 const router: IRouter = Router();
 
@@ -20,5 +21,6 @@ router.use(messagesRouter);
 router.use(importRouter);
 router.use(adminRouter);
 router.use(templatesRouter);
+router.use(eventsRouter);
 
 export default router;
