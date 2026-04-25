@@ -1,0 +1,130 @@
+Do a complete frontend polish pass on the Pulse dashboard. 
+The stack is React + TypeScript + Tailwind. 
+
+CRITICAL INSTRUCTIONS:
+- You must complete ALL six sections before stopping.
+- Do not ask for confirmation between sections — proceed 
+  automatically through all of them.
+- Do not checkpoint and wait — just note what was completed 
+  in your final summary at the very end.
+- Do not refactor any component that is currently working 
+  correctly unless it is explicitly listed below.
+- If you hit a blocker on one item, skip it, note it in 
+  the final summary, and continue — do not stop.
+
+Before any frontend changes, run this in Supabase:
+  ALTER TABLE players ADD COLUMN IF NOT EXISTS notes text;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — LOADING & EMPTY STATES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- All tables and panels: show animated gray skeleton 
+  placeholder rows while data is fetching. Do not show 
+  a blank screen.
+- All tables: when there are zero results show:
+  * Filtered empty: "No players match these filters" 
+    with a "Clear filters" button
+  * Truly empty: "No players yet"
+- Message queue panel empty state: "No messages queued. 
+  Run the agent to generate personalized outreach."
+- Needs assessment panel empty state: "All players assessed ✓"
+- Attendance list in drawer empty state: 
+  "No attendance records"
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — ENGAGEMENT STATE PILLS & ROW STYLING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Update engagement state pill colors consistently across 
+Dashboard and Players pages:
+- Dormant: red background, dark red text (urgent)
+- Lapsing: amber background, dark amber text
+- Active: green background, dark green text
+- Never Visited: gray background, dark gray text
+
+Each table row: 3px left border accent matching its 
+engagement state color (red/amber/green/gray).
+
+Row hover state: light amber tint (amber-50) to signal 
+the row is clickable.
+
+Membership status in the player drawer: style as a pill —
+green for "Member", gray for "Non Member".
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — PLAYER DRAWER IMPROVEMENTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Drawer open animation: slide in from right with 200ms 
+  ease-out transition. Overlay fades in simultaneously.
+- Close behavior: clicking the overlay OR pressing Escape 
+  closes the drawer.
+- Skill level: if null, display "Not set" in gray italics 
+  instead of "—"
+- Progression status: replace the raw HTML select with a 
+  styled Tailwind dropdown. Keep identical onChange behavior.
+- Notes section: add a textarea below Progression labeled 
+  "Notes". On blur, auto-save to the `notes` column in 
+  Supabase for that player. Show "Saved ✓" for 2 seconds 
+  after saving.
+- Run Agent button states:
+  * Default: "Run Agent"
+  * Loading: "Running..." with spinner, button disabled
+  * Success: show generated message inline in the drawer 
+    under "Generated Message" header with Edit and Send buttons
+  * Error: "Failed — try again" in red
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — FILTER BAR & STAT CARDS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- "Clear filters" button: only render when at least one 
+  filter is active. Hide when all filters are at defaults.
+- Add a result count label above the table:
+  "Showing 47 of 411 players" — post-filter count vs total. 
+  Updates reactively as filters change.
+- Stat cards: subtle box-shadow lift on hover. Active card 
+  gets a smooth amber underline that animates in 
+  (transition: width 150ms ease).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — PLAYERS PAGE PERFORMANCE & EXPORT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Add pagination to the Players table: 50 players per page 
+  with Previous / Next controls and "Page X of Y" label.
+  Reset to page 1 whenever any filter changes.
+- Fix column widths so the table does not reflow when 
+  sorting. Set explicit min-width on each column.
+- Add "Export CSV" button above the table. Use the 
+  client-side filtered and sorted data already in React 
+  state — do not make a new API call. CSV columns: 
+  Name, Phone, Membership, Engagement State, 
+  Progression, Last Visit.
+- Sort arrow indicator: show ↑ or ↓ in amber next to 
+  the active sort column. Inactive sortable columns show 
+  a faint ↕ to signal they are sortable.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6 — NAVIGATION & GLOBAL POLISH
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Sidebar Messages nav item: show a badge with the count 
+  of unsent messages in the queue. Hide badge if count is 0. 
+  Fetch from the same API that powers the message queue panel.
+- Active nav item: 3px filled amber left border with light 
+  amber background tint on the full row.
+- All async buttons across the entire app: disabled + 
+  spinner while action is running. No double-click submissions.
+- Toast notifications: bottom-right corner, stack if 
+  multiple, auto-dismiss after 4 seconds. Use the existing 
+  toast system if one exists — do not add a new library.
+- All table cells: consistent padding 12px vertical, 
+  16px horizontal. Use tabular-nums for all numeric columns.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FINAL SUMMARY (after all 6 sections complete)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When all sections are done, provide a single summary with:
+1. Everything completed successfully
+2. Anything skipped and why
+3. Any decisions made where instructions were ambiguous
+4. Screenshot of the dashboard and player drawer in 
+   their final state
+
+Do not stop until this summary is posted.

@@ -1,20 +1,21 @@
 import { Link, useLocation } from "react-router-dom";
 
-const NAV_ITEMS = [
-  { label: "Dashboard", path: "/" },
-  { label: "Players", path: "/players" },
-  { label: "Assessments", path: "/assessments" },
-  { label: "Messages", path: "/messages" },
-  { label: "Settings", path: "/settings" },
-];
-
 interface SidebarProps {
   clubName: string;
   lastSynced?: string | null;
+  messageCount?: number;
 }
 
-export function Sidebar({ clubName, lastSynced }: SidebarProps) {
+export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps) {
   const location = useLocation();
+
+  const navItems = [
+    { label: "Dashboard", path: "/" },
+    { label: "Players", path: "/players" },
+    { label: "Assessments", path: "/assessments" },
+    { label: "Messages", path: "/messages", badge: messageCount > 0 ? messageCount : undefined },
+    { label: "Settings", path: "/settings" },
+  ];
 
   return (
     <aside
@@ -59,7 +60,7 @@ export function Sidebar({ clubName, lastSynced }: SidebarProps) {
       <div style={{ width: "100%", height: 1, background: "var(--border-dark)" }} />
 
       <nav style={{ flex: 1, padding: "12px 0" }}>
-        {NAV_ITEMS.map((item) => {
+        {navItems.map((item) => {
           const isActive =
             item.path === "/"
               ? location.pathname === "/"
@@ -71,21 +72,39 @@ export function Sidebar({ clubName, lastSynced }: SidebarProps) {
               style={{
                 display: "flex",
                 alignItems: "center",
+                justifyContent: "space-between",
                 padding: "8px 20px",
                 fontSize: 13,
                 fontWeight: isActive ? 500 : 400,
                 color: isActive ? "#fff" : "var(--text-tertiary)",
                 borderLeft: isActive
-                  ? "2px solid var(--accent)"
-                  : "2px solid transparent",
+                  ? "3px solid var(--accent)"
+                  : "3px solid transparent",
                 background: isActive
-                  ? "rgba(232,168,56,0.06)"
+                  ? "rgba(232,168,56,0.08)"
                   : "transparent",
-                transition: "color 0.15s",
+                transition: "color 0.15s, background 0.15s",
                 textDecoration: "none",
               }}
             >
               {item.label}
+              {item.badge !== undefined && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-mono)",
+                    background: "var(--accent)",
+                    color: "#fff",
+                    borderRadius: 10,
+                    padding: "1px 6px",
+                    minWidth: 18,
+                    textAlign: "center",
+                  }}
+                >
+                  {item.badge}
+                </span>
+              )}
             </Link>
           );
         })}

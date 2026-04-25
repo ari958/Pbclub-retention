@@ -53,3 +53,20 @@ a {
   scrollbar-width: thin;
   scrollbar-color: var(--border-dark) transparent;
 }
+
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.skeleton-row td {
+  animation: skeletonPulse 1.4s ease-in-out infinite;
+}
+
+.skeleton-bar {
+  display: inline-block;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--bg-surface-2);
+  animation: skeletonPulse 1.4s ease-in-out infinite;
+}

@@ -284,8 +284,34 @@ function SortTh({
   );
 }
 
+const STATE_ROW_BORDER: Record<EngagementState, string> = {
+  dormant: "var(--state-dormant)",
+  lapsing: "var(--state-lapsing)",
+  active: "var(--state-active)",
+  "never-visited": "var(--text-tertiary)",
+};
+
+const AMBER_HOVER = "rgba(232,168,56,0.06)";
+
+function SkeletonRows({ cols }: { cols: number }) {
+  return (
+    <>
+      {Array.from({ length: 5 }).map((_, i) => (
+        <tr key={i} className="skeleton-row" style={{ borderBottom: "1px solid var(--border)" }}>
+          {Array.from({ length: cols }).map((__, j) => (
+            <td key={j} style={{ padding: "12px 16px" }}>
+              <div className="skeleton-bar" style={{ width: j === 0 ? 120 : j === cols - 1 ? 60 : 80, height: 11 }} />
+            </td>
+          ))}
+        </tr>
+      ))}
+    </>
+  );
+}
+
 function AtRiskPanel({
   players,
+  loading,
   filterState,
   onFilterStateChange,
   onRunAgent,
@@ -293,6 +319,7 @@ function AtRiskPanel({
   onProgressionChange,
 }: {
   players: Player[];
+  loading: boolean;
   filterState: EngagementState | null;
   onFilterStateChange: (s: EngagementState | null) => void;
   onRunAgent: (playerId: string) => Promise<void>;
@@ -414,13 +441,9 @@ function AtRiskPanel({
             fontFamily: "var(--font-mono)",
             fontSize: 11,
             color: "var(--text-tertiary)",
-            background: "var(--bg-surface-2)",
-            padding: "2px 8px",
-            borderRadius: 3,
-            border: "1px solid var(--border)",
           }}
         >
-          {displayed.length} players
+          {loading ? "…" : `Showing ${displayed.length} of ${players.length}`}
         </span>
       </div>
 
@@ -485,10 +508,22 @@ function AtRiskPanel({
             </tr>
           </thead>
           <tbody>
-            {displayed.length === 0 ? (
+            {loading ? (
+              <SkeletonRows cols={5} />
+            ) : displayed.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
-                  No players match your filters
+                  {hasFilters ? (
+                    <span>
+                      No players match these filters{" "}
+                      <button
+                        onClick={clearFilters}
+                        style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", fontSize: 13, textDecoration: "underline" }}
+                      >
+                        Clear filters
+                      </button>
+                    </span>
+                  ) : "No players yet"}
                 </td>
               </tr>
             ) : (
@@ -504,10 +539,10 @@ function AtRiskPanel({
                       cursor: "pointer",
                       transition: "background 0.1s",
                     }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-surface-2)")}
+                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = AMBER_HOVER)}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
                   >
-                    <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "12px 16px", whiteSpace: "nowrap", borderLeft: `3px solid ${STATE_ROW_BORDER[state]}` }}>
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
                       {p.skill_level && (
                         <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>
@@ -515,20 +550,20 @@ function AtRiskPanel({
                         </div>
                       )}
                     </td>
-                    <td style={{ padding: "10px 16px" }}>
+                    <td style={{ padding: "12px 16px" }}>
                       <StatePill state={state} />
                     </td>
-                    <td style={{ padding: "10px 16px" }}>
+                    <td style={{ padding: "12px 16px" }}>
                       <ProgressionDropdown
                         status={p.progression_status}
                         playerId={p.id}
                         onUpdate={onProgressionChange}
                       />
                     </td>
-                    <td style={{ padding: "10px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap" }}>
+                    <td style={{ padding: "12px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                       {relativeTime(p.last_visit_date)}
                     </td>
-                    <td style={{ padding: "10px 16px", textAlign: "right" }}>
+                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
                       <ActionBtn
                         label={isRunning ? "Running…" : "Run Agent"}
                         variant="default"
@@ -618,7 +653,7 @@ function NeedsAssessmentPanel({
               fontSize: 13,
             }}
           >
-            All players assessed
+            All players assessed ✓
           </div>
         ) : (
           players.map((p, i) => (
@@ -812,7 +847,7 @@ function MessageQueuePanel({
               fontSize: 13,
             }}
           >
-            No messages in queue
+            No messages queued. Run the agent to generate personalized outreach.
           </div>
         ) : (
           messages.map((m, i) => {
@@ -1175,7 +1210,7 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
-      <Sidebar clubName={clubName} />
+      <Sidebar clubName={clubName} messageCount={messages.length} />
 
       <div
         style={{
@@ -1273,15 +1308,15 @@ export default function Dashboard() {
                   background: "var(--bg-surface)",
                   border: "1px solid var(--border)",
                   borderRadius: 8,
-                  padding: "16px 20px",
+                  padding: "16px 20px 14px",
                   cursor: "pointer",
-                  borderBottom:
-                    filterState === s.key
-                      ? "3px solid var(--accent)"
-                      : "1px solid var(--border)",
-                  transition: "border-bottom 0.1s",
                   userSelect: "none",
+                  transition: "box-shadow 0.15s",
+                  position: "relative",
+                  overflow: "hidden",
                 }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "none")}
               >
                 <div
                   style={{
@@ -1299,12 +1334,26 @@ export default function Dashboard() {
                   style={{
                     fontSize: 28,
                     fontWeight: 600,
-                    color: s.color,
+                    color: loading ? "var(--text-tertiary)" : s.color,
                     lineHeight: 1,
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
                   {loading ? "—" : s.value}
                 </div>
+                {/* Animated amber underline */}
+                <div
+                  style={{
+                    position: "absolute",
+                    bottom: 0,
+                    left: 0,
+                    height: 3,
+                    background: "var(--accent)",
+                    width: filterState === s.key ? "100%" : "0%",
+                    transition: "width 150ms ease",
+                    borderRadius: "0 0 0 0",
+                  }}
+                />
               </div>
             ))}
             {/* Response Rate card */}
@@ -1351,6 +1400,7 @@ export default function Dashboard() {
             <div style={{ flex: "0 0 60%", minWidth: 0 }}>
               <AtRiskPanel
                 players={players}
+                loading={loading}
                 filterState={filterState}
                 onFilterStateChange={setFilterState}
                 onRunAgent={runAgent}
