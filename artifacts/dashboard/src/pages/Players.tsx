@@ -185,7 +185,8 @@ export default function Players() {
         .from("players")
         .select(
           "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id"
-        ),
+        )
+        .limit(2000),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
     ]);
     if (playersRes.data) setPlayers(playersRes.data as Player[]);
