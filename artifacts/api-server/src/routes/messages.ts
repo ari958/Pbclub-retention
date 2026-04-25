@@ -175,4 +175,144 @@ router.post("/messages/webhook/status", async (req, res) => {
   res.status(204).send();
 });
 
+// POST /api/messages/bulk
+router.post("/messages/bulk", async (req, res) => {
+  const { player_ids, message_body, template_id } = req.body as {
+    player_ids?: string[];
+    message_body?: string;
+    template_id?: string;
+  };
+
+  if (!Array.isArray(player_ids) || player_ids.length === 0) {
+    res.status(400).json({ error: "player_ids must be a non-empty array" });
+    return;
+  }
+  if (!message_body || typeof message_body !== "string" || !message_body.trim()) {
+    res.status(400).json({ error: "message_body is required" });
+    return;
+  }
+
+  // Fetch players (only those with sms_opt_in = true from the given IDs)
+  const { data: players, error: fetchErr } = await supabase
+    .from("players")
+    .select("id, name, skill_level, last_visit_date, phone, club_id, sms_opt_in")
+    .in("id", player_ids)
+    .eq("sms_opt_in", true);
+
+  if (fetchErr) {
+    res.status(500).json({ error: "Failed to fetch players", detail: fetchErr.message });
+    return;
+  }
+
+  const eligible = (players ?? []).filter((p: any) => p.phone);
+
+  if (eligible.length === 0) {
+    res.json({ sent: 0, failed: 0, errors: [] });
+    return;
+  }
+
+  const club_id: string | null = eligible[0]?.club_id ?? null;
+
+  let twilioClient: ReturnType<typeof getTwilioClient> | null = null;
+  try {
+    twilioClient = getTwilioClient();
+  } catch {
+    // Twilio not configured — log messages only
+  }
+
+  const from = process.env.TWILIO_PHONE_NUMBER;
+  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
+
+  const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  function interpolate(body: string, player: any): string {
+    const firstName = (player.name as string).split(" ")[0];
+    const skillLevel = player.skill_level ?? "your level";
+    const lastVisit = player.last_visit_date
+      ? new Date(player.last_visit_date + "T12:00:00").toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+        })
+      : "a while";
+    return body
+      .replace(/\{\{first_name\}\}/g, firstName)
+      .replace(/\{\{skill_level\}\}/g, skillLevel)
+      .replace(/\{\{last_visit\}\}/g, lastVisit)
+      .replace(/\{\{club_name\}\}/g, "PB Club");
+  }
+
+  let sent = 0;
+  let failed = 0;
+  const errors: string[] = [];
+
+  for (const player of eligible) {
+    const interpolated = interpolate(message_body, player);
+
+    // Create conversation record
+    const { data: convData, error: convErr } = await supabase
+      .from("conversations")
+      .insert({
+        player_id: player.id,
+        club_id,
+        triggered_by: "bulk",
+      })
+      .select("id")
+      .single();
+
+    if (convErr || !convData) {
+      req.log.error({ err: convErr, player_id: player.id }, "Bulk: failed to create conversation");
+      failed++;
+      errors.push(player.id);
+      continue;
+    }
+
+    const conversation_id: string = convData.id;
+
+    // Send via Twilio (if configured)
+    let twilio_message_sid: string | null = null;
+    if (twilioClient) {
+      try {
+        const params: Record<string, any> = {
+          body: interpolated,
+          to: player.phone,
+        };
+        if (messagingServiceSid) {
+          params.messagingServiceSid = messagingServiceSid;
+        } else if (from) {
+          params.from = from;
+        }
+        const twilioMsg = await twilioClient.messages.create(params);
+        twilio_message_sid = twilioMsg.sid;
+      } catch (err) {
+        req.log.error({ err, player_id: player.id }, "Bulk: Twilio send failed");
+        failed++;
+        errors.push(player.id);
+        // Still log the message attempt
+      }
+    }
+
+    // Insert message record
+    const { error: msgErr } = await supabase.from("messages").insert({
+      conversation_id,
+      body: interpolated,
+      direction: "outbound",
+      sent_by: "operator",
+      ...(twilio_message_sid ? { twilio_message_sid } : {}),
+    });
+
+    if (msgErr) {
+      req.log.warn({ err: msgErr, player_id: player.id }, "Bulk: failed to insert message record");
+    }
+
+    if (!errors.includes(player.id)) {
+      sent++;
+      req.log.info({ player_id: player.id, template_id }, "Bulk SMS sent");
+    }
+
+    await delay(100);
+  }
+
+  res.json({ sent, failed, errors });
+});
+
 export default router;

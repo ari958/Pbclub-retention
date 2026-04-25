@@ -1,0 +1,300 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONTEXT
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+This is the Pulse retention dashboard for PB Club, a 
+pickleball club management tool. The stack is:
+- Frontend: React + TypeScript + Tailwind (Vite)
+- Backend: Node.js / Express API
+- Database: Supabase (PostgreSQL)
+- SMS: Twilio
+
+The Players page already has a working filter bar with these 
+filters: engagement state (Active / Lapsing / Dormant / Never 
+Visited), progression status, membership, skill level, and a 
+name search. Filters produce a live client-side filtered array 
+of players already in React state.
+
+The players table in Supabase has these relevant columns:
+  id, first_name, last_name, phone, skill_level,
+  engagement_state, progression_status, membership_status,
+  last_visit_date, sms_opt_in, external_id
+
+Do not refactor any component that is currently working 
+correctly unless it is explicitly listed below. Work 
+section by section and complete ALL sections before stopping. 
+If a section hits a blocker, skip the specific item, note it, 
+and continue — do not stop.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+GOAL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Build a Bulk Message Writer feature. This lets a club operator 
+filter a group of players on the Players page, click "Send bulk 
+message", and compose + send a personalized SMS to every player 
+in the filtered list. Messages can use saved templates (built-in 
+or user-created) with dynamic variables that auto-fill per player 
+at send time (e.g. first name, skill level). Use cases include 
+win-back campaigns for lapsed players, tournament promotions 
+targeted by skill level, and clinic invites for players ready 
+to advance.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 1 — SUPABASE: add message_templates table
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Run this SQL in Supabase before any frontend changes:
+
+  CREATE TABLE IF NOT EXISTS message_templates (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name text NOT NULL,
+    body text NOT NULL,
+    use_case_tags text[] DEFAULT '{}',
+    is_builtin boolean DEFAULT false,
+    created_at timestamptz DEFAULT now()
+  );
+
+Then seed the following 3 built-in templates 
+(is_builtin = true):
+
+Template 1:
+  name: "Win-back offer"
+  body: "Hey {{first_name}}! We miss you at {{club_name}}. 
+  Come back this week — your first drop-in session is on us. 
+  Book here: {{booking_link}}"
+  use_case_tags: ["never-visited", "dormant"]
+
+Template 2:
+  name: "Tournament invite"
+  body: "Hey {{first_name}}! We're hosting a {{skill_level}} 
+  doubles tournament on {{event_date}} at {{club_name}}. 
+  Great way to get competitive — sign up: {{event_link}}"
+  use_case_tags: ["active", "lapsing"]
+
+Template 3:
+  name: "Clinic promotion"
+  body: "Hi {{first_name}}, you're ready for the next level. 
+  We're running a {{next_level}} clinic on {{event_date}} — 
+  only a few spots left. Reserve yours: {{booking_link}}"
+  use_case_tags: ["ready-to-advance"]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 2 — PLAYERS PAGE: "Send bulk message" button
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In Players.tsx, add a "Send bulk message (N)" button to the 
+right side of the existing filter bar. Rules:
+
+- N = the count of players currently in the filtered array 
+  in React state (the same array already driving the table). 
+  It updates live as filters change.
+- The button is amber-styled to stand out from other controls.
+- If N = 0, the button is disabled and shows "No players 
+  selected".
+- Clicking the button opens the BulkMessageModal component 
+  (built in Section 3) and passes the filtered player array 
+  as a prop called `recipients`.
+- Do not make a new API call — use the client-side filtered 
+  state already in React.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 3 — BUILD: BulkMessageModal component
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Create src/components/BulkMessageModal.tsx.
+
+Props:
+  recipients: Player[]   (the filtered player array)
+  onClose: () => void
+
+The modal has these sections rendered top to bottom:
+
+HEADER
+- Title: "Send bulk message"
+- Subtitle: shows active filter summary, e.g. 
+  "47 recipients · Never Visited · Member · 3.0–3.5"
+- Close button (top right) calls onClose()
+
+MESSAGE TYPE TOGGLE
+Two options (radio-style card buttons):
+  [Use a template]   [Write custom]
+Default to "Use a template".
+
+TEMPLATE SELECTOR (shown when "Use a template" is selected)
+- Fetch all rows from message_templates table on mount.
+- Display each as a selectable card row with name, 
+  use_case_tags as pills, and a "built-in" or "custom" badge.
+- Highlight the selected template with a blue border.
+- If no templates exist yet, show: "No templates yet — 
+  create one in Settings."
+
+CUSTOM MESSAGE INPUT (shown when "Write custom" is selected)
+- Plain textarea for free-form message body.
+- Show available variable chips below the textarea. Clicking 
+  a chip inserts it at the cursor position:
+    {{first_name}}  {{skill_level}}  {{club_name}}
+    {{last_visit}}  {{event_date}}   {{booking_link}}
+
+MESSAGE PREVIEW
+- Always visible below the selector/textarea.
+- Renders the message body with variables replaced by 
+  example values using the FIRST recipient in the list:
+    {{first_name}} → first recipient's first_name
+    {{skill_level}} → first recipient's skill_level
+    {{last_visit}} → first recipient's last_visit_date 
+      (formatted as "Mar 4" etc.)
+    {{club_name}} → "PB Club"
+    {{event_date}} → "May 10"
+    {{booking_link}} → "pbclub.com/book"
+  Variables that can't be resolved stay highlighted in 
+  amber so the user knows they need to fill them in 
+  before sending.
+
+OPT-IN FILTER ROW
+- Toggle: "Only send to SMS opt-in players" (default ON).
+- When ON: eligible count = recipients where sms_opt_in = true.
+- When OFF: eligible count = all recipients.
+- Show: "44 / 47 eligible" dynamically.
+
+CONFIRM FOOTER
+- Left side: "Sending to N players · ~$X.XX est. cost"
+  Calculate cost as N × $0.02 (approximate Twilio per-SMS).
+  Format as currency. Round N to eligible count based on 
+  the opt-in toggle.
+- Right side: [Cancel] [Send to N players →]
+  Cancel calls onClose().
+  "Send to N players" button triggers Section 4's send logic.
+  Button is disabled if no template selected / message empty 
+  or if there are unresolved amber variables.
+
+MODAL BEHAVIOR
+- Opens as a centered overlay with a semi-transparent backdrop.
+- Backdrop click calls onClose().
+- Pressing Escape calls onClose().
+- Do not use position: fixed — wrap in a min-height container 
+  to keep layout stable.
+- Show a spinner on the Send button while sending. Disable 
+  the button to prevent double-submit.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 4 — API: POST /api/messages/bulk endpoint
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+In the Express server, add POST /api/messages/bulk.
+
+Request body:
+  {
+    player_ids: string[],      // array of player UUIDs
+    message_body: string,      // raw body with {{variables}}
+    template_id?: string       // optional, for logging
+  }
+
+Server logic:
+1. Fetch each player record from Supabase by id 
+   (only those with sms_opt_in = true).
+2. For each player, interpolate the message_body:
+   - Replace {{first_name}} with player.first_name
+   - Replace {{skill_level}} with player.skill_level 
+     or "your level" if null
+   - Replace {{last_visit}} with formatted last_visit_date 
+     or "a while" if null
+   - Replace {{club_name}} with "PB Club"
+   - Leave {{event_date}} and {{booking_link}} as-is 
+     (operator fills these in the template or message body 
+     before sending)
+3. Send each SMS via Twilio (same pattern as existing 
+   single-send logic already in the codebase).
+4. For each send, insert a row into the messages table 
+   (same schema as existing messages) with:
+     direction: "outbound"
+     sent_by: "operator"
+     body: the interpolated message text
+     player_id: the player's id
+     status: "sent" or "failed"
+5. Return:
+   {
+     sent: number,
+     failed: number,
+     errors: string[]   // any player IDs that failed
+   }
+
+Rate-limit sends: add a 100ms delay between each Twilio 
+call to avoid hitting API limits on large batches.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 5 — SEND CONFIRMATION + RESULT TOAST
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+When the Send button is clicked in BulkMessageModal:
+
+1. Call POST /api/messages/bulk with the eligible player 
+   IDs and interpolated message body.
+2. On success: close the modal and show a toast:
+   "✓ Sent to 44 players" in green, auto-dismiss 5s.
+   If any failed: "✓ Sent to 42 players · 2 failed" 
+   in amber with a "See details" link that logs to console 
+   for now.
+3. On network error: show a toast "Send failed — try again" 
+   in red. Do not close the modal so the user can retry.
+4. Use the existing toast system already in the app — 
+   do not add a new library.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+SECTION 6 — TEMPLATE MANAGER (Settings page)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Add a "Templates" section to the existing Settings page 
+(or create Settings.tsx if it doesn't exist yet).
+
+UI layout:
+- Left panel: list of all templates (built-in + custom).
+  Each row shows: name, use_case_tags as pills, 
+  "built-in" or "custom" badge, and an Edit button 
+  (custom only — built-ins are read-only).
+- Right panel: template editor (shown when creating or 
+  editing a template).
+
+Template editor fields:
+  Template name        [text input]
+  Message body         [textarea, min 4 rows]
+  Use case tags        [multi-select: never-visited, 
+                        dormant, lapsing, active, 
+                        ready-to-advance]
+
+Variable chip bar below the textarea:
+  Clicking a chip inserts it at the cursor:
+    {{first_name}}  {{skill_level}}  {{club_name}}
+    {{last_visit}}  {{event_date}}   {{booking_link}}
+
+Live preview panel to the right of the textarea:
+  Renders the message with example values substituted, 
+  same logic as the modal preview. Updates on every 
+  keystroke.
+
+Character counter below textarea: "142 chars (1 SMS)" 
+  — 1 SMS = ≤160 chars, 2 SMS = 161–320, etc.
+
+Buttons at the bottom right of the editor:
+  [Discard]  [Save template]
+
+Save inserts a new row into message_templates with 
+is_builtin = false. Edit updates the existing row.
+Do not allow editing or deleting rows where is_builtin = true.
+Show "Built-in templates cannot be edited" tooltip on hover.
+
+After save, the left panel list refreshes and the editor 
+clears back to empty state.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DO NOT CHANGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- The existing filter bar logic in Players.tsx
+- The existing table, sorting, or pagination logic
+- The existing single-player Run Agent / Send flow
+- The existing toast system
+- Any Supabase tables other than message_templates (new)
+- Any Twilio configuration or credentials
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Complete all 6 sections without stopping. If a section hits 
+a blocker, skip that specific item, note it, and continue.
+At the very end, provide a summary listing:
+  ✓ Completed items
+  ✗ Skipped items with reason
+  ? Anything that needs operator input before it will work
+    (e.g. event_date values to fill in)

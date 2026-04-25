@@ -12,6 +12,7 @@ export interface Player {
   phone: string | null;
   notes: string | null;
   club_id: string | null;
+  sms_opt_in: boolean | null;
 }
 
 export interface MessageQueueItem {
@@ -30,4 +31,13 @@ export interface MessageQueueItem {
       progression_status: ProgressionStatus;
     } | null;
   } | null;
+}
+
+export interface MessageTemplate {
+  id: string;
+  name: string;
+  body: string;
+  use_case_tags: string[];
+  is_builtin: boolean;
+  created_at: string;
 }

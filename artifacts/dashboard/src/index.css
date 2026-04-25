@@ -54,6 +54,11 @@ a {
   scrollbar-color: var(--border-dark) transparent;
 }
 
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 @keyframes skeletonPulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }

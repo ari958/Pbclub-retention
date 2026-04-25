@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
+import { BulkMessageModal } from "@/components/BulkMessageModal";
 import {
   getEngagementState,
   relativeTime,
@@ -178,13 +179,14 @@ export default function Players() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
+  const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const fetchData = async () => {
     const [playersRes, clubRes] = await Promise.all([
       supabase
         .from("players")
         .select(
-          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id"
+          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in"
         )
         .limit(2000),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
@@ -291,6 +293,17 @@ export default function Players() {
 
   const thProps = { sortCol, sortDir, onSort: handleSort };
 
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [`${displayed.length} recipients`];
+    if (engFilter) parts.push(engFilter === "never-visited" ? "Never Visited" : toTitleCase(engFilter));
+    if (memberFilter === "member") parts.push("Member");
+    if (memberFilter === "non-member") parts.push("Non-member");
+    if (progFilter === "null") parts.push("Unset progression");
+    else if (progFilter) parts.push(toTitleCase(progFilter));
+    if (search) parts.push(`"${search}"`);
+    return parts.join(" · ");
+  }, [displayed.length, engFilter, memberFilter, progFilter, search]);
+
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={clubName} />
@@ -385,19 +398,38 @@ export default function Players() {
                 </button>
               )}
             </div>
-            <button
-              onClick={exportCSV}
-              disabled={loading || displayed.length === 0}
-              style={{
-                ...selectStyle,
-                background: "var(--bg-surface)",
-                fontWeight: 500,
-                opacity: loading || displayed.length === 0 ? 0.5 : 1,
-                cursor: loading || displayed.length === 0 ? "not-allowed" : "pointer",
-              }}
-            >
-              Export CSV
-            </button>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <button
+                onClick={exportCSV}
+                disabled={loading || displayed.length === 0}
+                style={{
+                  ...selectStyle,
+                  background: "var(--bg-surface)",
+                  fontWeight: 500,
+                  opacity: loading || displayed.length === 0 ? 0.5 : 1,
+                  cursor: loading || displayed.length === 0 ? "not-allowed" : "pointer",
+                }}
+              >
+                Export CSV
+              </button>
+              <button
+                onClick={() => setBulkModalOpen(true)}
+                disabled={loading || displayed.length === 0}
+                style={{
+                  ...selectStyle,
+                  background: displayed.length > 0 && !loading ? "var(--accent)" : "var(--border)",
+                  color: displayed.length > 0 && !loading ? "#fff" : "var(--text-tertiary)",
+                  fontWeight: 500,
+                  border: "none",
+                  cursor: displayed.length > 0 && !loading ? "pointer" : "not-allowed",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {displayed.length === 0
+                  ? "No players selected"
+                  : `Send bulk message (${displayed.length})`}
+              </button>
+            </div>
           </div>
 
           {/* Table */}
@@ -596,6 +628,14 @@ export default function Players() {
         onClose={() => setDrawerPlayerId(null)}
         onDataChanged={fetchData}
       />
+
+      {bulkModalOpen && (
+        <BulkMessageModal
+          recipients={displayed}
+          filterSummary={filterSummary}
+          onClose={() => setBulkModalOpen(false)}
+        />
+      )}
     </div>
   );
 }
