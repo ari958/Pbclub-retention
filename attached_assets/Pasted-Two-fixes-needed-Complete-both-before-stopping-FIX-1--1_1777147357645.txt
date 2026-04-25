@@ -1,0 +1,101 @@
+Two fixes needed. Complete both before stopping.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIX 1 — Seed built-in templates via API
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The message_templates table exists in Supabase but has no 
+rows. Do NOT ask the user to run SQL manually. Instead, 
+create a one-time seed endpoint and call it automatically 
+on server startup.
+
+Add this to the Express server:
+
+1. On startup, check if any rows exist in message_templates 
+   where is_builtin = true. If zero rows exist, insert these 
+   3 records:
+
+   {
+     name: "Win-back offer",
+     body: "Hey {{first_name}}! We miss you at {{club_name}}. Come back this week — your first drop-in is on us. Book here: {{booking_link}}",
+     use_case_tags: ["never-visited", "dormant"],
+     is_builtin: true
+   },
+   {
+     name: "Tournament invite",
+     body: "Hey {{first_name}}! We're hosting a {{skill_level}} doubles tournament on {{event_date}} at {{club_name}}. Sign up here: {{event_link}}",
+     use_case_tags: ["active", "lapsing"],
+     is_builtin: true
+   },
+   {
+     name: "Clinic promotion",
+     body: "Hi {{first_name}}, you're ready for the next level! We're running a clinic on {{event_date}} — only a few spots left. Reserve yours: {{booking_link}}",
+     use_case_tags: ["ready-to-advance"],
+     is_builtin: true
+   }
+
+2. Also add GET /api/templates and POST /api/templates 
+   endpoints if they don't already exist. GET returns all 
+   rows from message_templates ordered by is_builtin DESC, 
+   created_at ASC. POST inserts a new row with is_builtin = false.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+FIX 2 — Complete the template editor in Settings
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+The Settings page template editor only shows a name field. 
+It needs to be a full editor. Replace the current editor 
+panel with this:
+
+Fields (top to bottom):
+  TEMPLATE NAME       [text input — already exists, keep it]
+
+  MESSAGE BODY        [textarea, min-height 120px]
+                      Label above: "Message body"
+
+  VARIABLE CHIPS      Below the textarea, show these 
+                      clickable chips. Clicking inserts 
+                      the variable at the textarea cursor:
+                        {{first_name}}
+                        {{skill_level}}
+                        {{club_name}}
+                        {{last_visit}}
+                        {{event_date}}
+                        {{booking_link}}
+
+  USE CASE TAGS       Label: "Best used for"
+                      Multi-select checkboxes or toggle 
+                      pills for:
+                        never-visited  dormant  lapsing  
+                        active  ready-to-advance
+
+  LIVE PREVIEW        Below the tags, a read-only preview 
+                      box that renders the message body 
+                      with example values substituted:
+                        {{first_name}} → "Alex"
+                        {{skill_level}} → "3.5"
+                        {{club_name}} → "PB Club"
+                        {{last_visit}} → "Mar 4"
+                        {{event_date}} → "May 10"
+                        {{booking_link}} → "pbclub.com/book"
+                      Unresolved variables stay highlighted 
+                      in amber.
+
+  CHARACTER COUNTER   "142 chars · 1 SMS" below the textarea.
+                      1 SMS = ≤160 chars. Updates live.
+
+  BUTTONS             Bottom right: [Discard] [Save template]
+                      Save calls POST /api/templates with 
+                      name, body, use_case_tags, is_builtin=false.
+                      On success: clear the editor, refresh 
+                      the template list on the left.
+
+Built-in templates in the left list: show a "built-in" badge 
+and NO edit button. Clicking them populates the editor fields 
+as read-only (disable all inputs, show "Built-in templates 
+cannot be edited" at the top of the editor panel).
+
+Custom templates: show an "Edit" button. Clicking it populates 
+the editor for editing. Save on an existing custom template 
+calls PATCH /api/templates/:id instead of POST.
+
+Do not change anything outside of Settings.tsx and the 
+template-related API routes.

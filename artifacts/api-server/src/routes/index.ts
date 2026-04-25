@@ -7,6 +7,7 @@ import programsRouter from "./programs";
 import messagesRouter from "./messages";
 import importRouter from "./import";
 import adminRouter from "./admin";
+import templatesRouter from "./templates";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(programsRouter);
 router.use(messagesRouter);
 router.use(importRouter);
 router.use(adminRouter);
+router.use(templatesRouter);
 
 export default router;
