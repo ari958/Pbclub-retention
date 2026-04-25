@@ -31,6 +31,13 @@ function extractSkillLevel(tags) {
  * @param {object} event
  * @returns {object}
  */
+const ET_DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "long",
+  month: "short",
+  day: "numeric",
+});
+
 function formatProgram(event) {
   const rate = event.admissionRate;
   const price =
@@ -47,6 +54,11 @@ function formatProgram(event) {
 
   const tags = Array.isArray(event.tags) ? event.tags : [];
 
+  const rawStartTime = event.startTime ?? null;
+  const start_time = rawStartTime
+    ? ET_DATE_FMT.format(new Date(rawStartTime))
+    : null;
+
   return {
     name: event.name,
     description: event.description?.trim() || null,
@@ -56,7 +68,7 @@ function formatProgram(event) {
     skill_level: extractSkillLevel(tags),
     tags,
     spots_remaining,
-    start_time: event.startTime ?? null,
+    start_time,
     signup_url: event.id ? `${PODPLAY_WEB_BASE}/events/${event.id}` : null,
   };
 }
