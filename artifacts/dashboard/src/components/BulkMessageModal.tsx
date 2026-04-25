@@ -19,9 +19,40 @@ const ALL_VARS = [
   "{{booking_link}}",
 ];
 
+// Operator-fill vars: cannot be auto-resolved from player data
 const OPERATOR_VARS = new Set(["event_date", "booking_link", "event_link", "next_level"]);
 
-function resolveVar(varName: string, player: Player | undefined): string | null {
+const OPERATOR_VAR_CONFIG: Record<string, { label: string; placeholder: string }> = {
+  event_date:   { label: "Event date",       placeholder: "e.g. May 10" },
+  booking_link: { label: "Booking link",     placeholder: "e.g. pbclub.com/book" },
+  event_link:   { label: "Sign-up link",     placeholder: "e.g. pbclub.com/tournament" },
+  next_level:   { label: "Next skill level", placeholder: "e.g. 3.5" },
+};
+
+/** Returns deduplicated list of operator-fill var names found in body */
+function getOperatorVarsNeeded(body: string): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  const matches = body.match(/\{\{(\w+)\}\}/g) ?? [];
+  for (const m of matches) {
+    const v = m.slice(2, -2);
+    if (OPERATOR_VARS.has(v) && !seen.has(v)) {
+      seen.add(v);
+      result.push(v);
+    }
+  }
+  return result;
+}
+
+/** Substitute filled operator vals into body; player vars are left for server */
+function applyOperatorVals(body: string, vals: Record<string, string>): string {
+  return body.replace(/\{\{(\w+)\}\}/g, (match, v) => {
+    if (OPERATOR_VARS.has(v) && vals[v]?.trim()) return vals[v].trim();
+    return match;
+  });
+}
+
+function resolvePlayerVar(varName: string, player: Player | undefined): string | null {
   if (!player) return null;
   if (varName === "first_name") return player.name.split(" ")[0];
   if (varName === "skill_level") return player.skill_level ?? "your level";
@@ -30,12 +61,13 @@ function resolveVar(varName: string, player: Player | undefined): string | null 
   return null;
 }
 
-function hasUnresolvedVars(body: string): boolean {
-  const matches = body.match(/\{\{(\w+)\}\}/g) ?? [];
-  return matches.some((m) => OPERATOR_VARS.has(m.slice(2, -2)));
+interface PreviewTextProps {
+  body: string;
+  player: Player | undefined;
+  operatorVals: Record<string, string>;
 }
 
-function PreviewText({ body, player }: { body: string; player: Player | undefined }) {
+function PreviewText({ body, player, operatorVals }: PreviewTextProps) {
   if (!body.trim()) {
     return (
       <span style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>
@@ -43,6 +75,7 @@ function PreviewText({ body, player }: { body: string; player: Player | undefine
       </span>
     );
   }
+
   const parts = body.split(/(\{\{\w+\}\})/g);
   return (
     <>
@@ -50,7 +83,26 @@ function PreviewText({ body, player }: { body: string; player: Player | undefine
         const match = part.match(/^\{\{(\w+)\}\}$/);
         if (!match) return <span key={i}>{part}</span>;
         const varName = match[1];
+
         if (OPERATOR_VARS.has(varName)) {
+          const filled = operatorVals[varName]?.trim();
+          if (filled) {
+            return (
+              <span
+                key={i}
+                style={{
+                  background: "rgba(46,160,67,0.10)",
+                  color: "var(--state-active)",
+                  borderRadius: 3,
+                  padding: "0 3px",
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                }}
+              >
+                {filled}
+              </span>
+            );
+          }
           return (
             <span
               key={i}
@@ -67,7 +119,8 @@ function PreviewText({ body, player }: { body: string; player: Player | undefine
             </span>
           );
         }
-        const resolved = resolveVar(varName, player);
+
+        const resolved = resolvePlayerVar(varName, player);
         return (
           <span
             key={i}
@@ -106,13 +159,7 @@ function TagPill({ tag }: { tag: string }) {
   );
 }
 
-function VarChip({
-  label,
-  onClick,
-}: {
-  label: string;
-  onClick: () => void;
-}) {
+function VarChip({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
@@ -152,61 +199,78 @@ export function BulkMessageModal({
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [selectedTemplate, setSelectedTemplate] = useState<MessageTemplate | null>(null);
   const [customBody, setCustomBody] = useState("");
+  const [operatorVals, setOperatorVals] = useState<Record<string, string>>({});
   const [optInOnly, setOptInOnly] = useState(true);
   const [sending, setSending] = useState(false);
 
   const previewPlayer = recipients[0];
-  const activeBody = mode === "template" ? (selectedTemplate?.body ?? "") : customBody;
+
+  // Raw template/custom body (may still contain {{operator_vars}})
+  const rawBody = mode === "template" ? (selectedTemplate?.body ?? "") : customBody;
+
+  // Operator vars required for the current body
+  const operatorVarsNeeded = getOperatorVarsNeeded(rawBody);
+
+  // Whether all required operator-fill fields are filled
+  const allOperatorVarsFilled =
+    operatorVarsNeeded.length === 0 ||
+    operatorVarsNeeded.every((v) => operatorVals[v]?.trim());
+
+  // Body sent to the API: operator vars substituted, player vars kept for server
+  const resolvedBodyForApi = applyOperatorVals(rawBody, operatorVals);
 
   const eligibleRecipients = optInOnly
     ? recipients.filter((p) => p.sms_opt_in === true)
     : recipients;
 
   const canSend =
-    activeBody.trim().length > 0 &&
+    rawBody.trim().length > 0 &&
     (mode === "template" ? selectedTemplate !== null : true) &&
-    !hasUnresolvedVars(activeBody) &&
+    allOperatorVarsFilled &&
     eligibleRecipients.length > 0;
 
   const estimatedCost = (eligibleRecipients.length * 0.02).toFixed(2);
 
+  // Load templates from API (not Supabase directly, so service-role sees them)
   useEffect(() => {
-    supabase
-      .from("message_templates")
-      .select("*")
-      .order("created_at")
-      .then(({ data }) => {
-        if (data) setTemplates(data as MessageTemplate[]);
-        setTemplatesLoading(false);
-      });
+    fetch("/api/templates")
+      .then((r) => r.json())
+      .then((data) => { if (Array.isArray(data)) setTemplates(data as MessageTemplate[]); })
+      .catch(() => {
+        // fallback: try supabase
+        supabase
+          .from("message_templates")
+          .select("*")
+          .order("created_at")
+          .then(({ data }) => { if (data) setTemplates(data as MessageTemplate[]); });
+      })
+      .finally(() => setTemplatesLoading(false));
   }, []);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const insertVar = useCallback(
-    (v: string) => {
-      const el = textareaRef.current;
-      if (!el) {
-        setCustomBody((b) => b + v);
-        return;
-      }
-      const start = el.selectionStart ?? el.value.length;
-      const end = el.selectionEnd ?? el.value.length;
-      const next = el.value.slice(0, start) + v + el.value.slice(end);
-      setCustomBody(next);
-      requestAnimationFrame(() => {
-        el.focus();
-        el.setSelectionRange(start + v.length, start + v.length);
-      });
-    },
-    []
-  );
+  // When template changes, reset operator vals
+  const handleSelectTemplate = (t: MessageTemplate) => {
+    setSelectedTemplate(t);
+    setOperatorVals({});
+  };
+
+  const insertVar = useCallback((v: string) => {
+    const el = textareaRef.current;
+    if (!el) { setCustomBody((b) => b + v); return; }
+    const start = el.selectionStart ?? el.value.length;
+    const end = el.selectionEnd ?? el.value.length;
+    const next = el.value.slice(0, start) + v + el.value.slice(end);
+    setCustomBody(next);
+    requestAnimationFrame(() => {
+      el.focus();
+      el.setSelectionRange(start + v.length, start + v.length);
+    });
+  }, []);
 
   const handleSend = async () => {
     setSending(true);
@@ -216,32 +280,27 @@ export function BulkMessageModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           player_ids: eligibleRecipients.map((p) => p.id),
-          message_body: activeBody,
+          // Operator vars already substituted; server resolves player vars per-recipient
+          message_body: resolvedBodyForApi,
           template_id: selectedTemplate?.id,
         }),
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `HTTP ${res.status}`);
+        throw new Error((err as any).error ?? `HTTP ${res.status}`);
       }
 
       const data: { sent: number; failed: number; errors: string[] } = await res.json();
-
       onClose();
 
       if (data.failed > 0) {
-        console.warn("Bulk send partial failures:", data.errors);
-        toast.info(
-          `Sent to ${data.sent} players · ${data.failed} failed`
-        );
+        toast.info(`Sent to ${data.sent} players · ${data.failed} failed`);
       } else {
         toast.success(`Sent to ${data.sent} players`);
       }
     } catch (err) {
-      toast.error(
-        `Send failed — ${err instanceof Error ? err.message : "try again"}`
-      );
+      toast.error(`Send failed — ${err instanceof Error ? err.message : "try again"}`);
     } finally {
       setSending(false);
     }
@@ -257,6 +316,19 @@ export function BulkMessageModal({
     marginBottom: 8,
   };
 
+  const fieldInput: React.CSSProperties = {
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: 5,
+    border: "1px solid var(--border)",
+    background: "var(--bg-surface-2)",
+    color: "var(--text-primary)",
+    fontFamily: "var(--font-sans)",
+    fontSize: 13,
+    outline: "none",
+    boxSizing: "border-box",
+  };
+
   return (
     <div
       style={{
@@ -269,9 +341,7 @@ export function BulkMessageModal({
         justifyContent: "center",
         padding: 24,
       }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
         style={{
@@ -303,25 +373,13 @@ export function BulkMessageModal({
             <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>
               Send bulk message
             </div>
-            <div
-              style={{
-                fontSize: 12,
-                color: "var(--text-tertiary)",
-                fontFamily: "var(--font-mono)",
-              }}
-            >
+            <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
               {filterSummary}
             </div>
           </div>
           <button
             onClick={onClose}
-            style={{
-              fontSize: 18,
-              color: "var(--text-tertiary)",
-              padding: "2px 6px",
-              borderRadius: 4,
-              lineHeight: 1,
-            }}
+            style={{ fontSize: 18, color: "var(--text-tertiary)", padding: "2px 6px", borderRadius: 4, lineHeight: 1 }}
           >
             ×
           </button>
@@ -373,26 +431,17 @@ export function BulkMessageModal({
                     return (
                       <div
                         key={t.id}
-                        onClick={() => setSelectedTemplate(t)}
+                        onClick={() => handleSelectTemplate(t)}
                         style={{
                           border: `1.5px solid ${selected ? "#3b82f6" : "var(--border)"}`,
                           borderRadius: 7,
                           padding: "10px 14px",
                           cursor: "pointer",
-                          background: selected
-                            ? "rgba(59,130,246,0.05)"
-                            : "var(--bg-surface-2)",
+                          background: selected ? "rgba(59,130,246,0.05)" : "var(--bg-surface-2)",
                           transition: "border-color 0.12s, background 0.12s",
                         }}
                       >
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 8,
-                            marginBottom: 6,
-                          }}
-                        >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
                           <span style={{ fontWeight: 500, fontSize: 13 }}>{t.name}</span>
                           <span
                             style={{
@@ -400,9 +449,7 @@ export function BulkMessageModal({
                               fontFamily: "var(--font-mono)",
                               padding: "1px 6px",
                               borderRadius: 3,
-                              background: t.is_builtin
-                                ? "rgba(59,130,246,0.10)"
-                                : "var(--accent-light)",
+                              background: t.is_builtin ? "rgba(59,130,246,0.10)" : "rgba(232,168,56,0.08)",
                               color: t.is_builtin ? "#3b82f6" : "var(--accent)",
                               border: `1px solid ${t.is_builtin ? "rgba(59,130,246,0.2)" : "rgba(232,168,56,0.2)"}`,
                             }}
@@ -411,15 +458,74 @@ export function BulkMessageModal({
                           </span>
                         </div>
                         <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-                          {t.use_case_tags.map((tag) => (
-                            <TagPill key={tag} tag={tag} />
-                          ))}
+                          {t.use_case_tags.map((tag) => <TagPill key={tag} tag={tag} />)}
                         </div>
                       </div>
                     );
                   })}
                 </div>
               )}
+            </div>
+          )}
+
+          {/* FILL IN DETAILS — only shown when operator-fill vars are needed */}
+          {mode === "template" && operatorVarsNeeded.length > 0 && (
+            <div style={{ marginBottom: 18 }}>
+              <div style={sectionHead}>Fill in details</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {operatorVarsNeeded.map((v) => {
+                  const cfg = OPERATOR_VAR_CONFIG[v] ?? { label: v, placeholder: "" };
+                  return (
+                    <div key={v}>
+                      <label
+                        style={{
+                          display: "block",
+                          fontSize: 11,
+                          color: "var(--text-secondary)",
+                          marginBottom: 5,
+                          fontWeight: 500,
+                        }}
+                      >
+                        {cfg.label}
+                        {!operatorVals[v]?.trim() && (
+                          <span
+                            style={{
+                              marginLeft: 6,
+                              fontSize: 10,
+                              fontFamily: "var(--font-mono)",
+                              color: "var(--accent)",
+                              fontWeight: 400,
+                            }}
+                          >
+                            required
+                          </span>
+                        )}
+                      </label>
+                      <input
+                        type="text"
+                        value={operatorVals[v] ?? ""}
+                        onChange={(e) =>
+                          setOperatorVals((prev) => ({ ...prev, [v]: e.target.value }))
+                        }
+                        placeholder={cfg.placeholder}
+                        style={{
+                          ...fieldInput,
+                          borderColor: operatorVals[v]?.trim()
+                            ? "var(--border)"
+                            : "rgba(232,168,56,0.5)",
+                        }}
+                        onFocus={(e) =>
+                          ((e.currentTarget as HTMLElement).style.borderColor = "var(--accent)")
+                        }
+                        onBlur={(e) =>
+                          ((e.currentTarget as HTMLElement).style.borderColor =
+                            operatorVals[v]?.trim() ? "var(--border)" : "rgba(232,168,56,0.5)")
+                        }
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -448,40 +554,16 @@ export function BulkMessageModal({
                   boxSizing: "border-box",
                 }}
               />
-              <div
-                style={{
-                  display: "flex",
-                  gap: 6,
-                  flexWrap: "wrap",
-                  marginTop: 8,
-                  alignItems: "center",
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-tertiary)",
-                    fontFamily: "var(--font-mono)",
-                    marginRight: 4,
-                  }}
-                >
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", marginRight: 4 }}>
                   Insert:
                 </span>
                 {ALL_VARS.map((v) => (
                   <VarChip key={v} label={v} onClick={() => insertVar(v)} />
                 ))}
               </div>
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-tertiary)",
-                  fontFamily: "var(--font-mono)",
-                  marginTop: 6,
-                }}
-              >
-                {customBody.length} chars
-                {" · "}
-                {Math.ceil(customBody.length / 160) || 1} SMS
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", marginTop: 6 }}>
+                {customBody.length} chars · {Math.ceil(customBody.length / 160) || 1} SMS
               </div>
             </div>
           )}
@@ -500,19 +582,12 @@ export function BulkMessageModal({
                 color: "var(--text-primary)",
               }}
             >
-              <PreviewText body={activeBody} player={previewPlayer} />
+              <PreviewText body={rawBody} player={previewPlayer} operatorVals={operatorVals} />
             </div>
             {previewPlayer && (
-              <div
-                style={{
-                  fontSize: 11,
-                  color: "var(--text-tertiary)",
-                  marginTop: 5,
-                  fontFamily: "var(--font-mono)",
-                }}
-              >
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 5, fontFamily: "var(--font-mono)" }}>
                 Preview as: {previewPlayer.name}
-                {hasUnresolvedVars(activeBody) && (
+                {!allOperatorVarsFilled && (
                   <span style={{ color: "var(--accent)", marginLeft: 8 }}>
                     ⚠ Fill in amber variables before sending
                   </span>
@@ -534,9 +609,7 @@ export function BulkMessageModal({
             }}
           >
             <div>
-              <div style={{ fontWeight: 500, fontSize: 13 }}>
-                Only send to SMS opt-in players
-              </div>
+              <div style={{ fontWeight: 500, fontSize: 13 }}>Only send to SMS opt-in players</div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
                 {eligibleRecipients.length} / {recipients.length} eligible
               </div>
@@ -583,13 +656,7 @@ export function BulkMessageModal({
             background: "var(--bg-surface)",
           }}
         >
-          <div
-            style={{
-              fontSize: 12,
-              color: "var(--text-tertiary)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
+          <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
             Sending to {eligibleRecipients.length} players · ~${estimatedCost} est. cost
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -638,9 +705,7 @@ export function BulkMessageModal({
                   }}
                 />
               )}
-              {sending
-                ? "Sending…"
-                : `Send to ${eligibleRecipients.length} players →`}
+              {sending ? "Sending…" : `Send to ${eligibleRecipients.length} players →`}
             </button>
           </div>
         </div>
