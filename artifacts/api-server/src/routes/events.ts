@@ -73,12 +73,10 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 20);
 
-  // ── Step 3: fetch (or auto-create) open-invitations in parallel ──────────
+  // ── Step 3: fetch open-invitations in parallel ───────────────────────────
   const invitationResults = await Promise.allSettled(
     filtered.map(async (event) => {
       const url = `${PODPLAY_BASE}/events/${event.id}/open-invitations`;
-
-      // ── 3a: try GET existing invitation ────────────────────────────────
       try {
         const ic = new AbortController();
         const it = setTimeout(() => ic.abort(), 5_000);
@@ -91,44 +89,16 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
           // Prefer an invitation that still has spots; fall back to any with a link
           const available = items.find((item) => (item.redeemsRemaining ?? 0) > 0 && item.redeemUrl);
           const anyLink   = items.find((item) => item.redeemUrl);
-          const found = (available ?? anyLink)?.redeemUrl ?? null;
-          if (found) return found;
-          // items is empty — fall through to POST
-        } else if (res.status !== 422) {
-          // Unexpected error — skip POST, return null
-          console.log(`[events] GET invitations ${res.status} for ${event.id}`);
-          return null;
+          return (available ?? anyLink)?.redeemUrl ?? null;
         }
-        // 422 or empty items → fall through to POST
+
+        // 422 or any other non-ok status → no link
+        if (res.status !== 422) {
+          console.log(`[events] GET invitations ${res.status} for ${event.id}`);
+        }
+        return null;
       } catch (err) {
         console.log(`[events] GET invitation fetch failed for ${event.id}:`, (err as Error).message);
-        return null;
-      }
-
-      // ── 3b: auto-create an open invitation via POST ─────────────────────
-      try {
-        const pc = new AbortController();
-        const pt = setTimeout(() => pc.abort(), 5_000);
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { ...headers, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            visibility: "LISTED",
-            type: "SIGNUP",
-            onBehalfOfEventOwner: true,
-          }),
-          signal: pc.signal,
-        });
-        clearTimeout(pt);
-
-        if (res.ok) {
-          const body = await res.json() as { redeemUrl?: string };
-          return body.redeemUrl ?? null;
-        }
-        console.log(`[events] POST invitation ${res.status} for ${event.id}`);
-        return null;
-      } catch (err) {
-        console.log(`[events] POST invitation failed for ${event.id}:`, (err as Error).message);
         return null;
       }
     })
