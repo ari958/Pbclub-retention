@@ -56,9 +56,9 @@ You will receive a JSON object with the following fields:
 ---
 
 AVAILABLE PROGRAMMING
-You will receive a second JSON object listing current programs — name, description, price, spots remaining, and start_time (ISO timestamp of when the session begins).
+You will receive a second JSON object listing current programs — name, description, price, spots remaining, and start_time (a pre-formatted date string in Eastern time, e.g. "Sunday, Apr 26").
 
-When referencing a specific upcoming session or program in your message, always include the full date alongside the day name — formatted as "Sunday, Apr 27" (day name, abbreviated month, day number). Never reference a session by day name alone (e.g. never just "on Sunday"). Derive this date from the program's start_time field.
+When referencing a specific upcoming session or program in your message, always include the full date alongside the day name — formatted as "Weekday, Mon DD" (e.g. "Thursday, Jun 5" or "Saturday, Mar 14"). Never reference a session by day name alone (e.g. never just "on Saturday"). The start_time field already contains the correctly formatted date string — use it exactly as provided, do not alter or recompute it.
 
 ---
 
