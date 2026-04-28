@@ -73,53 +73,16 @@ async function fetchUpcomingEvents(): Promise<UpcomingEvent[]> {
     .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())
     .slice(0, 20);
 
-  // ── Step 3: fetch open-invitations in parallel ───────────────────────────
-  const invitationResults = await Promise.allSettled(
-    filtered.map(async (event) => {
-      const url = `${PODPLAY_BASE}/events/${event.id}/open-invitations`;
-      try {
-        const ic = new AbortController();
-        const it = setTimeout(() => ic.abort(), 5_000);
-        const res = await fetch(url, { headers, signal: ic.signal });
-        clearTimeout(it);
-
-        if (res.ok) {
-          const body = await res.json() as { items?: { redeemUrl?: string; redeemsRemaining?: number }[] };
-          const items = body.items ?? [];
-          // Prefer an invitation that still has spots; fall back to any with a link
-          const available = items.find((item) => (item.redeemsRemaining ?? 0) > 0 && item.redeemUrl);
-          const anyLink   = items.find((item) => item.redeemUrl);
-          return (available ?? anyLink)?.redeemUrl ?? null;
-        }
-
-        // 422 or any other non-ok status → no link
-        if (res.status !== 422) {
-          console.log(`[events] GET invitations ${res.status} for ${event.id}`);
-        }
-        return null;
-      } catch (err) {
-        console.log(`[events] GET invitation fetch failed for ${event.id}:`, (err as Error).message);
-        return null;
-      }
-    })
-  );
-
-  // ── Step 4: build response ────────────────────────────────────────────────
-  return filtered.map((event, i) => {
-    const result = invitationResults[i];
-    const signupUrl =
-      result.status === "fulfilled" ? (result.value ?? null) : null;
-
-    return {
-      id: event.id,
-      name: event.name,
-      subtype: event.subtype,
-      startTime: event.startTime,
-      admissionRating: (event.admissionRating as Record<string, unknown>) ?? null,
-      admissionRate: (event.admissionRate as Record<string, unknown>) ?? null,
-      signupUrl,
-    };
-  });
+  // ── Step 3: build response ────────────────────────────────────────────────
+  return filtered.map((event) => ({
+    id: event.id,
+    name: event.name,
+    subtype: event.subtype,
+    startTime: event.startTime,
+    admissionRating: (event.admissionRating as Record<string, unknown>) ?? null,
+    admissionRate: (event.admissionRate as Record<string, unknown>) ?? null,
+    signupUrl: `https://pbclub.podplay.app/community/events/${event.id}`,
+  }));
 }
 
 // GET /api/events/upcoming
