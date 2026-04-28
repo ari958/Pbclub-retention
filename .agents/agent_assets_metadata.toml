@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "okhqfy5ZjshoQzK48oIeM"
+uri = "file://project-review.md"
+type = "text"
+title = "Pulse / PB Club — Full Project Review"
