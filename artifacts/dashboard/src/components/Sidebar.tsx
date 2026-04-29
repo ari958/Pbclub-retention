@@ -1,4 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 interface SidebarProps {
   clubName: string;
@@ -8,12 +10,55 @@ interface SidebarProps {
 
 export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps) {
   const location = useLocation();
+  const [unreadReplies, setUnreadReplies] = useState(0);
+
+  // Poll for unread inbound replies every 30 seconds
+  useEffect(() => {
+    const fetchUnread = async () => {
+      const { count } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("direction", "inbound")
+        .is("read_at", null);
+      setUnreadReplies(count ?? 0);
+    };
+
+    fetchUnread();
+    const interval = setInterval(fetchUnread, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Mark replies as read when navigating to /messages
+  useEffect(() => {
+    if (location.pathname === "/messages" && unreadReplies > 0) {
+      const markRead = async () => {
+        await supabase
+          .from("messages")
+          .update({ read_at: new Date().toISOString() })
+          .eq("direction", "inbound")
+          .is("read_at", null);
+        setUnreadReplies(0);
+      };
+      // Small delay so the badge is visible briefly before clearing
+      const timer = setTimeout(markRead, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [location.pathname, unreadReplies]);
+
+  // Total Messages badge: pending queue + unread replies
+  const messagesBadge = messageCount + unreadReplies;
 
   const navItems = [
     { label: "Dashboard", path: "/" },
     { label: "Players", path: "/players" },
     { label: "Assessments", path: "/assessments" },
-    { label: "Messages", path: "/messages", badge: messageCount > 0 ? messageCount : undefined },
+    {
+      label: "Messages",
+      path: "/messages",
+      badge: messagesBadge > 0 ? messagesBadge : undefined,
+      // Show reply indicator separately when there are unread replies
+      replyAlert: unreadReplies > 0,
+    },
     { label: "Settings", path: "/settings" },
   ];
 
@@ -65,6 +110,7 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
             item.path === "/"
               ? location.pathname === "/"
               : location.pathname.startsWith(item.path);
+
           return (
             <Link
               key={item.path}
@@ -87,14 +133,31 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
                 textDecoration: "none",
               }}
             >
-              {item.label}
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {item.label}
+                {/* Green dot for unread replies */}
+                {"replyAlert" in item && item.replyAlert && (
+                  <span
+                    style={{
+                      width: 6,
+                      height: 6,
+                      borderRadius: "50%",
+                      background: "var(--state-active)",
+                      display: "inline-block",
+                      flexShrink: 0,
+                    }}
+                  />
+                )}
+              </span>
               {item.badge !== undefined && (
                 <span
                   style={{
                     fontSize: 10,
                     fontWeight: 600,
                     fontFamily: "var(--font-mono)",
-                    background: "var(--accent)",
+                    background: "replyAlert" in item && item.replyAlert
+                      ? "var(--state-active)"
+                      : "var(--accent)",
                     color: "#fff",
                     borderRadius: 10,
                     padding: "1px 6px",

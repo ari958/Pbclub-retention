@@ -749,6 +749,7 @@ export default function Dashboard() {
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [responseRate, setResponseRate] = useState<number | null>(null);
+  const [winbackRate, setWinbackRate] = useState<number | null>(null);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -763,28 +764,27 @@ export default function Dashboard() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [playersRes, clubRes, outboundRes, inboundRes] = await Promise.all([
+    const [playersRes, clubRes, outboundRes, inboundRes, winbackData] = await Promise.all([
       supabase
         .from("players")
         .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
         .limit(2000),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
-      // Count outbound messages sent in last 30 days
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "outbound")
         .eq("status", "sent")
         .gte("sent_at", new Date(Date.now() - 30 * 86400000).toISOString()),
-      // Count inbound replies in last 30 days
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "inbound")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()),
+      fetch("/api/players/winback-stats").then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
     if (playersRes.data) setPlayers(playersRes.data as Player[]);
     if (clubRes.data?.name) setClubName(clubRes.data.name);
-    // Calculate response rate
     const outCount = outboundRes.count ?? 0;
     const inCount = inboundRes.count ?? 0;
     setResponseRate(outCount > 0 ? Math.round((inCount / outCount) * 100) : null);
+    setWinbackRate(winbackData?.conversion_rate_pct ?? null);
     await fetchMessages();
     setLoading(false);
   }, [fetchMessages]);
@@ -881,7 +881,7 @@ export default function Dashboard() {
           </div>
         </header>
         <main style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "var(--bg-surface-2)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 12, marginBottom: 20 }}>
             {statCards.map((s) => (
               <div key={s.key} onClick={() => handleCardClick(s.key)} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px 14px", cursor: "pointer", userSelect: "none", transition: "box-shadow 0.15s", position: "relative", overflow: "hidden" }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
@@ -898,6 +898,13 @@ export default function Dashboard() {
                 {loading ? "—" : responseRate !== null ? `${responseRate}%` : "—"}
               </div>
               <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, fontFamily: "var(--font-mono)" }}>last 30 days</div>
+            </div>
+            <div style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px", userSelect: "none" }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "var(--text-tertiary)", letterSpacing: "0.06em", marginBottom: 8 }}>WIN-BACK RATE</div>
+              <div style={{ fontSize: 28, fontWeight: 600, color: winbackRate !== null ? "var(--accent)" : "var(--text-primary)", lineHeight: 1 }}>
+                {loading ? "—" : winbackRate !== null ? `${winbackRate}%` : "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, fontFamily: "var(--font-mono)" }}>attended after msg</div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>

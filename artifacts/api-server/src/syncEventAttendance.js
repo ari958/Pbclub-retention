@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY
 );
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
@@ -13,11 +13,10 @@ const SIGNUP_FETCH_DELAY_MS = 300;
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const DEFAULT_TIMEZONE = "America/New_York";
 
-/**
- * Converts a UTC ISO timestamp to a YYYY-MM-DD date string in the given
- * IANA timezone. For example, "2026-04-24T02:00:00.000Z" in "America/New_York"
- * (UTC-4) becomes "2026-04-23".
- */
+// Win-back window: if a player attends within this many days of receiving a message,
+// count it as a conversion
+const WINBACK_WINDOW_DAYS = 14;
+
 function toLocalDateString(isoString, timezone) {
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: timezone,
@@ -33,8 +32,6 @@ class CancelledError extends Error {
     this.name = "CancelledError";
   }
 }
-
-// ─── PodPlay fetchers ─────────────────────────────────────────────────────────
 
 async function fetchEventPage(page, endTime) {
   const url =
@@ -54,38 +51,66 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function fetchEventSignups(eventId) {
   const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
-
   const attempt = async () =>
     fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY } });
 
   let res = await attempt();
-
-  if (res.status === 429) {
-    await sleep(3000);
-    res = await attempt();
-  }
-
+  if (res.status === 429) { await sleep(3000); res = await attempt(); }
   if (res.status === 404) return [];
   if (!res.ok) throw new Error(`PodPlay GET /events/${eventId}/signups returned ${res.status}: ${await res.text()}`);
   const data = await res.json();
   return data.items ?? [];
 }
 
-// ─── Main sync ────────────────────────────────────────────────────────────────
+// ─── Win-back attribution ─────────────────────────────────────────────────────
 
 /**
- * Event-centric attendance sync.
- *
- * 1. Loads all players with an external_id into a Map for O(1) lookup.
- * 2. Paginates through all past events from SYNC_START_DATE to now.
- * 3. For each event fetches /signups — each signup has owner.id (PodPlay user ID).
- * 4. Matches owner.id → player via the Map.
- * 5. Upserts attendance records in batches, ignoring duplicates via the
- *    unique constraint on (player_id, program_name, attended_at).
- *
- * @param {(msg: string) => void} log
- * @param {() => boolean} isCancelled
+ * For a player who just attended an event, check if they received an outbound
+ * message while lapsing/dormant within the win-back window. If so, mark the
+ * message as converted and update the player's engagement state.
  */
+async function checkAndMarkWinback(playerId, attendedAt, log) {
+  const attendedDate = new Date(attendedAt);
+  const windowStart = new Date(attendedDate.getTime() - WINBACK_WINDOW_DAYS * 86400000);
+
+  // Find conversations for this player triggered during lapsing/dormant
+  const { data: convs } = await supabase
+    .from("conversations")
+    .select("id, triggered_by")
+    .eq("player_id", playerId)
+    .in("triggered_by", ["lapsing", "dormant", "bulk", "agent"]);
+
+  if (!convs?.length) return false;
+
+  const convIds = convs.map((c) => c.id);
+
+  // Find an outbound message sent in the win-back window with no conversion yet
+  const { data: msgs } = await supabase
+    .from("messages")
+    .select("id, sent_at")
+    .in("conversation_id", convIds)
+    .eq("direction", "outbound")
+    .eq("status", "sent")
+    .is("converted_at", null)
+    .gte("sent_at", windowStart.toISOString())
+    .lte("sent_at", attendedDate.toISOString())
+    .order("sent_at", { ascending: false })
+    .limit(1);
+
+  if (!msgs?.length) return false;
+
+  // Mark the message as converted
+  await supabase
+    .from("messages")
+    .update({ converted_at: attendedAt })
+    .eq("id", msgs[0].id);
+
+  log(`[sync/events] Win-back conversion: player ${playerId} attended after message ${msgs[0].id}`);
+  return true;
+}
+
+// ─── Main sync ────────────────────────────────────────────────────────────────
+
 export async function syncEventAttendance(log = console.log, isCancelled = () => false) {
   const stats = {
     eventsScanned: 0,
@@ -95,10 +120,11 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     signupsMatched: 0,
     signupsUnmatched: 0,
     attendancesUpserted: 0,
+    winbacksDetected: 0,
     errors: 0,
   };
 
-  // ── Step 0: Resolve club timezone ─────────────────────────────────────────
+  // Step 0: Resolve club timezone
   const { data: clubRow } = await supabase
     .from("clubs")
     .select("timezone")
@@ -107,12 +133,11 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   const clubTimezone = clubRow?.timezone ?? DEFAULT_TIMEZONE;
   log(`[sync/events] Using timezone: ${clubTimezone}`);
 
-  // ── Step 1: Build player lookup map (external_id → player row) ────────────
+  // Step 1: Build player lookup map
   log("[sync/events] Loading players from Supabase…");
-
   const { data: players, error: playersErr } = await supabase
     .from("players")
-    .select("id, external_id, name")
+    .select("id, external_id, name, last_visit_date")
     .not("external_id", "is", null);
 
   if (playersErr) throw new Error(`Failed to load players: ${playersErr.message}`);
@@ -120,11 +145,14 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   const playerMap = new Map(players.map((p) => [p.external_id, p]));
   log(`[sync/events] Loaded ${playerMap.size} linked players into lookup map`);
 
-  // ── Step 2: Paginate through all past events ───────────────────────────────
+  // Track which players got new attendances this sync for win-back checks
+  const newAttendancesByPlayer = new Map(); // player_id -> most recent attended_at
+
+  // Step 2: Paginate through all past events
   const endTime = new Date().toISOString();
   const now = new Date();
   let page = 1;
-  const pendingUpserts = []; // accumulate records across events before flushing
+  const pendingUpserts = [];
 
   async function flushUpserts() {
     if (pendingUpserts.length === 0) return;
@@ -161,7 +189,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     const items = pageData.items ?? [];
     stats.eventsScanned += items.length;
 
-    // Only process past, non-cancelled events
     const pastEvents = items.filter(
       (e) => !e.isCanceled && new Date(e.startTime) <= now
     );
@@ -173,7 +200,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       `${pastEvents.length} past & active, ${items.length - pastEvents.length} skipped`
     );
 
-    // ── Step 3: For each past event, fetch signups ───────────────────────────
     for (const event of pastEvents) {
       if (isCancelled()) throw new CancelledError();
 
@@ -190,7 +216,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
       stats.signupsFetched += signups.length;
 
-      // ── Step 4: Match signups to players ──────────────────────────────────
       let matched = 0;
       let unmatched = 0;
 
@@ -202,13 +227,21 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         if (!player) { unmatched++; continue; }
 
         matched++;
+        const attendedAt = toLocalDateString(event.startTime, clubTimezone);
+
         pendingUpserts.push({
           player_id: player.id,
           event_id: event.id,
           program_name: event.name,
-          attended_at: toLocalDateString(event.startTime, clubTimezone),
+          attended_at: attendedAt,
           program_type: event.customType ?? event.type ?? null,
         });
+
+        // Track newest attendance per player for win-back check
+        const existing = newAttendancesByPlayer.get(player.id);
+        if (!existing || attendedAt > existing) {
+          newAttendancesByPlayer.set(player.id, attendedAt);
+        }
       }
 
       stats.signupsMatched += matched;
@@ -221,21 +254,19 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         );
       }
 
-      // Flush to DB when batch is large enough
       if (pendingUpserts.length >= UPSERT_BATCH) {
         await flushUpserts();
       }
     }
 
-    if (items.length < IPP) break; // last page
+    if (items.length < IPP) break;
     page++;
   }
 
-  // Final flush of any remaining records
   await flushUpserts();
 
-  // ── Step 5: Update last_visit_date for all affected players ───────────────
-  log("[sync/events] Updating last_visit_date for all linked players…");
+  // Step 3: Update last_visit_date + check win-backs + cancel pending messages
+  log("[sync/events] Updating last_visit_date and checking win-backs…");
   let visitUpdates = 0;
 
   for (const player of players) {
@@ -255,16 +286,43 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         .update({ last_visit_date: latest.attended_at })
         .eq("id", player.id);
       visitUpdates++;
+
+      // Win-back check: only for players who got a new attendance this sync
+      const newAttendance = newAttendancesByPlayer.get(player.id);
+      if (newAttendance) {
+        const wasWinback = await checkAndMarkWinback(player.id, newAttendance, log);
+        if (wasWinback) {
+          stats.winbacksDetected++;
+
+          // Cancel any pending queued messages — player is already re-engaged
+          const { data: convs } = await supabase
+            .from("conversations")
+            .select("id")
+            .eq("player_id", player.id);
+
+          if (convs?.length) {
+            await supabase
+              .from("messages")
+              .update({
+                status: "skipped",
+                error_message: "Player re-engaged — attended event after outreach",
+              })
+              .in("conversation_id", convs.map((c) => c.id))
+              .eq("status", "pending");
+          }
+        }
+      }
     }
   }
 
   log(`[sync/events] Updated last_visit_date for ${visitUpdates} players`);
+  log(`[sync/events] Win-backs detected: ${stats.winbacksDetected}`);
 
   log(
     `[sync/events] ── Complete ──\n` +
     `  Events scanned: ${stats.eventsScanned} | Past/active: ${stats.eventsPast} | Skipped: ${stats.eventsSkipped}\n` +
     `  Signups fetched: ${stats.signupsFetched} | Matched: ${stats.signupsMatched} | Unmatched: ${stats.signupsUnmatched}\n` +
-    `  Attendance records upserted: ${stats.attendancesUpserted} | Errors: ${stats.errors}`
+    `  Attendance records upserted: ${stats.attendancesUpserted} | Win-backs: ${stats.winbacksDetected} | Errors: ${stats.errors}`
   );
 
   return stats;
