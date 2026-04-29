@@ -1,5 +1,6 @@
 export type EngagementState = "active" | "lapsing" | "dormant" | "never-visited";
 export type ProgressionStatus = "ready-to-advance" | "developing" | "at-ceiling" | null;
+export type MessageStatus = "pending" | "sent" | "skipped" | "failed" | "undelivered";
 
 export interface Player {
   id: string;
@@ -13,12 +14,14 @@ export interface Player {
   notes: string | null;
   club_id: string | null;
   sms_opt_in: boolean | null;
+  last_outbound_at: string | null;
 }
 
 export interface MessageQueueItem {
   id: string;
   body: string;
   signup_url: string | null;
+  status: MessageStatus;
   conversation_id: string;
   conversations: {
     id: string;
@@ -29,6 +32,7 @@ export interface MessageQueueItem {
       name: string;
       skill_level: string | null;
       progression_status: ProgressionStatus;
+      last_outbound_at: string | null;
     } | null;
   } | null;
 }

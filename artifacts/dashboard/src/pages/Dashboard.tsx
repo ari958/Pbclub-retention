@@ -14,6 +14,18 @@ import {
 } from "@/lib/helpers";
 import type { EngagementState, ProgressionStatus, Player, MessageQueueItem } from "@/lib/types";
 
+const COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+function getCooldownLabel(lastOutboundAt: string | null): string | null {
+  if (!lastOutboundAt) return null;
+  const elapsed = Date.now() - new Date(lastOutboundAt).getTime();
+  const remaining = COOLDOWN_MS - elapsed;
+  if (remaining <= 0) return null;
+  const hours = Math.floor(remaining / 3600000);
+  const mins = Math.ceil((remaining % 3600000) / 60000);
+  return hours > 0 ? `${hours}h ${mins}m cooldown` : `${mins}m cooldown`;
+}
+
 // ─── Shared UI atoms ──────────────────────────────────────────────────────────
 
 function StatePill({ state }: { state: EngagementState }) {
@@ -71,11 +83,13 @@ function ActionBtn({
   variant = "default",
   onClick,
   disabled,
+  title,
 }: {
   label: string;
   variant?: "default" | "primary" | "danger";
   onClick?: () => void;
   disabled?: boolean;
+  title?: string;
 }) {
   const styles: Record<string, React.CSSProperties> = {
     default: {
@@ -94,6 +108,7 @@ function ActionBtn({
     <button
       onClick={onClick}
       disabled={disabled}
+      title={title}
       style={{
         ...styles[variant],
         padding: "4px 10px",
@@ -135,9 +150,7 @@ function ProgressionDropdown({
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -146,10 +159,7 @@ function ProgressionDropdown({
   const select = async (val: ProgressionStatus) => {
     setSaving(true);
     setOpen(false);
-    await supabase
-      .from("players")
-      .update({ progression_status: val })
-      .eq("id", playerId);
+    await supabase.from("players").update({ progression_status: val }).eq("id", playerId);
     setSaving(false);
     onUpdate();
   };
@@ -157,10 +167,7 @@ function ProgressionDropdown({
   return (
     <div ref={ref} style={{ position: "relative", display: "inline-block" }}>
       <div
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((o) => !o);
-        }}
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
         style={{ cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.5 : 1 }}
         title="Click to change"
       >
@@ -184,26 +191,18 @@ function ProgressionDropdown({
           {PROG_OPTIONS.map((opt) => (
             <div
               key={String(opt.value)}
-              onClick={(e) => {
-                e.stopPropagation();
-                select(opt.value);
-              }}
+              onClick={(e) => { e.stopPropagation(); select(opt.value); }}
               style={{
                 padding: "7px 12px",
                 fontSize: 12,
                 cursor: "pointer",
                 fontFamily: "var(--font-mono)",
-                color:
-                  opt.value === status ? "var(--accent)" : "var(--text-primary)",
+                color: opt.value === status ? "var(--accent)" : "var(--text-primary)",
                 background: "transparent",
                 transition: "background 0.1s",
               }}
-              onMouseEnter={(e) =>
-                ((e.currentTarget as HTMLElement).style.background = "var(--bg-surface-2)")
-              }
-              onMouseLeave={(e) =>
-                ((e.currentTarget as HTMLElement).style.background = "transparent")
-              }
+              onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = "var(--bg-surface-2)")}
+              onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
             >
               {opt.label}
             </div>
@@ -334,19 +333,11 @@ function AtRiskPanel({
   const [sortCol, setSortCol] = useState<SortCol>("state");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
-  // Sync engagement filter when stat card is clicked
-  useEffect(() => {
-    setEngFilter(filterState);
-  }, [filterState]);
+  useEffect(() => { setEngFilter(filterState); }, [filterState]);
 
-  const handleRun = async (e: React.MouseEvent, playerId: string) => {
-    e.stopPropagation();
+  const handleRun = async (playerId: string) => {
     setRunning(playerId);
-    try {
-      await onRunAgent(playerId);
-    } finally {
-      setRunning(null);
-    }
+    try { await onRunAgent(playerId); } finally { setRunning(null); }
   };
 
   const handleEngChange = (val: string) => {
@@ -356,29 +347,19 @@ function AtRiskPanel({
   };
 
   const handleSort = (col: SortCol) => {
-    if (sortCol === col) {
-      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    } else {
-      setSortCol(col);
-      setSortDir("asc");
-    }
+    if (sortCol === col) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortCol(col); setSortDir("asc"); }
   };
 
   const clearFilters = () => {
-    setSearch("");
-    setEngFilter(null);
-    setProgFilter("");
-    setMemberFilter("");
-    setSortCol("state");
-    setSortDir("asc");
-    onFilterStateChange(null);
+    setSearch(""); setEngFilter(null); setProgFilter(""); setMemberFilter("");
+    setSortCol("state"); setSortDir("asc"); onFilterStateChange(null);
   };
 
   const hasFilters = search || engFilter || progFilter || memberFilter;
 
   const displayed = useMemo(() => {
     let list = [...players];
-
     if (search) list = list.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
     if (engFilter) list = list.filter((p) => getEngagementState(p.last_visit_date) === engFilter);
     if (progFilter) {
@@ -391,16 +372,13 @@ function AtRiskPanel({
 
     list.sort((a, b) => {
       let cmp = 0;
-      if (sortCol === "name") {
-        cmp = a.name.localeCompare(b.name);
-      } else if (sortCol === "state") {
-        cmp = STATE_SORT_ORDER[getEngagementState(a.last_visit_date)] - STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
-      } else if (sortCol === "progression") {
+      if (sortCol === "name") cmp = a.name.localeCompare(b.name);
+      else if (sortCol === "state") cmp = STATE_SORT_ORDER[getEngagementState(a.last_visit_date)] - STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
+      else if (sortCol === "progression") {
         const ak = a.progression_status ?? "null";
         const bk = b.progression_status ?? "null";
         cmp = (PROG_SORT_ORDER[ak] ?? 99) - (PROG_SORT_ORDER[bk] ?? 99);
       } else if (sortCol === "lastVisit") {
-        // never-visited always sorts last regardless of direction
         const aNull = a.last_visit_date === null;
         const bNull = b.last_visit_date === null;
         if (aNull && bNull) return 0;
@@ -410,62 +388,21 @@ function AtRiskPanel({
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
-
     return list;
   }, [players, search, engFilter, progFilter, memberFilter, sortCol, sortDir]);
 
   const thProps = { sortCol, sortDir, onSort: handleSort };
 
   return (
-    <section
-      style={{
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        overflow: "hidden",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: "14px 20px 12px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>Players</span>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--text-tertiary)",
-          }}
-        >
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)" }}>
           {loading ? "…" : `Showing ${displayed.length} of ${players.length}`}
         </span>
       </div>
-
-      {/* Filter bar */}
-      <div
-        style={{
-          padding: "10px 16px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          gap: 8,
-          alignItems: "center",
-          flexWrap: "wrap",
-          background: "var(--bg-surface-2)",
-        }}
-      >
-        <input
-          type="text"
-          placeholder="Search by name…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ ...filterSelectStyle, width: 160 }}
-        />
+      <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", background: "var(--bg-surface-2)" }}>
+        <input type="text" placeholder="Search by name…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ ...filterSelectStyle, width: 160 }} />
         <select value={engFilter ?? ""} onChange={(e) => handleEngChange(e.target.value)} style={filterSelectStyle}>
           <option value="">All states</option>
           <option value="active">Active</option>
@@ -486,16 +423,11 @@ function AtRiskPanel({
           <option value="non-member">Non-member</option>
         </select>
         {hasFilters && (
-          <button
-            onClick={clearFilters}
-            style={{ ...filterSelectStyle, color: "var(--text-tertiary)" }}
-          >
+          <button onClick={clearFilters} style={{ ...filterSelectStyle, color: "var(--text-tertiary)" }}>
             Clear filters
           </button>
         )}
       </div>
-
-      {/* Table */}
       <div style={{ overflowX: "auto" }}>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
@@ -508,18 +440,12 @@ function AtRiskPanel({
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <SkeletonRows cols={5} />
-            ) : displayed.length === 0 ? (
+            {loading ? <SkeletonRows cols={5} /> : displayed.length === 0 ? (
               <tr>
                 <td colSpan={5} style={{ padding: "32px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
                   {hasFilters ? (
-                    <span>
-                      No players match these filters{" "}
-                      <button
-                        onClick={clearFilters}
-                        style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", fontSize: 13, textDecoration: "underline" }}
-                      >
+                    <span>No players match these filters{" "}
+                      <button onClick={clearFilters} style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", fontSize: 13, textDecoration: "underline" }}>
                         Clear filters
                       </button>
                     </span>
@@ -534,42 +460,23 @@ function AtRiskPanel({
                   <tr
                     key={p.id}
                     onClick={() => onRowClick(p.id)}
-                    style={{
-                      borderBottom: i < displayed.length - 1 ? "1px solid var(--border)" : "none",
-                      cursor: "pointer",
-                      transition: "background 0.1s",
-                    }}
+                    style={{ borderBottom: i < displayed.length - 1 ? "1px solid var(--border)" : "none", cursor: "pointer", transition: "background 0.1s" }}
                     onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.background = AMBER_HOVER)}
                     onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.background = "transparent")}
                   >
                     <td style={{ padding: "12px 16px", whiteSpace: "nowrap", borderLeft: `3px solid ${STATE_ROW_BORDER[state]}` }}>
                       <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
-                      {p.skill_level && (
-                        <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>
-                          {toTitleCase(p.skill_level)}
-                        </div>
-                      )}
+                      {p.skill_level && <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 1 }}>{toTitleCase(p.skill_level)}</div>}
                     </td>
+                    <td style={{ padding: "12px 16px" }}><StatePill state={state} /></td>
                     <td style={{ padding: "12px 16px" }}>
-                      <StatePill state={state} />
-                    </td>
-                    <td style={{ padding: "12px 16px" }}>
-                      <ProgressionDropdown
-                        status={p.progression_status}
-                        playerId={p.id}
-                        onUpdate={onProgressionChange}
-                      />
+                      <ProgressionDropdown status={p.progression_status} playerId={p.id} onUpdate={onProgressionChange} />
                     </td>
                     <td style={{ padding: "12px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                       {relativeTime(p.last_visit_date)}
                     </td>
                     <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                      <ActionBtn
-                        label={isRunning ? "Running…" : "Run Agent"}
-                        variant="default"
-                        disabled={isRunning}
-                        onClick={(e) => handleRun(e as unknown as React.MouseEvent, p.id)}
-                      />
+                      <ActionBtn label={isRunning ? "Running…" : "Run Agent"} variant="default" disabled={isRunning} onClick={() => handleRun(p.id)} />
                     </td>
                   </tr>
                 );
@@ -582,139 +489,51 @@ function AtRiskPanel({
   );
 }
 
-function NeedsAssessmentPanel({
-  players,
-  onUpdate,
-}: {
-  players: Player[];
-  onUpdate: () => void;
-}) {
+function NeedsAssessmentPanel({ players, onUpdate }: { players: Player[]; onUpdate: () => void }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [checkmarks, setCheckmarks] = useState<Set<string>>(new Set());
 
   const updateProgression = async (playerId: string, status: string) => {
     setLoading(playerId + status);
-    await supabase
-      .from("players")
-      .update({ progression_status: status })
-      .eq("id", playerId);
+    await supabase.from("players").update({ progression_status: status }).eq("id", playerId);
     setLoading(null);
     setCheckmarks((prev) => new Set([...prev, playerId]));
     setTimeout(() => {
-      setCheckmarks((prev) => {
-        const next = new Set(prev);
-        next.delete(playerId);
-        return next;
-      });
+      setCheckmarks((prev) => { const next = new Set(prev); next.delete(playerId); return next; });
       onUpdate();
     }, 600);
   };
 
   return (
-    <section
-      style={{
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          padding: "14px 20px 12px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>Needs Assessment</span>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--state-lapsing)",
-            background: "rgba(212,129,58,0.08)",
-            padding: "2px 8px",
-            borderRadius: 3,
-            border: "1px solid rgba(212,129,58,0.2)",
-          }}
-        >
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--state-lapsing)", background: "rgba(212,129,58,0.08)", padding: "2px 8px", borderRadius: 3, border: "1px solid rgba(212,129,58,0.2)" }}>
           {players.length} pending
         </span>
       </div>
       <div style={{ maxHeight: 260, overflowY: "auto" }}>
         {players.length === 0 ? (
-          <div
-            style={{
-              padding: "28px 20px",
-              textAlign: "center",
-              color: "var(--text-tertiary)",
-              fontSize: 13,
-            }}
-          >
-            All players assessed ✓
-          </div>
+          <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>All players assessed ✓</div>
         ) : (
           players.map((p, i) => (
-            <div
-              key={p.id}
-              style={{
-                padding: "12px 16px",
-                borderBottom:
-                  i < players.length - 1 ? "1px solid var(--border)" : "none",
-              }}
-            >
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  gap: 8,
-                }}
-              >
+            <div key={p.id} style={{ padding: "12px 16px", borderBottom: i < players.length - 1 ? "1px solid var(--border)" : "none" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 }}>
                 <div>
                   <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      color: "var(--text-tertiary)",
-                      marginTop: 2,
-                    }}
-                  >
+                  <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2 }}>
                     {p.skill_level ? toTitleCase(p.skill_level) : "No skill level"} · {relativeTime(p.last_visit_date)}
                   </div>
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 10, alignItems: "center" }}>
                 {checkmarks.has(p.id) ? (
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color: "var(--state-active)",
-                      fontWeight: 600,
-                    }}
-                  >
-                    ✓
-                  </span>
+                  <span style={{ fontSize: 14, color: "var(--state-active)", fontWeight: 600 }}>✓</span>
                 ) : (
                   <>
-                    <ActionBtn
-                      label="Ready"
-                      variant="primary"
-                      disabled={loading === p.id + "ready-to-advance"}
-                      onClick={() => updateProgression(p.id, "ready-to-advance")}
-                    />
-                    <ActionBtn
-                      label="Developing"
-                      disabled={loading === p.id + "developing"}
-                      onClick={() => updateProgression(p.id, "developing")}
-                    />
-                    <ActionBtn
-                      label="Ceiling"
-                      disabled={loading === p.id + "at-ceiling"}
-                      onClick={() => updateProgression(p.id, "at-ceiling")}
-                    />
+                    <ActionBtn label="Ready" variant="primary" disabled={loading === p.id + "ready-to-advance"} onClick={() => updateProgression(p.id, "ready-to-advance")} />
+                    <ActionBtn label="Developing" disabled={loading === p.id + "developing"} onClick={() => updateProgression(p.id, "developing")} />
+                    <ActionBtn label="Ceiling" disabled={loading === p.id + "at-ceiling"} onClick={() => updateProgression(p.id, "at-ceiling")} />
                   </>
                 )}
               </div>
@@ -750,11 +569,20 @@ function MessageQueuePanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message_id: messageId }),
       });
+      const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Message sent");
+        if (data.skipped) {
+          toast.info(data.reason ?? "Message skipped");
+        } else {
+          toast.success("Message sent");
+        }
       } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? data.reason ?? "Send failed");
+        // Surface unresolved variable errors clearly
+        if (data.unresolved_vars?.length) {
+          toast.error(`Unresolved variables: ${data.unresolved_vars.join(", ")}`);
+        } else {
+          toast.error(data.error ?? "Send failed");
+        }
       }
       onSent();
     } finally {
@@ -762,17 +590,19 @@ function MessageQueuePanel({
     }
   };
 
-  const skipMessage = async (messageId: string, conversationId: string) => {
+  const skipMessage = async (messageId: string) => {
     setSkipping(messageId);
     try {
-      await supabase
-        .from("messages")
-        .update({ twilio_message_sid: "skipped" })
-        .eq("id", messageId);
-      await supabase
-        .from("conversations")
-        .update({ triggered_by: "skipped" })
-        .eq("id", conversationId);
+      const res = await fetch("/api/messages/skip", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId }),
+      });
+      if (res.ok) {
+        toast.info("Message skipped");
+      } else {
+        toast.error("Failed to skip message");
+      }
       onSent();
     } finally {
       setSkipping(null);
@@ -784,18 +614,12 @@ function MessageQueuePanel({
     setDraftBody(body);
   };
 
-  const cancelEdit = () => {
-    setEditingId(null);
-    setDraftBody("");
-  };
+  const cancelEdit = () => { setEditingId(null); setDraftBody(""); };
 
   const saveEdit = async (messageId: string) => {
     setSaving(true);
     try {
-      await supabase
-        .from("messages")
-        .update({ body: draftBody })
-        .eq("id", messageId);
+      await supabase.from("messages").update({ body: draftBody }).eq("id", messageId);
       setEditingId(null);
       setDraftBody("");
       onSent();
@@ -805,48 +629,16 @@ function MessageQueuePanel({
   };
 
   return (
-    <section
-      style={{
-        background: "var(--bg-surface)",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        overflow: "hidden",
-      }}
-    >
-      <div
-        style={{
-          padding: "14px 20px 12px",
-          borderBottom: "1px solid var(--border)",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>Message Queue</span>
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            color: "var(--text-tertiary)",
-            background: "var(--bg-surface-2)",
-            padding: "2px 8px",
-            borderRadius: 3,
-            border: "1px solid var(--border)",
-          }}
-        >
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)", background: "var(--bg-surface-2)", padding: "2px 8px", borderRadius: 3, border: "1px solid var(--border)" }}>
           {messages.length} pending
         </span>
       </div>
       <div style={{ maxHeight: 380, overflowY: "auto" }}>
         {messages.length === 0 ? (
-          <div
-            style={{
-              padding: "28px 20px",
-              textAlign: "center",
-              color: "var(--text-tertiary)",
-              fontSize: 13,
-            }}
-          >
+          <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
             No messages queued. Run the agent to generate personalized outreach.
           </div>
         ) : (
@@ -858,58 +650,27 @@ function MessageQueuePanel({
             const isSending = sending === m.id;
             const isSkipping = skipping === m.id;
             const busy = isSending || isSkipping || saving;
+            const cooldownLabel = getCooldownLabel(player?.last_outbound_at ?? null);
 
             return (
-              <div
-                key={m.id}
-                style={{
-                  padding: "12px 16px",
-                  borderBottom:
-                    i < messages.length - 1 ? "1px solid var(--border)" : "none",
-                }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 6,
-                    marginBottom: 6,
-                  }}
-                >
+              <div key={m.id} style={{ padding: "12px 16px", borderBottom: i < messages.length - 1 ? "1px solid var(--border)" : "none" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
                   <span
                     onClick={() => playerId && onOpenPlayer(playerId)}
-                    style={{
-                      fontWeight: 500,
-                      fontSize: 13,
-                      cursor: playerId ? "pointer" : "default",
-                      color: playerId ? "var(--accent)" : "inherit",
-                      textDecoration: playerId ? "none" : undefined,
-                    }}
-                    onMouseEnter={(e) => {
-                      if (playerId)
-                        (e.currentTarget as HTMLElement).style.textDecoration =
-                          "underline";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLElement).style.textDecoration =
-                        "none";
-                    }}
+                    style={{ fontWeight: 500, fontSize: 13, cursor: playerId ? "pointer" : "default", color: playerId ? "var(--accent)" : "inherit", textDecoration: "none" }}
+                    onMouseEnter={(e) => { if (playerId) (e.currentTarget as HTMLElement).style.textDecoration = "underline"; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.textDecoration = "none"; }}
                   >
                     {player?.name ?? "Unknown"}
                   </span>
-                  {routingTag && routingTag !== "skipped" && (
-                    <span
-                      style={{
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 10,
-                        padding: "1px 5px",
-                        borderRadius: 3,
-                        background: "var(--bg-surface-2)",
-                        color: "var(--text-tertiary)",
-                        border: "1px solid var(--border)",
-                      }}
-                    >
+                  {routingTag && (
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "var(--bg-surface-2)", color: "var(--text-tertiary)", border: "1px solid var(--border)" }}>
                       {routingTag}
+                    </span>
+                  )}
+                  {cooldownLabel && (
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, padding: "1px 5px", borderRadius: 3, background: "rgba(207,34,46,0.06)", color: "var(--state-dormant)", border: "1px solid rgba(207,34,46,0.15)" }}>
+                      {cooldownLabel}
                     </span>
                   )}
                 </div>
@@ -919,69 +680,30 @@ function MessageQueuePanel({
                     value={draftBody}
                     onChange={(e) => setDraftBody(e.target.value)}
                     rows={4}
-                    style={{
-                      width: "100%",
-                      boxSizing: "border-box",
-                      padding: "8px 10px",
-                      fontSize: 12,
-                      fontFamily: "var(--font-sans)",
-                      lineHeight: 1.5,
-                      border: "1px solid var(--border)",
-                      borderRadius: 4,
-                      background: "var(--bg-surface-2)",
-                      color: "var(--text-primary)",
-                      resize: "vertical",
-                      outline: "none",
-                      marginBottom: 8,
-                    }}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "8px 10px", fontSize: 12, fontFamily: "var(--font-sans)", lineHeight: 1.5, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-surface-2)", color: "var(--text-primary)", resize: "vertical", outline: "none", marginBottom: 8 }}
                   />
                 ) : (
-                  <div
-                    style={{
-                      fontSize: 12,
-                      color: "var(--text-secondary)",
-                      fontStyle: "italic",
-                      lineHeight: 1.5,
-                      marginBottom: 10,
-                    }}
-                  >
+                  <div style={{ fontSize: 12, color: "var(--text-secondary)", fontStyle: "italic", lineHeight: 1.5, marginBottom: 10 }}>
                     {m.body.length > 120 ? m.body.slice(0, 120) + "…" : m.body}
                   </div>
                 )}
 
                 {isEditing ? (
                   <div style={{ display: "flex", gap: 6 }}>
-                    <ActionBtn
-                      label={saving ? "Saving…" : "Save"}
-                      variant="primary"
-                      disabled={saving || draftBody.trim() === ""}
-                      onClick={() => saveEdit(m.id)}
-                    />
-                    <ActionBtn
-                      label="Cancel"
-                      disabled={saving}
-                      onClick={cancelEdit}
-                    />
+                    <ActionBtn label={saving ? "Saving…" : "Save"} variant="primary" disabled={saving || draftBody.trim() === ""} onClick={() => saveEdit(m.id)} />
+                    <ActionBtn label="Cancel" disabled={saving} onClick={cancelEdit} />
                   </div>
                 ) : (
                   <div style={{ display: "flex", gap: 6 }}>
                     <ActionBtn
                       label={isSending ? "Sending…" : "Send"}
                       variant="primary"
-                      disabled={busy}
+                      disabled={busy || !!cooldownLabel}
+                      title={cooldownLabel ? `On cooldown — ${cooldownLabel}` : undefined}
                       onClick={() => sendMessage(m.id)}
                     />
-                    <ActionBtn
-                      label="Edit"
-                      disabled={busy}
-                      onClick={() => startEdit(m.id, m.body)}
-                    />
-                    <ActionBtn
-                      label={isSkipping ? "Skipping…" : "Skip"}
-                      variant="danger"
-                      disabled={busy}
-                      onClick={() => skipMessage(m.id, m.conversation_id)}
-                    />
+                    <ActionBtn label="Edit" disabled={busy} onClick={() => startEdit(m.id, m.body)} />
+                    <ActionBtn label={isSkipping ? "Skipping…" : "Skip"} variant="danger" disabled={busy} onClick={() => skipMessage(m.id)} />
                   </div>
                 )}
               </div>
@@ -995,53 +717,12 @@ function MessageQueuePanel({
 
 // ─── Confirm Dialog ───────────────────────────────────────────────────────────
 
-function ConfirmDialog({
-  message,
-  onConfirm,
-  onCancel,
-}: {
-  message: string;
-  onConfirm: () => void;
-  onCancel: () => void;
-}) {
+function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
   return (
     <>
-      <div
-        onClick={onCancel}
-        style={{
-          position: "fixed",
-          inset: 0,
-          background: "rgba(0,0,0,0.5)",
-          zIndex: 300,
-        }}
-      />
-      <div
-        style={{
-          position: "fixed",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          zIndex: 301,
-          background: "var(--bg-surface)",
-          border: "1px solid var(--border)",
-          borderRadius: 10,
-          padding: "24px",
-          maxWidth: 420,
-          width: "calc(100% - 48px)",
-          boxShadow: "0 8px 32px rgba(0,0,0,0.24)",
-          fontFamily: "var(--font-sans)",
-        }}
-      >
-        <div
-          style={{
-            fontSize: 13,
-            color: "var(--text-secondary)",
-            lineHeight: 1.65,
-            marginBottom: 20,
-          }}
-        >
-          {message}
-        </div>
+      <div onClick={onCancel} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 300 }} />
+      <div style={{ position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)", zIndex: 301, background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 10, padding: "24px", maxWidth: 420, width: "calc(100% - 48px)", boxShadow: "0 8px 32px rgba(0,0,0,0.24)", fontFamily: "var(--font-sans)" }}>
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.65, marginBottom: 20 }}>{message}</div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <ActionBtn label="Cancel" onClick={onCancel} />
           <ActionBtn label="Continue" variant="primary" onClick={onConfirm} />
@@ -1066,30 +747,25 @@ export default function Dashboard() {
   const [syncRunning, setSyncRunning] = useState(false);
   const [filterState, setFilterState] = useState<EngagementState | null>(null);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
-  const [confirmDialog, setConfirmDialog] = useState<{
-    message: string;
-    onConfirm: () => void;
-  } | null>(null);
+  const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
       .from("messages")
       .select(
-        "id, body, signup_url, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name, skill_level, progression_status))"
+        "id, body, signup_url, status, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name, skill_level, progression_status, last_outbound_at))"
       )
       .eq("direction", "outbound")
       .eq("sent_by", "agent")
-      .is("twilio_message_sid", null);
-    if (res.data) setMessages(res.data as MessageQueueItem[]);
+      .eq("status", "pending"); // only show pending messages — uses new status column
+    if (res.data) setMessages(res.data as unknown as MessageQueueItem[]);
   }, []);
 
   const fetchData = useCallback(async () => {
     const [playersRes, clubRes] = await Promise.all([
       supabase
         .from("players")
-        .select(
-          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id"
-        )
+        .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
         .limit(2000),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
     ]);
@@ -1099,32 +775,27 @@ export default function Dashboard() {
     setLoading(false);
   }, [fetchMessages]);
 
-  const runAgent = useCallback(
-    async (playerId: string) => {
-      const res = await fetch("/api/agent/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ player_id: playerId }),
-      });
-      if (res.ok) {
-        toast.success("Message ready in queue");
-      } else {
-        const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Agent run failed");
-      }
-      await fetchMessages();
-    },
-    [fetchMessages, toast]
-  );
+  const runAgent = useCallback(async (playerId: string) => {
+    const res = await fetch("/api/agent/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ player_id: playerId }),
+    });
+    if (res.ok) {
+      toast.success("Message ready in queue");
+    } else {
+      const data = await res.json().catch(() => ({}));
+      toast.error(data.error ?? "Agent run failed");
+    }
+    await fetchMessages();
+  }, [fetchMessages, toast]);
 
   const runBatchAgent = useCallback(async () => {
     setBatchRunning(true);
     setBatchStatus(null);
     try {
       const targets = players
-        .filter((p) =>
-          ["lapsing", "dormant"].includes(getEngagementState(p.last_visit_date))
-        )
+        .filter((p) => ["lapsing", "dormant"].includes(getEngagementState(p.last_visit_date)))
         .slice(0, 50);
 
       if (targets.length === 0) {
@@ -1143,9 +814,7 @@ export default function Dashboard() {
         if (res.ok) generated++;
       }
       await fetchMessages();
-      toast.success(
-        `${generated} message${generated !== 1 ? "s" : ""} generated`
-      );
+      toast.success(`${generated} message${generated !== 1 ? "s" : ""} generated`);
     } finally {
       setBatchRunning(false);
       setBatchStatus(null);
@@ -1168,9 +837,7 @@ export default function Dashboard() {
     }
   }, [fetchData, toast]);
 
-  useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+  useEffect(() => { fetchData(); }, [fetchData]);
 
   const needsAssessment = players.filter((p) => p.progression_status === null);
   const active = players.filter((p) => getEngagementState(p.last_visit_date) === "active").length;
@@ -1178,273 +845,57 @@ export default function Dashboard() {
   const dormant = players.filter((p) => getEngagementState(p.last_visit_date) === "dormant").length;
   const neverVisited = players.filter((p) => p.last_visit_date === null).length;
 
-  const handleCardClick = (key: EngagementState) => {
-    setFilterState((prev) => (prev === key ? null : key));
-  };
+  const handleCardClick = (key: EngagementState) => setFilterState((prev) => (prev === key ? null : key));
 
   const statCards = [
-    {
-      key: "active" as EngagementState,
-      label: "ACTIVE PLAYERS",
-      value: active,
-      color: "var(--state-active)",
-    },
-    {
-      key: "lapsing" as EngagementState,
-      label: "LAPSING",
-      value: lapsing,
-      color: "var(--state-lapsing)",
-    },
-    {
-      key: "dormant" as EngagementState,
-      label: "DORMANT",
-      value: dormant,
-      color: "var(--state-dormant)",
-    },
-    {
-      key: "never-visited" as EngagementState,
-      label: "NEVER VISITED",
-      value: neverVisited,
-      color: "var(--text-tertiary)",
-    },
+    { key: "active" as EngagementState, label: "ACTIVE PLAYERS", value: active, color: "var(--state-active)" },
+    { key: "lapsing" as EngagementState, label: "LAPSING", value: lapsing, color: "var(--state-lapsing)" },
+    { key: "dormant" as EngagementState, label: "DORMANT", value: dormant, color: "var(--state-dormant)" },
+    { key: "never-visited" as EngagementState, label: "NEVER VISITED", value: neverVisited, color: "var(--text-tertiary)" },
   ];
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={clubName} messageCount={messages.length} />
-
-      <div
-        style={{
-          marginLeft: 220,
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-        }}
-      >
-        {/* Top bar */}
-        <header
-          style={{
-            height: 52,
-            minHeight: 52,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "0 28px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--bg-surface)",
-            position: "sticky",
-            top: 0,
-            zIndex: 5,
-          }}
-        >
+      <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px", borderBottom: "1px solid var(--border)", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 5 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Dashboard</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            {batchStatus && (
-              <span
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 11,
-                  color: "var(--text-tertiary)",
-                }}
-              >
-                {batchStatus}
-              </span>
-            )}
-            <ActionBtn
-              label={syncRunning ? "Syncing…" : "Sync All"}
-              disabled={syncRunning}
-              onClick={() =>
-                setConfirmDialog({
-                  message:
-                    "Manual sync may affect booking performance for players currently using PodPlay. Best run during off-hours. Continue?",
-                  onConfirm: () => {
-                    setConfirmDialog(null);
-                    syncAll();
-                  },
-                })
-              }
-            />
-            <ActionBtn
-              label={batchRunning ? "Running…" : "Run Batch Agent"}
-              variant="primary"
-              disabled={batchRunning}
-              onClick={() =>
-                setConfirmDialog({
-                  message:
-                    "Running the agent for all players makes multiple API calls. For best performance, schedule this during off-hours. Continue?",
-                  onConfirm: () => {
-                    setConfirmDialog(null);
-                    runBatchAgent();
-                  },
-                })
-              }
-            />
+            {batchStatus && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)" }}>{batchStatus}</span>}
+            <ActionBtn label={syncRunning ? "Syncing…" : "Sync All"} disabled={syncRunning} onClick={() => setConfirmDialog({ message: "Manual sync may affect booking performance for players currently using PodPlay. Best run during off-hours. Continue?", onConfirm: () => { setConfirmDialog(null); syncAll(); } })} />
+            <ActionBtn label={batchRunning ? "Running…" : "Run Batch Agent"} variant="primary" disabled={batchRunning} onClick={() => setConfirmDialog({ message: "Running the agent for all players makes multiple API calls. For best performance, schedule this during off-hours. Continue?", onConfirm: () => { setConfirmDialog(null); runBatchAgent(); } })} />
           </div>
         </header>
-
-        {/* Content */}
-        <main
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "24px 28px",
-            background: "var(--bg-surface-2)",
-          }}
-        >
-          {/* Stat cards */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, 1fr)",
-              gap: 12,
-              marginBottom: 20,
-            }}
-          >
+        <main style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "var(--bg-surface-2)" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
             {statCards.map((s) => (
-              <div
-                key={s.key}
-                onClick={() => handleCardClick(s.key)}
-                style={{
-                  background: "var(--bg-surface)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  padding: "16px 20px 14px",
-                  cursor: "pointer",
-                  userSelect: "none",
-                  transition: "box-shadow 0.15s",
-                  position: "relative",
-                  overflow: "hidden",
-                }}
+              <div key={s.key} onClick={() => handleCardClick(s.key)} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px 14px", cursor: "pointer", userSelect: "none", transition: "box-shadow 0.15s", position: "relative", overflow: "hidden" }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}
                 onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "none")}
               >
-                <div
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 10,
-                    fontWeight: 500,
-                    color: "var(--text-tertiary)",
-                    letterSpacing: "0.06em",
-                    marginBottom: 8,
-                  }}
-                >
-                  {s.label}
-                </div>
-                <div
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 600,
-                    color: loading ? "var(--text-tertiary)" : s.color,
-                    lineHeight: 1,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {loading ? "—" : s.value}
-                </div>
-                {/* Animated amber underline */}
-                <div
-                  style={{
-                    position: "absolute",
-                    bottom: 0,
-                    left: 0,
-                    height: 3,
-                    background: "var(--accent)",
-                    width: filterState === s.key ? "100%" : "0%",
-                    transition: "width 150ms ease",
-                    borderRadius: "0 0 0 0",
-                  }}
-                />
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "var(--text-tertiary)", letterSpacing: "0.06em", marginBottom: 8 }}>{s.label}</div>
+                <div style={{ fontSize: 28, fontWeight: 600, color: loading ? "var(--text-tertiary)" : s.color, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}>{loading ? "—" : s.value}</div>
+                <div style={{ position: "absolute", bottom: 0, left: 0, height: 3, background: "var(--accent)", width: filterState === s.key ? "100%" : "0%", transition: "width 150ms ease" }} />
               </div>
             ))}
-            {/* Response Rate card */}
-            <div
-              onClick={() => navigate("/messages")}
-              style={{
-                background: "var(--bg-surface)",
-                border: "1px solid var(--border)",
-                borderRadius: 8,
-                padding: "16px 20px",
-                cursor: "pointer",
-                userSelect: "none",
-              }}
-            >
-              <div
-                style={{
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 10,
-                  fontWeight: 500,
-                  color: "var(--text-tertiary)",
-                  letterSpacing: "0.06em",
-                  marginBottom: 8,
-                }}
-              >
-                RESPONSE RATE
-              </div>
-              <div
-                style={{
-                  fontSize: 28,
-                  fontWeight: 600,
-                  color: "var(--text-primary)",
-                  lineHeight: 1,
-                }}
-              >
-                —
-              </div>
+            <div onClick={() => navigate("/messages")} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px", cursor: "pointer", userSelect: "none" }}>
+              <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "var(--text-tertiary)", letterSpacing: "0.06em", marginBottom: 8 }}>RESPONSE RATE</div>
+              <div style={{ fontSize: 28, fontWeight: 600, color: "var(--text-primary)", lineHeight: 1 }}>—</div>
             </div>
           </div>
-
-          {/* Two-column layout */}
-          <div
-            style={{ display: "flex", gap: 12, alignItems: "flex-start" }}
-          >
+          <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
             <div style={{ flex: "0 0 60%", minWidth: 0 }}>
-              <AtRiskPanel
-                players={players}
-                loading={loading}
-                filterState={filterState}
-                onFilterStateChange={setFilterState}
-                onRunAgent={runAgent}
-                onRowClick={setDrawerPlayerId}
-                onProgressionChange={fetchData}
-              />
+              <AtRiskPanel players={players} loading={loading} filterState={filterState} onFilterStateChange={setFilterState} onRunAgent={runAgent} onRowClick={setDrawerPlayerId} onProgressionChange={fetchData} />
             </div>
-            <div
-              style={{
-                flex: "0 0 calc(40% - 12px)",
-                minWidth: 0,
-                display: "flex",
-                flexDirection: "column",
-                gap: 12,
-              }}
-            >
-              <NeedsAssessmentPanel
-                players={needsAssessment}
-                onUpdate={fetchData}
-              />
-              <MessageQueuePanel
-                messages={messages}
-                onSent={fetchData}
-                onOpenPlayer={setDrawerPlayerId}
-              />
+            <div style={{ flex: "0 0 calc(40% - 12px)", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
+              <NeedsAssessmentPanel players={needsAssessment} onUpdate={fetchData} />
+              <MessageQueuePanel messages={messages} onSent={fetchData} onOpenPlayer={setDrawerPlayerId} />
             </div>
           </div>
         </main>
       </div>
-
-      <PlayerDrawer
-        playerId={drawerPlayerId}
-        onClose={() => setDrawerPlayerId(null)}
-        onDataChanged={fetchData}
-      />
-
-      {confirmDialog && (
-        <ConfirmDialog
-          message={confirmDialog.message}
-          onConfirm={confirmDialog.onConfirm}
-          onCancel={() => setConfirmDialog(null)}
-        />
-      )}
+      <PlayerDrawer playerId={drawerPlayerId} onClose={() => setDrawerPlayerId(null)} onDataChanged={fetchData} />
+      {confirmDialog && <ConfirmDialog message={confirmDialog.message} onConfirm={confirmDialog.onConfirm} onCancel={() => setConfirmDialog(null)} />}
     </div>
   );
 }
