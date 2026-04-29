@@ -1,0 +1,46 @@
+I need you to build a background job scheduler for this pickleball club retention app. Here is the full context:
+What exists today:
+
+artifacts/api-server/src/routes/sync.ts — has POST /api/sync/events which triggers syncEventAttendance.js and POST /api/sync/all which triggers the old player-centric sync. Both use jobStore to persist state to Supabase.
+artifacts/api-server/src/routes/import.ts — has POST /api/import/players which triggers importAllPlayers.js
+artifacts/api-server/src/lib/jobStore.ts — persists job state to a jobs Supabase table with functions: getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel
+artifacts/api-server/src/syncEventAttendance.js — event-centric sync, takes (log, isCancelled) params
+artifacts/api-server/src/importAllPlayers.js — full PodPlay player import, takes (log, isCancelled) params
+artifacts/api-server/src/index.ts — server entry point, currently seeds templates on startup
+Supabase clubs table has scheduled_sync_time (time) and timezone (text) columns
+Supabase jobs table has rows for sync_all, import_players, import_phones, sync_events, nightly_sync
+
+What I need you to build:
+1. A scheduler module at artifacts/api-server/src/lib/scheduler.ts that:
+
+Exports a startScheduler() function
+When called, checks every 60 seconds if it's time to run the nightly job
+Reads scheduled_sync_time and timezone from the clubs table to know when to run
+Compares current time in the club's timezone to the scheduled time (within a 1-minute window)
+Skips if nightly_sync job is already running
+Runs the nightly chain when the time matches
+
+2. The nightly chain runs these steps in order:
+
+Step 1: Player import — calls importAllPlayers with log and cancel functions, writes state to job id import_players
+Step 2: Event sync (incremental) — calls syncEventAttendance but only for events in the last 14 days. Add a sinceDays parameter to syncEventAttendance.js — when set, filter events to only those where startTime >= now - sinceDays days. Default is 0 meaning full history. Write state to job id sync_events
+Step 3: Log completion to job id nightly_sync
+
+3. Two new routes added to artifacts/api-server/src/routes/sync.ts:
+
+POST /api/sync/nightly — manually triggers the full nightly chain (import → incremental sync). Returns 202 immediately. Rejects with 409 if already running.
+GET /api/sync/nightly/status — returns the nightly_sync job state from jobStore
+
+4. Wire it up in artifacts/api-server/src/index.ts:
+
+Import startScheduler from ./lib/scheduler
+Call startScheduler() after the server starts listening (after the app.listen callback)
+
+5. Insert the nightly_sync job row — add ('nightly_sync', 'idle') to the INSERT in the jobs table seed if it doesn't exist. Actually just run this in Supabase: INSERT INTO jobs (id) VALUES ('nightly_sync') ON CONFLICT (id) DO NOTHING;
+Constraints:
+
+Do not remove or modify any existing routes
+Do not change the signature of syncEventAttendance in a breaking way — the existing call from sync.ts passes no sinceDays so it must default to full history
+Use the existing jobStore functions for all state persistence
+The scheduler should not crash the server if Supabase is unreachable — wrap in try/catch
+Log everything clearly using appendJobLog

@@ -6,6 +6,7 @@ import { syncSinglePlayer } from "../syncPlayerAttendance.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
+import { runNightlyChain } from "../lib/scheduler";
 
 const router: IRouter = Router();
 
@@ -265,6 +266,36 @@ router.post("/sync/events/cancel", async (_req, res) => {
   await requestCancel(JOB_SYNC_EVENTS);
   await appendJobLog(JOB_SYNC_EVENTS, "Cancellation requested");
   return res.json({ message: "Cancellation requested" });
+});
+
+// ─── Nightly chain ────────────────────────────────────────────────────────────
+
+const JOB_NIGHTLY = "nightly_sync";
+
+router.post("/sync/nightly", async (_req, res) => {
+  const current = await getJob(JOB_NIGHTLY);
+  if (current.status === "running") {
+    return res.status(409).json({ error: "Nightly sync already running" });
+  }
+
+  runNightlyChain().catch(() => {});
+
+  return res.status(202).json({
+    message: "Nightly chain started (import → incremental event sync)",
+    statusUrl: "/api/sync/nightly/status",
+  });
+});
+
+router.get("/sync/nightly/status", async (_req, res) => {
+  const job = await getJob(JOB_NIGHTLY);
+  res.json({
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
+  });
 });
 
 export default router;

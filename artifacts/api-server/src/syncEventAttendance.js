@@ -39,10 +39,10 @@ class CancelledError extends Error {
   }
 }
 
-async function fetchEventPage(page, endTime) {
+async function fetchEventPage(page, endTime, startTime = SYNC_START_DATE) {
   const url =
     `${PODPLAY_BASE}/events` +
-    `?startTime=${encodeURIComponent(SYNC_START_DATE)}` +
+    `?startTime=${encodeURIComponent(startTime)}` +
     `&endTime=${encodeURIComponent(endTime)}` +
     `&page=${page}&ipp=${IPP}`;
 
@@ -117,7 +117,7 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
 
 // ─── Main sync ────────────────────────────────────────────────────────────────
 
-export async function syncEventAttendance(log = console.log, isCancelled = () => false) {
+export async function syncEventAttendance(log = console.log, isCancelled = () => false, sinceDays = 0) {
   const stats = {
     eventsScanned: 0,
     eventsPast: 0,
@@ -157,6 +157,12 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   // Step 2: Paginate through all past events
   const endTime = new Date().toISOString();
   const now = new Date();
+  const syncStartTime = sinceDays > 0
+    ? new Date(Date.now() - sinceDays * 24 * 60 * 60 * 1000).toISOString()
+    : SYNC_START_DATE;
+  if (sinceDays > 0) {
+    log(`[sync/events] Incremental mode: events since ${syncStartTime} (last ${sinceDays} days)`);
+  }
   let page = 1;
   const pendingUpserts = [];
 
@@ -185,7 +191,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
     let pageData;
     try {
-      pageData = await fetchEventPage(page, endTime);
+      pageData = await fetchEventPage(page, endTime, syncStartTime);
     } catch (err) {
       log(`[sync/events] ERROR fetching events page ${page}: ${err.message}`);
       stats.errors++;
