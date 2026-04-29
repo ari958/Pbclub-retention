@@ -748,6 +748,7 @@ export default function Dashboard() {
   const [filterState, setFilterState] = useState<EngagementState | null>(null);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const [responseRate, setResponseRate] = useState<number | null>(null);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -762,15 +763,28 @@ export default function Dashboard() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [playersRes, clubRes] = await Promise.all([
+    const [playersRes, clubRes, outboundRes, inboundRes] = await Promise.all([
       supabase
         .from("players")
         .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
         .limit(2000),
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
+      // Count outbound messages sent in last 30 days
+      supabase.from("messages").select("id", { count: "exact", head: true })
+        .eq("direction", "outbound")
+        .eq("status", "sent")
+        .gte("sent_at", new Date(Date.now() - 30 * 86400000).toISOString()),
+      // Count inbound replies in last 30 days
+      supabase.from("messages").select("id", { count: "exact", head: true })
+        .eq("direction", "inbound")
+        .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()),
     ]);
     if (playersRes.data) setPlayers(playersRes.data as Player[]);
     if (clubRes.data?.name) setClubName(clubRes.data.name);
+    // Calculate response rate
+    const outCount = outboundRes.count ?? 0;
+    const inCount = inboundRes.count ?? 0;
+    setResponseRate(outCount > 0 ? Math.round((inCount / outCount) * 100) : null);
     await fetchMessages();
     setLoading(false);
   }, [fetchMessages]);
@@ -880,7 +894,10 @@ export default function Dashboard() {
             ))}
             <div onClick={() => navigate("/messages")} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px", cursor: "pointer", userSelect: "none" }}>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "var(--text-tertiary)", letterSpacing: "0.06em", marginBottom: 8 }}>RESPONSE RATE</div>
-              <div style={{ fontSize: 28, fontWeight: 600, color: "var(--text-primary)", lineHeight: 1 }}>—</div>
+              <div style={{ fontSize: 28, fontWeight: 600, color: responseRate !== null ? "var(--state-active)" : "var(--text-primary)", lineHeight: 1 }}>
+                {loading ? "—" : responseRate !== null ? `${responseRate}%` : "—"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4, fontFamily: "var(--font-mono)" }}>last 30 days</div>
             </div>
           </div>
           <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>

@@ -4,6 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { importPhoneNumbers } from "../importPhoneNumbers.js";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 
 const router: IRouter = Router();
 
@@ -12,56 +13,24 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY!
 );
 
-// ─── Job state ────────────────────────────────────────────────────────────────
+const JOB_IMPORT_PLAYERS = "import_players";
+const JOB_IMPORT_PHONES  = "import_phones";
 
-type JobStatus = "idle" | "running" | "cancelled" | "done" | "error";
+// ─── Player import ────────────────────────────────────────────────────────────
 
-let jobStatus: JobStatus = "idle";
-let jobStartedAt: string | null = null;
-let jobFinishedAt: string | null = null;
-let jobStats: Record<string, number> | null = null;
-let jobError: string | null = null;
-let jobCancelled = false;
-const jobLogs: string[] = [];
-
-function appendLog(msg: string) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  jobLogs.push(line);
-  if (jobLogs.length > 2000) jobLogs.splice(0, jobLogs.length - 2000);
-  console.log(line);
-}
-
-function resetJob() {
-  jobStatus = "running";
-  jobStartedAt = new Date().toISOString();
-  jobFinishedAt = null;
-  jobStats = null;
-  jobError = null;
-  jobCancelled = false;
-  jobLogs.length = 0;
-}
-
-// ─── Routes ───────────────────────────────────────────────────────────────────
-
-/**
- * POST /api/import/players
- *
- * Triggers a full PodPlay → Supabase player import + attendance sync.
- * Designed to run nightly; manually triggerable via Hoppscotch for testing.
- * Returns 202 immediately — poll GET /api/import/status for progress.
- * Use POST /api/import/cancel to stop a running job and restart fresh.
- */
 router.post("/import/players", async (req, res) => {
-  if (jobStatus === "running") {
+  const current = await getJob(JOB_IMPORT_PLAYERS);
+
+  if (current.status === "running") {
     res.status(409).json({
       error: "Import already running. POST /api/import/cancel to stop it first.",
-      startedAt: jobStartedAt,
-      recentLogs: jobLogs.slice(-10),
+      startedAt: current.started_at,
+      recentLogs: current.logs.slice(-10),
     });
     return;
   }
 
-  // Read club schedule context for logging
+  // Read club info for logging
   let club: { name?: string; scheduled_sync_time?: string; timezone?: string } | null = null;
   try {
     const { data } = await supabase
@@ -70,187 +39,139 @@ router.post("/import/players", async (req, res) => {
       .limit(1)
       .maybeSingle();
     club = data;
-  } catch {
-    // non-fatal — schedule columns may not exist yet
-  }
+  } catch { /* non-fatal */ }
 
-  resetJob();
+  await startJob(JOB_IMPORT_PLAYERS);
+  await appendJobLog(JOB_IMPORT_PLAYERS, "Import triggered via POST /api/import/players");
 
-  appendLog("Import triggered via POST /api/import/players");
   if (club?.scheduled_sync_time) {
-    appendLog(`Club: ${club.name} | Nightly schedule: ${club.scheduled_sync_time} ${club.timezone ?? "UTC"}`);
+    await appendJobLog(JOB_IMPORT_PLAYERS, `Club: ${club.name} | Nightly schedule: ${club.scheduled_sync_time} ${club.timezone ?? "UTC"}`);
   }
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    appendLog("WARNING: SUPABASE_SERVICE_ROLE_KEY not set — inserts may fail due to RLS");
+    await appendJobLog(JOB_IMPORT_PLAYERS, "WARNING: SUPABASE_SERVICE_ROLE_KEY not set — inserts may fail due to RLS");
   }
 
   res.status(202).json({
     status: "started",
     message: "Import running in background. Poll GET /api/import/status for progress.",
-    startedAt: jobStartedAt,
+    startedAt: new Date().toISOString(),
   });
 
-  importAllPlayers(appendLog, () => jobCancelled)
-    .then((stats: Record<string, number>) => {
-      jobStats = stats;
-      jobStatus = "done";
-      jobFinishedAt = new Date().toISOString();
-      appendLog("Import finished successfully");
+  importAllPlayers(
+    (msg: string) => appendJobLog(JOB_IMPORT_PLAYERS, msg),
+    () => isCancelled(JOB_IMPORT_PLAYERS)
+  )
+    .then(async (stats: Record<string, number>) => {
+      await finishJob(JOB_IMPORT_PLAYERS, "done", stats);
+      await appendJobLog(JOB_IMPORT_PLAYERS, "Import finished successfully");
     })
-    .catch((err: Error) => {
-      jobFinishedAt = new Date().toISOString();
+    .catch(async (err: Error) => {
       if (err.name === "CancelledError") {
-        jobStatus = "cancelled";
-        appendLog("Import cancelled — safe to restart via POST /api/import/players");
+        await finishJob(JOB_IMPORT_PLAYERS, "cancelled");
+        await appendJobLog(JOB_IMPORT_PLAYERS, "Import cancelled — safe to restart");
       } else {
-        jobError = err.message;
-        jobStatus = "error";
-        appendLog(`Import failed: ${err.message}`);
+        await finishJob(JOB_IMPORT_PLAYERS, "error", undefined, err.message);
+        await appendJobLog(JOB_IMPORT_PLAYERS, `Import failed: ${err.message}`);
       }
     });
 });
 
-/**
- * POST /api/import/cancel
- *
- * Signals the running import to stop at the next player boundary.
- * The job will finish its current player then exit cleanly.
- * Once status is "cancelled", POST /api/import/players can be called again.
- */
-router.post("/import/cancel", (req, res) => {
-  if (jobStatus !== "running") {
+router.post("/import/cancel", async (_req, res) => {
+  const current = await getJob(JOB_IMPORT_PLAYERS);
+
+  if (current.status !== "running") {
     res.status(400).json({
-      error: `No import currently running (status: ${jobStatus})`,
-      status: jobStatus,
+      error: `No import currently running (status: ${current.status})`,
+      status: current.status,
     });
     return;
   }
 
-  jobCancelled = true;
-  appendLog("Cancellation requested — stopping after current player…");
+  await requestCancel(JOB_IMPORT_PLAYERS);
+  await appendJobLog(JOB_IMPORT_PLAYERS, "Cancellation requested — stopping after current player…");
 
   res.json({
     status: "cancelling",
-    message: "Import will stop after the current player completes. Poll GET /api/import/status to confirm.",
+    message: "Import will stop after the current player. Poll GET /api/import/status to confirm.",
   });
 });
 
-/**
- * GET /api/import/status
- * Returns current job state, stats, and recent log lines.
- */
-router.get("/import/status", (_req, res) => {
+router.get("/import/status", async (_req, res) => {
+  const job = await getJob(JOB_IMPORT_PLAYERS);
   res.json({
-    status: jobStatus,
-    startedAt: jobStartedAt,
-    finishedAt: jobFinishedAt,
-    stats: jobStats,
-    error: jobError,
-    cancelling: jobStatus === "running" && jobCancelled,
-    recentLogs: jobLogs.slice(-50),
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
   });
 });
 
-// ─── Phone import job state ───────────────────────────────────────────────────
+// ─── Phone number import ──────────────────────────────────────────────────────
 
-let phoneJobStatus: JobStatus = "idle";
-let phoneJobStartedAt: string | null = null;
-let phoneJobFinishedAt: string | null = null;
-let phoneJobStats: Record<string, number> | null = null;
-let phoneJobError: string | null = null;
-let phoneJobCancelled = false;
-const phoneJobLogs: string[] = [];
+router.post("/import/phone-numbers", async (_req, res) => {
+  const current = await getJob(JOB_IMPORT_PHONES);
 
-function appendPhoneLog(msg: string) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  phoneJobLogs.push(line);
-  if (phoneJobLogs.length > 2000) phoneJobLogs.splice(0, phoneJobLogs.length - 2000);
-  console.log(line);
-}
-
-function resetPhoneJob() {
-  phoneJobStatus = "running";
-  phoneJobStartedAt = new Date().toISOString();
-  phoneJobFinishedAt = null;
-  phoneJobStats = null;
-  phoneJobError = null;
-  phoneJobCancelled = false;
-  phoneJobLogs.length = 0;
-}
-
-/**
- * POST /api/import/phone-numbers
- *
- * For every player that has an external_id but no phone, calls the PodPlay
- * phone-number endpoint and writes the result back to Supabase.
- * Returns 202 immediately — poll GET /api/import/phone-numbers/status.
- */
-router.post("/import/phone-numbers", (req, res) => {
-  if (phoneJobStatus === "running") {
+  if (current.status === "running") {
     res.status(409).json({
       error: "Phone import already running. POST /api/import/phone-numbers/cancel to stop it first.",
-      startedAt: phoneJobStartedAt,
-      recentLogs: phoneJobLogs.slice(-10),
+      startedAt: current.started_at,
+      recentLogs: current.logs.slice(-10),
     });
     return;
   }
 
-  resetPhoneJob();
-  appendPhoneLog("Phone import triggered via POST /api/import/phone-numbers");
+  await startJob(JOB_IMPORT_PHONES);
+  await appendJobLog(JOB_IMPORT_PHONES, "Phone import triggered via POST /api/import/phone-numbers");
 
   res.status(202).json({
     status: "started",
     message: "Phone import running in background. Poll GET /api/import/phone-numbers/status for progress.",
-    startedAt: phoneJobStartedAt,
+    startedAt: new Date().toISOString(),
   });
 
-  importPhoneNumbers(appendPhoneLog, () => phoneJobCancelled)
-    .then((stats: Record<string, number>) => {
-      phoneJobStats = stats;
-      phoneJobStatus = "done";
-      phoneJobFinishedAt = new Date().toISOString();
-      appendPhoneLog("Phone import finished successfully");
+  importPhoneNumbers(
+    (msg: string) => appendJobLog(JOB_IMPORT_PHONES, msg),
+    () => isCancelled(JOB_IMPORT_PHONES)
+  )
+    .then(async (stats: Record<string, number>) => {
+      await finishJob(JOB_IMPORT_PHONES, "done", stats);
+      await appendJobLog(JOB_IMPORT_PHONES, "Phone import finished successfully");
     })
-    .catch((err: Error) => {
-      phoneJobFinishedAt = new Date().toISOString();
+    .catch(async (err: Error) => {
       if (err.name === "CancelledError") {
-        phoneJobStatus = "cancelled";
-        appendPhoneLog("Phone import cancelled — safe to restart");
+        await finishJob(JOB_IMPORT_PHONES, "cancelled");
+        await appendJobLog(JOB_IMPORT_PHONES, "Phone import cancelled — safe to restart");
       } else {
-        phoneJobError = err.message;
-        phoneJobStatus = "error";
-        appendPhoneLog(`Phone import failed: ${err.message}`);
+        await finishJob(JOB_IMPORT_PHONES, "error", undefined, err.message);
+        await appendJobLog(JOB_IMPORT_PHONES, `Phone import failed: ${err.message}`);
       }
     });
 });
 
-/**
- * GET /api/import/phone-numbers/status
- */
-router.get("/import/phone-numbers/status", (_req, res) => {
+router.get("/import/phone-numbers/status", async (_req, res) => {
+  const job = await getJob(JOB_IMPORT_PHONES);
   res.json({
-    status: phoneJobStatus,
-    startedAt: phoneJobStartedAt,
-    finishedAt: phoneJobFinishedAt,
-    stats: phoneJobStats,
-    error: phoneJobError,
-    cancelling: phoneJobStatus === "running" && phoneJobCancelled,
-    recentLogs: phoneJobLogs.slice(-50),
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
   });
 });
 
-/**
- * POST /api/import/phone-numbers/cancel
- */
-router.post("/import/phone-numbers/cancel", (_req, res) => {
-  if (phoneJobStatus !== "running") {
+router.post("/import/phone-numbers/cancel", async (_req, res) => {
+  const current = await getJob(JOB_IMPORT_PHONES);
+  if (current.status !== "running") {
     res.status(400).json({
-      error: `No phone import currently running (status: ${phoneJobStatus})`,
+      error: `No phone import currently running (status: ${current.status})`,
     });
     return;
   }
-  phoneJobCancelled = true;
-  appendPhoneLog("Cancellation requested — stopping after current player…");
+  await requestCancel(JOB_IMPORT_PHONES);
+  await appendJobLog(JOB_IMPORT_PHONES, "Cancellation requested — stopping after current player…");
   res.json({
     status: "cancelling",
     message: "Phone import will stop after the current player. Poll GET /api/import/phone-numbers/status to confirm.",

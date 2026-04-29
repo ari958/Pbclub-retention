@@ -13,6 +13,15 @@ interface ClubRow {
   timezone: string | null;
 }
 
+interface JobState {
+  status: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  stats: Record<string, number> | null;
+  error: string | null;
+  recentLogs: string[];
+}
+
 const KNOWN_LABELS: Record<string, string> = {
   max_messages_per_day: "Max messages per day",
   max_messages_per_week: "Max messages per week",
@@ -43,14 +52,9 @@ const TEMPLATE_VARS = [
 ];
 
 const PREVIEW_VALS: Record<string, string> = {
-  first_name: "Alex",
-  skill_level: "3.5",
-  club_name: "PB Club",
-  last_visit: "Mar 4",
-  event_date: "May 10",
-  booking_link: "pbclub.com/book",
-  event_link: "pbclub.com/events",
-  next_level: "4.0",
+  first_name: "Alex", skill_level: "3.5", club_name: "PB Club",
+  last_visit: "Mar 4", event_date: "May 10", booking_link: "pbclub.com/book",
+  event_link: "pbclub.com/events", next_level: "4.0",
 };
 
 function previewBody(body: string): React.ReactNode {
@@ -63,33 +67,9 @@ function previewBody(body: string): React.ReactNode {
         const v = m[1];
         const resolved = PREVIEW_VALS[v];
         return resolved ? (
-          <span
-            key={i}
-            style={{
-              background: "rgba(46,160,67,0.10)",
-              color: "var(--state-active)",
-              borderRadius: 3,
-              padding: "0 3px",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-            }}
-          >
-            {resolved}
-          </span>
+          <span key={i} style={{ background: "rgba(46,160,67,0.10)", color: "var(--state-active)", borderRadius: 3, padding: "0 3px", fontFamily: "var(--font-mono)", fontSize: 11 }}>{resolved}</span>
         ) : (
-          <span
-            key={i}
-            style={{
-              background: "rgba(232,168,56,0.18)",
-              color: "var(--accent)",
-              borderRadius: 3,
-              padding: "0 3px",
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-            }}
-          >
-            {part}
-          </span>
+          <span key={i} style={{ background: "rgba(232,168,56,0.18)", color: "var(--accent)", borderRadius: 3, padding: "0 3px", fontFamily: "var(--font-mono)", fontSize: 11 }}>{part}</span>
         );
       })}
     </>
@@ -99,8 +79,7 @@ function previewBody(body: string): React.ReactNode {
 function smsCount(body: string): string {
   const len = body.length;
   if (len === 0) return "0 chars";
-  const msgs = Math.ceil(len / 160);
-  return `${len} chars · ${msgs} SMS`;
+  return `${len} chars · ${Math.ceil(len / 160)} SMS`;
 }
 
 function formatValue(val: unknown): string {
@@ -109,53 +88,157 @@ function formatValue(val: unknown): string {
   return String(val);
 }
 
+function formatJobTime(iso: string | null): string {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 const inputStyle: React.CSSProperties = {
-  padding: "7px 10px",
-  borderRadius: 5,
-  border: "1px solid var(--border)",
-  background: "var(--bg-surface-2)",
-  color: "var(--text-primary)",
-  fontFamily: "var(--font-sans)",
-  fontSize: 13,
-  outline: "none",
-  width: "100%",
-  boxSizing: "border-box",
+  padding: "7px 10px", borderRadius: 5, border: "1px solid var(--border)",
+  background: "var(--bg-surface-2)", color: "var(--text-primary)",
+  fontFamily: "var(--font-sans)", fontSize: 13, outline: "none",
+  width: "100%", boxSizing: "border-box",
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontFamily: "var(--font-mono)",
-  color: "var(--text-tertiary)",
-  textTransform: "uppercase",
-  letterSpacing: "0.05em",
-  marginBottom: 6,
-  display: "block",
+  fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)",
+  textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6, display: "block",
 };
 
 const cardStyle: React.CSSProperties = {
-  background: "var(--bg-surface)",
-  border: "1px solid var(--border)",
-  borderRadius: 8,
-  overflow: "hidden",
+  background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden",
 };
 
 const cardHeadStyle: React.CSSProperties = {
-  padding: "14px 20px 12px",
-  borderBottom: "1px solid var(--border)",
-  fontFamily: "var(--font-mono)",
-  fontSize: 10,
-  fontWeight: 500,
-  color: "var(--text-tertiary)",
-  letterSpacing: "0.06em",
-  textTransform: "uppercase",
+  padding: "14px 20px 12px", borderBottom: "1px solid var(--border)",
+  fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500,
+  color: "var(--text-tertiary)", letterSpacing: "0.06em", textTransform: "uppercase",
 };
 
 type EditorMode = "idle" | "new" | "edit-custom" | "view-builtin";
 
+// ─── Sync Log Panel ───────────────────────────────────────────────────────────
+
+function SyncLogPanel() {
+  const [syncJob, setSyncJob] = useState<JobState | null>(null);
+  const [importJob, setImportJob] = useState<JobState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [expanded, setExpanded] = useState<"sync" | "import" | null>(null);
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const [syncRes, importRes] = await Promise.all([
+        fetch("/api/sync/status"),
+        fetch("/api/import/status"),
+      ]);
+      if (syncRes.ok) setSyncJob(await syncRes.json());
+      if (importRes.ok) setImportJob(await importRes.json());
+    } catch { /* non-fatal */ }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  const statusColor = (status: string) => {
+    if (status === "done") return "var(--state-active)";
+    if (status === "error") return "var(--state-dormant)";
+    if (status === "running") return "var(--accent)";
+    if (status === "cancelled") return "var(--text-tertiary)";
+    return "var(--text-tertiary)";
+  };
+
+  const renderJob = (label: string, job: JobState | null, key: "sync" | "import") => {
+    if (!job) return null;
+    const isExpanded = expanded === key;
+    return (
+      <div style={{ borderBottom: "1px solid var(--border)" }}>
+        <div
+          onClick={() => setExpanded(isExpanded ? null : key)}
+          style={{ padding: "12px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", cursor: "pointer", userSelect: "none" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontWeight: 500, fontSize: 13 }}>{label}</span>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "var(--bg-surface-2)", color: statusColor(job.status), border: "1px solid var(--border)" }}>
+              {job.status}
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
+              {job.finishedAt ? `Last run: ${formatJobTime(job.finishedAt)}` : job.startedAt ? `Started: ${formatJobTime(job.startedAt)}` : "Never run"}
+            </span>
+            <span style={{ fontSize: 12, color: "var(--text-tertiary)" }}>{isExpanded ? "▲" : "▼"}</span>
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div style={{ padding: "0 20px 16px", borderTop: "1px solid var(--border)", background: "var(--bg-surface-2)" }}>
+            {/* Stats */}
+            {job.stats && (
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap", padding: "12px 0 10px" }}>
+                {Object.entries(job.stats).map(([k, v]) => (
+                  <div key={k} style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                    <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase" }}>{k}</span>
+                    <span style={{ fontSize: 16, fontWeight: 600, color: k === "errors" && v > 0 ? "var(--state-dormant)" : "var(--text-primary)" }}>{v}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Error */}
+            {job.error && (
+              <div style={{ fontSize: 12, color: "var(--state-dormant)", background: "rgba(207,34,46,0.06)", border: "1px solid rgba(207,34,46,0.2)", borderRadius: 5, padding: "8px 12px", marginBottom: 10 }}>
+                {job.error}
+              </div>
+            )}
+
+            {/* Logs */}
+            {job.recentLogs.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", marginBottom: 6 }}>Recent logs</div>
+                <div style={{ maxHeight: 200, overflowY: "auto", background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 5, padding: "8px 10px" }}>
+                  {job.recentLogs.slice(-20).map((line, i) => (
+                    <div key={i} style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: line.includes("ERROR") || line.includes("TIMEOUT") ? "var(--state-dormant)" : "var(--text-secondary)", lineHeight: 1.7, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                      {line}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {job.recentLogs.length === 0 && !job.stats && !job.error && (
+              <div style={{ fontSize: 12, color: "var(--text-tertiary)", padding: "10px 0" }}>No activity recorded yet.</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ ...cardHeadStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span>Sync & Import Log</span>
+        <button onClick={fetchJobs} style={{ fontSize: 10, fontFamily: "var(--font-mono)", padding: "2px 8px", borderRadius: 3, background: "var(--bg-surface-2)", color: "var(--text-tertiary)", border: "1px solid var(--border)", cursor: "pointer", textTransform: "none", letterSpacing: 0 }}>
+          Refresh
+        </button>
+      </div>
+      {loading ? (
+        <div style={{ padding: "20px", fontSize: 13, color: "var(--text-tertiary)" }}>Loading…</div>
+      ) : (
+        <>
+          {renderJob("Attendance Sync", syncJob, "sync")}
+          {renderJob("Player Import", importJob, "import")}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Settings ────────────────────────────────────────────────────────────
+
 export default function Settings() {
   const toast = useToast();
 
-  // Club / sync state
   const [club, setClub] = useState<ClubRow | null>(null);
   const [clubLoading, setClubLoading] = useState(true);
   const [syncTime, setSyncTime] = useState("02:00");
@@ -163,65 +246,41 @@ export default function Settings() {
   const [saving, setSaving] = useState(false);
   const [hasScheduleColumns, setHasScheduleColumns] = useState(true);
 
-  // Templates state
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(true);
   const [editorMode, setEditorMode] = useState<EditorMode>("idle");
   const [editingId, setEditingId] = useState<string | null>(null);
 
-  // Editor fields
   const [tName, setTName] = useState("");
   const [tBody, setTBody] = useState("");
   const [tTags, setTTags] = useState<string[]>([]);
   const [tSaving, setTSaving] = useState(false);
 
   const bodyRef = useRef<HTMLTextAreaElement>(null);
-
   const readOnly = editorMode === "view-builtin";
 
-  // ── Club data load
   useEffect(() => {
-    supabase
-      .from("clubs")
-      .select("id, name, agent_config, scheduled_sync_time, timezone")
-      .limit(1)
-      .maybeSingle()
+    supabase.from("clubs").select("id, name, agent_config, scheduled_sync_time, timezone").limit(1).maybeSingle()
       .then(({ data, error }) => {
         if (error?.message?.includes("scheduled_sync_time") || error?.code === "42703") {
           setHasScheduleColumns(false);
-          supabase
-            .from("clubs")
-            .select("id, name, agent_config")
-            .limit(1)
-            .maybeSingle()
-            .then(({ data: fallback }) => {
-              if (fallback) setClub(fallback as ClubRow);
-              setClubLoading(false);
-            });
+          supabase.from("clubs").select("id, name, agent_config").limit(1).maybeSingle()
+            .then(({ data: fallback }) => { if (fallback) setClub(fallback as ClubRow); setClubLoading(false); });
         } else {
-          if (data) {
-            setClub(data as ClubRow);
-            setSyncTime(data.scheduled_sync_time ?? "02:00");
-            setTimezone(data.timezone ?? "America/New_York");
-          }
+          if (data) { setClub(data as ClubRow); setSyncTime(data.scheduled_sync_time ?? "02:00"); setTimezone(data.timezone ?? "America/New_York"); }
           setClubLoading(false);
         }
       });
   }, []);
 
-  // ── Templates load from API
   const fetchTemplates = useCallback(async () => {
     setTemplatesLoading(true);
     try {
       const res = await fetch("/api/templates");
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data: MessageTemplate[] = await res.json();
-      setTemplates(data);
-    } catch (err) {
-      toast.error("Failed to load templates");
-    } finally {
-      setTemplatesLoading(false);
-    }
+      setTemplates(await res.json());
+    } catch { toast.error("Failed to load templates"); }
+    finally { setTemplatesLoading(false); }
   }, []);
 
   useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
@@ -230,49 +289,16 @@ export default function Settings() {
     if (!club) return;
     setSaving(true);
     try {
-      const { error } = await supabase
-        .from("clubs")
-        .update({ scheduled_sync_time: syncTime, timezone })
-        .eq("id", club.id);
+      const { error } = await supabase.from("clubs").update({ scheduled_sync_time: syncTime, timezone }).eq("id", club.id);
       if (error) toast.error(error.message);
-      else {
-        setClub((prev) => prev ? { ...prev, scheduled_sync_time: syncTime, timezone } : prev);
-        toast.success("Schedule saved");
-      }
-    } finally {
-      setSaving(false);
-    }
+      else { setClub((prev) => prev ? { ...prev, scheduled_sync_time: syncTime, timezone } : prev); toast.success("Schedule saved"); }
+    } finally { setSaving(false); }
   };
 
-  // ── Editor helpers
-  const openNew = () => {
-    setEditorMode("new");
-    setEditingId(null);
-    setTName("");
-    setTBody("");
-    setTTags([]);
-  };
-
-  const openEditCustom = (t: MessageTemplate) => {
-    setEditorMode("edit-custom");
-    setEditingId(t.id);
-    setTName(t.name);
-    setTBody(t.body);
-    setTTags([...t.use_case_tags]);
-  };
-
-  const openViewBuiltin = (t: MessageTemplate) => {
-    setEditorMode("view-builtin");
-    setEditingId(t.id);
-    setTName(t.name);
-    setTBody(t.body);
-    setTTags([...t.use_case_tags]);
-  };
-
-  const discardEditor = () => {
-    setEditorMode("idle");
-    setEditingId(null);
-  };
+  const openNew = () => { setEditorMode("new"); setEditingId(null); setTName(""); setTBody(""); setTTags([]); };
+  const openEditCustom = (t: MessageTemplate) => { setEditorMode("edit-custom"); setEditingId(t.id); setTName(t.name); setTBody(t.body); setTTags([...t.use_case_tags]); };
+  const openViewBuiltin = (t: MessageTemplate) => { setEditorMode("view-builtin"); setEditingId(t.id); setTName(t.name); setTBody(t.body); setTTags([...t.use_case_tags]); };
+  const discardEditor = () => { setEditorMode("idle"); setEditingId(null); };
 
   const insertVar = (v: string) => {
     if (readOnly) return;
@@ -280,95 +306,45 @@ export default function Settings() {
     if (!el) { setTBody((b) => b + v); return; }
     const start = el.selectionStart ?? el.value.length;
     const end = el.selectionEnd ?? el.value.length;
-    const next = el.value.slice(0, start) + v + el.value.slice(end);
-    setTBody(next);
-    requestAnimationFrame(() => {
-      el.focus();
-      el.setSelectionRange(start + v.length, start + v.length);
-    });
+    setTBody(el.value.slice(0, start) + v + el.value.slice(end));
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(start + v.length, start + v.length); });
   };
 
   const toggleTag = (tag: string) => {
     if (readOnly) return;
-    setTTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    );
+    setTTags((prev) => prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]);
   };
 
   const saveTemplate = async () => {
-    if (!tName.trim() || !tBody.trim()) {
-      toast.error("Name and body are required");
-      return;
-    }
+    if (!tName.trim() || !tBody.trim()) { toast.error("Name and body are required"); return; }
     setTSaving(true);
     try {
       let res: Response;
       if (editorMode === "new") {
-        res = await fetch("/api/templates", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }),
-        });
+        res = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
       } else {
-        res = await fetch(`/api/templates/${editingId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }),
-        });
+        res = await fetch(`/api/templates/${editingId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
       }
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error((err as any).error ?? `HTTP ${res.status}`);
-      }
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error((err as any).error ?? `HTTP ${res.status}`); }
       toast.success(editorMode === "new" ? "Template created" : "Template updated");
       discardEditor();
       await fetchTemplates();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
-    } finally {
-      setTSaving(false);
-    }
+    } catch (err) { toast.error(err instanceof Error ? err.message : "Save failed"); }
+    finally { setTSaving(false); }
   };
 
-  const configEntries: [string, unknown][] = club?.agent_config
-    ? Object.entries(club.agent_config)
-    : [];
-
+  const configEntries: [string, unknown][] = club?.agent_config ? Object.entries(club.agent_config) : [];
   const editorOpen = editorMode !== "idle";
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={club?.name ?? ""} />
       <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <header
-          style={{
-            height: 52,
-            minHeight: 52,
-            display: "flex",
-            alignItems: "center",
-            padding: "0 28px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--bg-surface)",
-            position: "sticky",
-            top: 0,
-            zIndex: 5,
-          }}
-        >
+        <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", padding: "0 28px", borderBottom: "1px solid var(--border)", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 5 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Settings</span>
         </header>
 
-        <main
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "28px",
-            background: "var(--bg-surface-2)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 20,
-          }}
-        >
-          {/* ── Existing settings */}
+        <main style={{ flex: 1, overflowY: "auto", padding: "28px", background: "var(--bg-surface-2)", display: "flex", flexDirection: "column", gap: 20 }}>
           <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
             {clubLoading ? (
               <div style={{ color: "var(--text-tertiary)", fontSize: 13 }}>Loading…</div>
@@ -385,23 +361,9 @@ export default function Settings() {
                   <div style={cardHeadStyle}>Sync Schedule</div>
                   {!hasScheduleColumns ? (
                     <div style={{ padding: "16px 20px" }}>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "var(--state-lapsing)",
-                          background: "rgba(212,129,58,0.08)",
-                          border: "1px solid rgba(212,129,58,0.2)",
-                          borderRadius: 5,
-                          padding: "10px 14px",
-                          lineHeight: 1.6,
-                        }}
-                      >
+                      <div style={{ fontSize: 12, color: "var(--state-lapsing)", background: "rgba(212,129,58,0.08)", border: "1px solid rgba(212,129,58,0.2)", borderRadius: 5, padding: "10px 14px", lineHeight: 1.6 }}>
                         Schedule columns not yet added. Run in Supabase SQL editor:
-                        <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, marginTop: 8, whiteSpace: "pre-wrap" }}>
-{`ALTER TABLE clubs
-  ADD COLUMN IF NOT EXISTS scheduled_sync_time time,
-  ADD COLUMN IF NOT EXISTS timezone text DEFAULT 'America/New_York';`}
-                        </pre>
+                        <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, marginTop: 8, whiteSpace: "pre-wrap" }}>{`ALTER TABLE clubs\n  ADD COLUMN IF NOT EXISTS scheduled_sync_time time,\n  ADD COLUMN IF NOT EXISTS timezone text DEFAULT 'America/New_York';`}</pre>
                       </div>
                     </div>
                   ) : (
@@ -418,15 +380,9 @@ export default function Settings() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 4 }}>
                         <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
-                          {club?.scheduled_sync_time
-                            ? `Currently: ${club.scheduled_sync_time} ${club.timezone ?? "UTC"}`
-                            : "Not set — defaults to 02:00"}
+                          {club?.scheduled_sync_time ? `Currently: ${club.scheduled_sync_time} ${club.timezone ?? "UTC"}` : "Not set — defaults to 02:00"}
                         </span>
-                        <button
-                          onClick={saveSchedule}
-                          disabled={saving}
-                          style={{ padding: "6px 14px", borderRadius: 5, background: "var(--accent)", color: "#fff", border: "none", fontSize: 12, fontWeight: 500, fontFamily: "var(--font-sans)", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}
-                        >
+                        <button onClick={saveSchedule} disabled={saving} style={{ padding: "6px 14px", borderRadius: 5, background: "var(--accent)", color: "#fff", border: "none", fontSize: 12, fontWeight: 500, fontFamily: "var(--font-sans)", cursor: saving ? "not-allowed" : "pointer", opacity: saving ? 0.6 : 1 }}>
                           {saving ? "Saving…" : "Save"}
                         </button>
                       </div>
@@ -439,19 +395,14 @@ export default function Settings() {
                   <div style={{ padding: "4px 0" }}>
                     {configEntries.length === 0 ? (
                       <div style={{ padding: "20px", fontSize: 13, color: "var(--text-tertiary)" }}>No configuration set</div>
-                    ) : (
-                      configEntries.map(([key, val]) => (
-                        <div
-                          key={key}
-                          style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderBottom: "1px solid var(--border)" }}
-                        >
-                          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{KNOWN_LABELS[key] ?? toTitleCase(key)}</span>
-                          <span style={{ fontSize: 13, fontWeight: 500, fontFamily: typeof val === "boolean" ? "var(--font-sans)" : "var(--font-mono)", color: typeof val === "boolean" ? (val ? "var(--state-active)" : "var(--state-dormant)") : "var(--text-primary)" }}>
-                            {formatValue(val)}
-                          </span>
-                        </div>
-                      ))
-                    )}
+                    ) : configEntries.map(([key, val]) => (
+                      <div key={key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 20px", borderBottom: "1px solid var(--border)" }}>
+                        <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{KNOWN_LABELS[key] ?? toTitleCase(key)}</span>
+                        <span style={{ fontSize: 13, fontWeight: 500, fontFamily: typeof val === "boolean" ? "var(--font-sans)" : "var(--font-mono)", color: typeof val === "boolean" ? (val ? "var(--state-active)" : "var(--state-dormant)") : "var(--text-primary)" }}>
+                          {formatValue(val)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                   <div style={{ padding: "14px 20px", borderTop: "1px solid var(--border)", background: "var(--bg-surface-2)", display: "flex", gap: 10, alignItems: "flex-start" }}>
                     <span style={{ fontSize: 15, flexShrink: 0, marginTop: 1 }}>ℹ</span>
@@ -460,38 +411,19 @@ export default function Settings() {
                     </span>
                   </div>
                 </div>
+
+                {/* ── Sync Log Panel (new in Batch 2) */}
+                <SyncLogPanel />
               </>
             )}
           </div>
 
           {/* ── Message Templates */}
           <div style={cardStyle}>
-            <div
-              style={{
-                ...cardHeadStyle,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-              }}
-            >
+            <div style={{ ...cardHeadStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span>Message Templates</span>
               {!editorOpen && (
-                <button
-                  onClick={openNew}
-                  style={{
-                    fontSize: 11,
-                    fontFamily: "var(--font-mono)",
-                    padding: "3px 10px",
-                    borderRadius: 4,
-                    background: "var(--accent)",
-                    color: "#fff",
-                    border: "none",
-                    cursor: "pointer",
-                    fontWeight: 500,
-                    textTransform: "none",
-                    letterSpacing: 0,
-                  }}
-                >
+                <button onClick={openNew} style={{ fontSize: 11, fontFamily: "var(--font-mono)", padding: "3px 10px", borderRadius: 4, background: "var(--accent)", color: "#fff", border: "none", cursor: "pointer", fontWeight: 500, textTransform: "none", letterSpacing: 0 }}>
                   + New template
                 </button>
               )}
@@ -499,75 +431,26 @@ export default function Settings() {
 
             <div style={{ display: "flex", minHeight: 340 }}>
               {/* LEFT — template list */}
-              <div
-                style={{
-                  width: 260,
-                  minWidth: 260,
-                  borderRight: "1px solid var(--border)",
-                  overflowY: "auto",
-                  flexShrink: 0,
-                }}
-              >
+              <div style={{ width: 260, minWidth: 260, borderRight: "1px solid var(--border)", overflowY: "auto", flexShrink: 0 }}>
                 {templatesLoading ? (
                   <div style={{ padding: "20px 16px", fontSize: 13, color: "var(--text-tertiary)" }}>Loading…</div>
                 ) : templates.length === 0 ? (
-                  <div style={{ padding: "20px 16px", fontSize: 13, color: "var(--text-tertiary)" }}>
-                    No templates yet.
-                  </div>
+                  <div style={{ padding: "20px 16px", fontSize: 13, color: "var(--text-tertiary)" }}>No templates yet.</div>
                 ) : (
                   templates.map((t) => {
                     const isSelected = editingId === t.id;
                     return (
-                      <div
-                        key={t.id}
-                        onClick={() => t.is_builtin ? openViewBuiltin(t) : openEditCustom(t)}
-                        style={{
-                          padding: "11px 14px",
-                          borderBottom: "1px solid var(--border)",
-                          background: isSelected ? "rgba(232,168,56,0.05)" : "transparent",
-                          borderLeft: isSelected ? "3px solid var(--accent)" : "3px solid transparent",
-                          cursor: "pointer",
-                        }}
-                      >
+                      <div key={t.id} onClick={() => t.is_builtin ? openViewBuiltin(t) : openEditCustom(t)} style={{ padding: "11px 14px", borderBottom: "1px solid var(--border)", background: isSelected ? "rgba(232,168,56,0.05)" : "transparent", borderLeft: isSelected ? "3px solid var(--accent)" : "3px solid transparent", cursor: "pointer" }}>
                         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 5 }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
-                            <span style={{ fontWeight: 500, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                              {t.name}
-                            </span>
-                          </div>
-                          <span
-                            style={{
-                              fontSize: 9,
-                              fontFamily: "var(--font-mono)",
-                              padding: "1px 5px",
-                              borderRadius: 3,
-                              flexShrink: 0,
-                              marginLeft: 6,
-                              background: t.is_builtin ? "rgba(59,130,246,0.10)" : "rgba(232,168,56,0.08)",
-                              color: t.is_builtin ? "#3b82f6" : "var(--accent)",
-                              border: `1px solid ${t.is_builtin ? "rgba(59,130,246,0.2)" : "rgba(232,168,56,0.2)"}`,
-                            }}
-                          >
+                          <span style={{ fontWeight: 500, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{t.name}</span>
+                          <span style={{ fontSize: 9, fontFamily: "var(--font-mono)", padding: "1px 5px", borderRadius: 3, flexShrink: 0, marginLeft: 6, background: t.is_builtin ? "rgba(59,130,246,0.10)" : "rgba(232,168,56,0.08)", color: t.is_builtin ? "#3b82f6" : "var(--accent)", border: `1px solid ${t.is_builtin ? "rgba(59,130,246,0.2)" : "rgba(232,168,56,0.2)"}` }}>
                             {t.is_builtin ? "built-in" : "custom"}
                           </span>
                         </div>
                         {t.use_case_tags.length > 0 && (
                           <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
                             {t.use_case_tags.map((tag) => (
-                              <span
-                                key={tag}
-                                style={{
-                                  fontSize: 10,
-                                  fontFamily: "var(--font-mono)",
-                                  padding: "1px 5px",
-                                  borderRadius: 3,
-                                  background: "var(--bg-surface-2)",
-                                  color: "var(--text-tertiary)",
-                                  border: "1px solid var(--border)",
-                                }}
-                              >
-                                {tag}
-                              </span>
+                              <span key={tag} style={{ fontSize: 10, fontFamily: "var(--font-mono)", padding: "1px 5px", borderRadius: 3, background: "var(--bg-surface-2)", color: "var(--text-tertiary)", border: "1px solid var(--border)" }}>{tag}</span>
                             ))}
                           </div>
                         )}
@@ -580,190 +463,59 @@ export default function Settings() {
               {/* RIGHT — editor */}
               <div style={{ flex: 1, minWidth: 0, padding: "20px 24px", overflowY: "auto" }}>
                 {!editorOpen ? (
-                  <div
-                    style={{
-                      height: "100%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: "var(--text-tertiary)",
-                      fontSize: 13,
-                      flexDirection: "column",
-                      gap: 8,
-                    }}
-                  >
+                  <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 13, flexDirection: "column", gap: 8 }}>
                     <span>Click a template to view it</span>
                     <span style={{ fontSize: 12 }}>or click + New template to create one</span>
                   </div>
                 ) : (
                   <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-
-                    {/* Built-in notice */}
                     {readOnly && (
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: "#3b82f6",
-                          background: "rgba(59,130,246,0.07)",
-                          border: "1px solid rgba(59,130,246,0.2)",
-                          borderRadius: 6,
-                          padding: "9px 13px",
-                          lineHeight: 1.5,
-                        }}
-                      >
+                      <div style={{ fontSize: 12, color: "#3b82f6", background: "rgba(59,130,246,0.07)", border: "1px solid rgba(59,130,246,0.2)", borderRadius: 6, padding: "9px 13px", lineHeight: 1.5 }}>
                         Built-in templates cannot be edited. Create a custom template to make changes.
                       </div>
                     )}
-
-                    {/* Template name */}
                     <div>
                       <label style={labelStyle}>Template name</label>
-                      <input
-                        type="text"
-                        value={tName}
-                        onChange={(e) => !readOnly && setTName(e.target.value)}
-                        placeholder="e.g. Win-back campaign"
-                        disabled={readOnly}
-                        style={{
-                          ...inputStyle,
-                          opacity: readOnly ? 0.65 : 1,
-                          cursor: readOnly ? "default" : "text",
-                        }}
-                      />
+                      <input type="text" value={tName} onChange={(e) => !readOnly && setTName(e.target.value)} placeholder="e.g. Win-back campaign" disabled={readOnly} style={{ ...inputStyle, opacity: readOnly ? 0.65 : 1, cursor: readOnly ? "default" : "text" }} />
                     </div>
-
-                    {/* Message body */}
                     <div>
                       <label style={labelStyle}>Message body</label>
-                      <textarea
-                        ref={bodyRef}
-                        value={tBody}
-                        onChange={(e) => !readOnly && setTBody(e.target.value)}
-                        rows={5}
-                        placeholder="Write your message…"
-                        disabled={readOnly}
-                        style={{
-                          ...inputStyle,
-                          resize: "vertical",
-                          lineHeight: 1.65,
-                          minHeight: 120,
-                          opacity: readOnly ? 0.65 : 1,
-                          cursor: readOnly ? "default" : "text",
-                        }}
-                      />
-                      {/* Variable chips */}
+                      <textarea ref={bodyRef} value={tBody} onChange={(e) => !readOnly && setTBody(e.target.value)} rows={5} placeholder="Write your message…" disabled={readOnly} style={{ ...inputStyle, resize: "vertical", lineHeight: 1.65, minHeight: 120, opacity: readOnly ? 0.65 : 1, cursor: readOnly ? "default" : "text" }} />
                       {!readOnly && (
                         <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginTop: 8 }}>
                           <span style={{ fontSize: 10, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", alignSelf: "center", marginRight: 2 }}>Insert:</span>
                           {TEMPLATE_VARS.map((v) => (
-                            <button
-                              key={v}
-                              onClick={() => insertVar(v)}
-                              style={{
-                                fontSize: 10,
-                                fontFamily: "var(--font-mono)",
-                                padding: "2px 7px",
-                                borderRadius: 3,
-                                border: "1px solid var(--border)",
-                                background: "var(--bg-surface-2)",
-                                color: "var(--text-secondary)",
-                                cursor: "pointer",
-                              }}
-                            >
-                              {v}
-                            </button>
+                            <button key={v} onClick={() => insertVar(v)} style={{ fontSize: 10, fontFamily: "var(--font-mono)", padding: "2px 7px", borderRadius: 3, border: "1px solid var(--border)", background: "var(--bg-surface-2)", color: "var(--text-secondary)", cursor: "pointer" }}>{v}</button>
                           ))}
                         </div>
                       )}
-                      {/* Char counter */}
-                      <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", marginTop: 6 }}>
-                        {smsCount(tBody)}
-                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)", marginTop: 6 }}>{smsCount(tBody)}</div>
                     </div>
-
-                    {/* Use case tags */}
                     <div>
                       <label style={labelStyle}>Best used for</label>
                       <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
                         {USE_CASE_OPTIONS.map((tag) => {
                           const on = tTags.includes(tag);
                           return (
-                            <button
-                              key={tag}
-                              onClick={() => toggleTag(tag)}
-                              disabled={readOnly}
-                              style={{
-                                fontSize: 12,
-                                fontFamily: "var(--font-mono)",
-                                padding: "4px 10px",
-                                borderRadius: 4,
-                                border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`,
-                                background: on ? "rgba(232,168,56,0.10)" : "var(--bg-surface-2)",
-                                color: on ? "var(--accent)" : "var(--text-secondary)",
-                                cursor: readOnly ? "default" : "pointer",
-                                transition: "all 0.12s",
-                                opacity: readOnly ? 0.7 : 1,
-                              }}
-                            >
+                            <button key={tag} onClick={() => toggleTag(tag)} disabled={readOnly} style={{ fontSize: 12, fontFamily: "var(--font-mono)", padding: "4px 10px", borderRadius: 4, border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`, background: on ? "rgba(232,168,56,0.10)" : "var(--bg-surface-2)", color: on ? "var(--accent)" : "var(--text-secondary)", cursor: readOnly ? "default" : "pointer", opacity: readOnly ? 0.7 : 1 }}>
                               {tag}
                             </button>
                           );
                         })}
                       </div>
                     </div>
-
-                    {/* Live preview */}
                     <div>
                       <label style={labelStyle}>Live preview</label>
-                      <div
-                        style={{
-                          background: "var(--bg-surface-2)",
-                          border: "1px solid var(--border)",
-                          borderRadius: 6,
-                          padding: "11px 13px",
-                          fontSize: 13,
-                          lineHeight: 1.7,
-                          color: "var(--text-primary)",
-                          minHeight: 60,
-                        }}
-                      >
-                        {tBody.trim()
-                          ? previewBody(tBody)
-                          : <span style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>No message yet</span>}
+                      <div style={{ background: "var(--bg-surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "11px 13px", fontSize: 13, lineHeight: 1.7, color: "var(--text-primary)", minHeight: 60 }}>
+                        {tBody.trim() ? previewBody(tBody) : <span style={{ color: "var(--text-tertiary)", fontStyle: "italic" }}>No message yet</span>}
                       </div>
                     </div>
-
-                    {/* Buttons */}
                     <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, paddingTop: 2 }}>
-                      <button
-                        onClick={discardEditor}
-                        style={{
-                          padding: "7px 16px",
-                          borderRadius: 5,
-                          fontSize: 13,
-                          border: "1px solid var(--border)",
-                          background: "var(--bg-surface-2)",
-                          color: "var(--text-secondary)",
-                          cursor: "pointer",
-                        }}
-                      >
+                      <button onClick={discardEditor} style={{ padding: "7px 16px", borderRadius: 5, fontSize: 13, border: "1px solid var(--border)", background: "var(--bg-surface-2)", color: "var(--text-secondary)", cursor: "pointer" }}>
                         {readOnly ? "Close" : "Discard"}
                       </button>
                       {!readOnly && (
-                        <button
-                          onClick={saveTemplate}
-                          disabled={tSaving || !tName.trim() || !tBody.trim()}
-                          style={{
-                            padding: "7px 18px",
-                            borderRadius: 5,
-                            fontSize: 13,
-                            fontWeight: 500,
-                            background: !tSaving && tName.trim() && tBody.trim() ? "var(--accent)" : "var(--border)",
-                            color: !tSaving && tName.trim() && tBody.trim() ? "#fff" : "var(--text-tertiary)",
-                            border: "none",
-                            cursor: !tSaving && tName.trim() && tBody.trim() ? "pointer" : "not-allowed",
-                          }}
-                        >
+                        <button onClick={saveTemplate} disabled={tSaving || !tName.trim() || !tBody.trim()} style={{ padding: "7px 18px", borderRadius: 5, fontSize: 13, fontWeight: 500, background: !tSaving && tName.trim() && tBody.trim() ? "var(--accent)" : "var(--border)", color: !tSaving && tName.trim() && tBody.trim() ? "#fff" : "var(--text-tertiary)", border: "none", cursor: !tSaving && tName.trim() && tBody.trim() ? "pointer" : "not-allowed" }}>
                           {tSaving ? "Saving…" : "Save template"}
                         </button>
                       )}

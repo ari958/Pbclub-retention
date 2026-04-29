@@ -5,6 +5,7 @@ import { createClient } from "@supabase/supabase-js";
 import { syncSinglePlayer } from "../syncPlayerAttendance.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 
 const router: IRouter = Router();
 
@@ -13,39 +14,11 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY!
 );
 
-// ─── Constants ────────────────────────────────────────────────────────────────
-
 const SYNC_TIMEOUT_MS = 30_000;
 const STALE_HOURS = 6;
 
-// ─── Job state ────────────────────────────────────────────────────────────────
-
-type SyncStatus = "idle" | "running" | "cancelled" | "done" | "error";
-
-let syncStatus: SyncStatus = "idle";
-let syncStartedAt: string | null = null;
-let syncFinishedAt: string | null = null;
-let syncStats: Record<string, number> | null = null;
-let syncError: string | null = null;
-let syncCancelled = false;
-const syncLogs: string[] = [];
-
-function appendLog(msg: string) {
-  const line = `[${new Date().toISOString()}] ${msg}`;
-  syncLogs.push(line);
-  if (syncLogs.length > 2000) syncLogs.splice(0, syncLogs.length - 2000);
-  console.log(line);
-}
-
-function resetJob() {
-  syncStatus = "running";
-  syncStartedAt = new Date().toISOString();
-  syncFinishedAt = null;
-  syncStats = null;
-  syncError = null;
-  syncCancelled = false;
-  syncLogs.length = 0;
-}
+const JOB_SYNC_ALL    = "sync_all";
+const JOB_SYNC_EVENTS = "sync_events";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -68,7 +41,6 @@ async function runSyncAll() {
     Date.now() - STALE_HOURS * 60 * 60 * 1000
   ).toISOString();
 
-  // Fetch all linked players, with stale filter if column exists
   let players: any[] = [];
   let hasLastSyncedAt = true;
 
@@ -79,7 +51,7 @@ async function runSyncAll() {
 
   if (withCol.error) {
     if (withCol.error.code === "42703" || withCol.error.message?.includes("last_synced_at")) {
-      appendLog("sync/all: last_synced_at column missing — syncing all players");
+      await appendJobLog(JOB_SYNC_ALL, "last_synced_at column missing — syncing all players");
       hasLastSyncedAt = false;
       const fallback = await supabase
         .from("players")
@@ -99,16 +71,16 @@ async function runSyncAll() {
     : players;
 
   const skipped = players.length - eligible.length;
-
-  appendLog(`sync/all: ${players.length} linked players — ${eligible.length} stale, ${skipped} fresh (skipping)`);
+  await appendJobLog(JOB_SYNC_ALL, `${players.length} linked players — ${eligible.length} stale, ${skipped} fresh (skipping)`);
 
   let synced = 0;
   let errors = 0;
   let timeouts = 0;
 
   for (let i = 0; i < eligible.length; i++) {
-    if (syncCancelled) {
-      appendLog("sync/all: cancelled — stopping after current player");
+    // Check cancellation flag in DB
+    if (await isCancelled(JOB_SYNC_ALL)) {
+      await appendJobLog(JOB_SYNC_ALL, "Cancelled — stopping after current player");
       throw Object.assign(new Error("Sync cancelled by operator"), { name: "CancelledError" });
     }
 
@@ -127,13 +99,13 @@ async function runSyncAll() {
         .eq("id", player.id);
 
       synced++;
-      appendLog(`sync/all: [${i + 1}/${eligible.length}] OK ${player.id} — inserted=${(result as any).inserted ?? 0}`);
+      await appendJobLog(JOB_SYNC_ALL, `[${i + 1}/${eligible.length}] OK ${player.id} — inserted=${(result as any).inserted ?? 0}`);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Unknown error";
       const isTimeout = message.includes("Timeout");
       if (isTimeout) timeouts++;
       else errors++;
-      appendLog(`sync/all: [${i + 1}/${eligible.length}] ${isTimeout ? "TIMEOUT" : "ERROR"} ${player.id}: ${message}`);
+      await appendJobLog(JOB_SYNC_ALL, `[${i + 1}/${eligible.length}] ${isTimeout ? "TIMEOUT" : "ERROR"} ${player.id}: ${message}`);
     }
   }
 
@@ -142,10 +114,6 @@ async function runSyncAll() {
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-/**
- * POST /api/sync/player
- * Sync a single player by player_id + external_id. Synchronous (fast).
- */
 const SyncPlayerSchema = z.object({
   player_id: z.string().min(1, "player_id is required"),
   external_id: z.string().min(1, "external_id is required"),
@@ -173,67 +141,56 @@ router.post("/sync/player", async (req, res) => {
   }
 });
 
-/**
- * POST /api/sync/all
- *
- * Kicks off a background attendance sync for all stale players.
- * Returns 202 immediately. Poll GET /api/sync/status for progress.
- * Use POST /api/sync/cancel to stop a running job.
- */
-router.post("/sync/all", (_req, res) => {
-  if (syncStatus === "running") {
+router.post("/sync/all", async (_req, res) => {
+  const current = await getJob(JOB_SYNC_ALL);
+
+  if (current.status === "running") {
     res.status(409).json({
       error: "Sync already running. POST /api/sync/cancel to stop it first.",
-      startedAt: syncStartedAt,
-      recentLogs: syncLogs.slice(-10),
+      startedAt: current.started_at,
+      recentLogs: current.logs.slice(-10),
     });
     return;
   }
 
-  resetJob();
-  appendLog("sync/all: triggered via POST /api/sync/all");
+  await startJob(JOB_SYNC_ALL);
+  await appendJobLog(JOB_SYNC_ALL, "Triggered via POST /api/sync/all");
 
   res.status(202).json({
     status: "started",
     message: "Sync running in background. Poll GET /api/sync/status for progress.",
-    startedAt: syncStartedAt,
+    startedAt: new Date().toISOString(),
   });
 
   runSyncAll()
-    .then((stats) => {
-      syncStats = stats;
-      syncStatus = "done";
-      syncFinishedAt = new Date().toISOString();
-      appendLog(`sync/all: done — synced=${stats.synced} skipped=${stats.skipped} errors=${stats.errors} timeouts=${stats.timeouts}`);
+    .then(async (stats) => {
+      await finishJob(JOB_SYNC_ALL, "done", stats);
+      await appendJobLog(JOB_SYNC_ALL, `Done — synced=${stats.synced} skipped=${stats.skipped} errors=${stats.errors} timeouts=${stats.timeouts}`);
     })
-    .catch((err: Error) => {
-      syncFinishedAt = new Date().toISOString();
+    .catch(async (err: Error) => {
       if (err.name === "CancelledError") {
-        syncStatus = "cancelled";
-        appendLog("sync/all: cancelled — safe to restart via POST /api/sync/all");
+        await finishJob(JOB_SYNC_ALL, "cancelled");
+        await appendJobLog(JOB_SYNC_ALL, "Cancelled — safe to restart");
       } else {
-        syncError = err.message;
-        syncStatus = "error";
-        appendLog(`sync/all: failed — ${err.message}`);
+        await finishJob(JOB_SYNC_ALL, "error", undefined, err.message);
+        await appendJobLog(JOB_SYNC_ALL, `Failed — ${err.message}`);
       }
     });
 });
 
-/**
- * POST /api/sync/cancel
- * Signals the running sync to stop at the next player boundary.
- */
-router.post("/sync/cancel", (_req, res) => {
-  if (syncStatus !== "running") {
+router.post("/sync/cancel", async (_req, res) => {
+  const current = await getJob(JOB_SYNC_ALL);
+
+  if (current.status !== "running") {
     res.status(400).json({
-      error: `No sync currently running (status: ${syncStatus})`,
-      status: syncStatus,
+      error: `No sync currently running (status: ${current.status})`,
+      status: current.status,
     });
     return;
   }
 
-  syncCancelled = true;
-  appendLog("sync/all: cancellation requested — stopping after current player…");
+  await requestCancel(JOB_SYNC_ALL);
+  await appendJobLog(JOB_SYNC_ALL, "Cancellation requested — stopping after current player…");
 
   res.json({
     status: "cancelling",
@@ -241,78 +198,44 @@ router.post("/sync/cancel", (_req, res) => {
   });
 });
 
-/**
- * GET /api/sync/status
- * Returns current sync job state, stats, and recent log lines.
- */
-router.get("/sync/status", (_req, res) => {
+router.get("/sync/status", async (_req, res) => {
+  const job = await getJob(JOB_SYNC_ALL);
   res.json({
-    status: syncStatus,
-    startedAt: syncStartedAt,
-    finishedAt: syncFinishedAt,
-    stats: syncStats,
-    error: syncError,
-    cancelling: syncStatus === "running" && syncCancelled,
-    recentLogs: syncLogs.slice(-50),
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
   });
 });
 
-// ─── Event-centric sync job state ─────────────────────────────────────────────
+// ─── Event-centric sync ───────────────────────────────────────────────────────
 
-type EventSyncStatus = "idle" | "running" | "cancelled" | "done" | "error";
+router.post("/sync/events", async (_req, res) => {
+  const current = await getJob(JOB_SYNC_EVENTS);
 
-let evSyncStatus: EventSyncStatus = "idle";
-let evSyncStartedAt: string | null = null;
-let evSyncFinishedAt: string | null = null;
-let evSyncStats: Record<string, number> | null = null;
-let evSyncError: string | null = null;
-let evSyncCancelled = false;
-const evSyncLogs: string[] = [];
-
-function evLog(msg: string) {
-  console.log(msg);
-  evSyncLogs.push(`[${new Date().toISOString()}] ${msg}`);
-  if (evSyncLogs.length > 500) evSyncLogs.splice(0, evSyncLogs.length - 500);
-}
-
-/**
- * POST /api/sync/events
- * Starts an event-centric attendance sync in the background.
- * Returns 202 immediately; poll GET /api/sync/events/status for progress.
- */
-router.post("/sync/events", (_req, res) => {
-  if (evSyncStatus === "running") {
+  if (current.status === "running") {
     return res.status(409).json({ error: "Event sync already running" });
   }
 
-  evSyncStatus = "running";
-  evSyncStartedAt = new Date().toISOString();
-  evSyncFinishedAt = null;
-  evSyncStats = null;
-  evSyncError = null;
-  evSyncCancelled = false;
-  evSyncLogs.length = 0;
+  await startJob(JOB_SYNC_EVENTS);
+  await appendJobLog(JOB_SYNC_EVENTS, "Job started");
 
-  evLog("[sync/events] Job started");
-
-  // Run async without blocking the response
   (async () => {
     try {
       const stats = await syncEventAttendance(
-        evLog,
-        () => evSyncCancelled
+        (msg: string) => appendJobLog(JOB_SYNC_EVENTS, msg),
+        () => isCancelled(JOB_SYNC_EVENTS)
       );
-      evSyncStats = stats;
-      evSyncStatus = evSyncCancelled ? "cancelled" : "done";
+      const wasCancelled = await isCancelled(JOB_SYNC_EVENTS);
+      await finishJob(JOB_SYNC_EVENTS, wasCancelled ? "cancelled" : "done", stats);
+      await appendJobLog(JOB_SYNC_EVENTS, `Job finished — status: ${wasCancelled ? "cancelled" : "done"}`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
       const wasCancelled = msg.includes("cancelled by operator");
-      evSyncStatus = wasCancelled ? "cancelled" : "error";
-      evSyncError = msg;
-      evLog(`[sync/events] ${wasCancelled ? "Cancelled" : "ERROR"}: ${msg}`);
-    } finally {
-      evSyncFinishedAt = new Date().toISOString();
-      evLog(`[sync/events] Job finished — status: ${evSyncStatus}`);
+      await finishJob(JOB_SYNC_EVENTS, wasCancelled ? "cancelled" : "error", undefined, msg);
+      await appendJobLog(JOB_SYNC_EVENTS, `${wasCancelled ? "Cancelled" : "ERROR"}: ${msg}`);
     }
   })();
 
@@ -322,32 +245,25 @@ router.post("/sync/events", (_req, res) => {
   });
 });
 
-/**
- * GET /api/sync/events/status
- * Returns current event sync job state, stats, and recent log lines.
- */
-router.get("/sync/events/status", (_req, res) => {
+router.get("/sync/events/status", async (_req, res) => {
+  const job = await getJob(JOB_SYNC_EVENTS);
   res.json({
-    status: evSyncStatus,
-    startedAt: evSyncStartedAt,
-    finishedAt: evSyncFinishedAt,
-    stats: evSyncStats,
-    error: evSyncError,
-    cancelling: evSyncStatus === "running" && evSyncCancelled,
-    recentLogs: evSyncLogs.slice(-50),
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
   });
 });
 
-/**
- * POST /api/sync/events/cancel
- * Requests cancellation of the running event sync.
- */
-router.post("/sync/events/cancel", (_req, res) => {
-  if (evSyncStatus !== "running") {
+router.post("/sync/events/cancel", async (_req, res) => {
+  const current = await getJob(JOB_SYNC_EVENTS);
+  if (current.status !== "running") {
     return res.status(409).json({ error: "No event sync currently running" });
   }
-  evSyncCancelled = true;
-  evLog("[sync/events] Cancellation requested");
+  await requestCancel(JOB_SYNC_EVENTS);
+  await appendJobLog(JOB_SYNC_EVENTS, "Cancellation requested");
   return res.json({ message: "Cancellation requested" });
 });
 
