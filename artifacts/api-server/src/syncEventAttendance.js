@@ -1,9 +1,15 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY
-);
+let _supabase = null;
+function getSupabase() {
+  if (!_supabase) {
+    _supabase = createClient(
+      process.env.SUPABASE_URL,
+      process.env.SUPABASE_ANON_KEY
+    );
+  }
+  return _supabase;
+}
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const SYNC_START_DATE = "2025-01-01T00:00:00.000Z";
@@ -74,7 +80,7 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   const windowStart = new Date(attendedDate.getTime() - WINBACK_WINDOW_DAYS * 86400000);
 
   // Find conversations for this player triggered during lapsing/dormant
-  const { data: convs } = await supabase
+  const { data: convs } = await getSupabase()
     .from("conversations")
     .select("id, triggered_by")
     .eq("player_id", playerId)
@@ -85,7 +91,7 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   const convIds = convs.map((c) => c.id);
 
   // Find an outbound message sent in the win-back window with no conversion yet
-  const { data: msgs } = await supabase
+  const { data: msgs } = await getSupabase()
     .from("messages")
     .select("id, sent_at")
     .in("conversation_id", convIds)
@@ -100,7 +106,7 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   if (!msgs?.length) return false;
 
   // Mark the message as converted
-  await supabase
+  await getSupabase()
     .from("messages")
     .update({ converted_at: attendedAt })
     .eq("id", msgs[0].id);
@@ -125,7 +131,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   };
 
   // Step 0: Resolve club timezone
-  const { data: clubRow } = await supabase
+  const { data: clubRow } = await getSupabase()
     .from("clubs")
     .select("timezone")
     .eq("id", CLUB_ID)
@@ -135,7 +141,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
   // Step 1: Build player lookup map
   log("[sync/events] Loading players from Supabase…");
-  const { data: players, error: playersErr } = await supabase
+  const { data: players, error: playersErr } = await getSupabase()
     .from("players")
     .select("id, external_id, name, last_visit_date")
     .not("external_id", "is", null);
@@ -158,7 +164,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     if (pendingUpserts.length === 0) return;
     for (let i = 0; i < pendingUpserts.length; i += UPSERT_BATCH) {
       const batch = pendingUpserts.slice(i, i + UPSERT_BATCH);
-      const { error } = await supabase
+      const { error } = await getSupabase()
         .from("attendances")
         .upsert(batch, {
           onConflict: "player_id,program_name,attended_at",
@@ -175,7 +181,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   }
 
   while (true) {
-    if (isCancelled()) throw new CancelledError();
+    if (await isCancelled()) throw new CancelledError();
 
     let pageData;
     try {
@@ -201,7 +207,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     );
 
     for (const event of pastEvents) {
-      if (isCancelled()) throw new CancelledError();
+      if (await isCancelled()) throw new CancelledError();
 
       await sleep(SIGNUP_FETCH_DELAY_MS);
 
@@ -270,9 +276,9 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   let visitUpdates = 0;
 
   for (const player of players) {
-    if (isCancelled()) break;
+    if (await isCancelled()) break;
 
-    const { data: latest } = await supabase
+    const { data: latest } = await getSupabase()
       .from("attendances")
       .select("attended_at")
       .eq("player_id", player.id)
@@ -281,7 +287,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       .maybeSingle();
 
     if (latest?.attended_at) {
-      await supabase
+      await getSupabase()
         .from("players")
         .update({ last_visit_date: latest.attended_at })
         .eq("id", player.id);
@@ -295,13 +301,13 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           stats.winbacksDetected++;
 
           // Cancel any pending queued messages — player is already re-engaged
-          const { data: convs } = await supabase
+          const { data: convs } = await getSupabase()
             .from("conversations")
             .select("id")
             .eq("player_id", player.id);
 
           if (convs?.length) {
-            await supabase
+            await getSupabase()
               .from("messages")
               .update({
                 status: "skipped",
