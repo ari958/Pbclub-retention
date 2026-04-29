@@ -1,12 +1,3 @@
-/**
- * lib/jobStore.ts
- *
- * Replaces in-memory job state in sync.ts and import.ts with
- * Supabase-backed persistence. Jobs survive server restarts.
- *
- * Place this file at: artifacts/api-server/src/lib/jobStore.ts
- */
-
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -51,31 +42,50 @@ export async function getJob(id: string): Promise<JobState> {
 }
 
 export async function startJob(id: string): Promise<void> {
-  await supabase.from("jobs").upsert({
-    id,
-    status: "running",
-    started_at: new Date().toISOString(),
-    finished_at: null,
-    stats: null,
-    error: null,
-    logs: [],
-    updated_at: new Date().toISOString(),
-  });
+  const { error } = await supabase
+    .from("jobs")
+    .update({
+      status: "running",
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      stats: null,
+      error: null,
+      logs: [],
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error(`[jobStore] startJob failed for ${id}:`, error.message);
+  }
 }
 
 export async function appendJobLog(id: string, message: string): Promise<void> {
   const line = `[${new Date().toISOString()}] ${message}`;
   console.log(line);
 
-  // Fetch current logs, append, trim, write back
-  const { data } = await supabase.from("jobs").select("logs").eq("id", id).single();
+  const { data, error: fetchErr } = await supabase
+    .from("jobs")
+    .select("logs")
+    .eq("id", id)
+    .single();
+
+  if (fetchErr) {
+    console.error(`[jobStore] appendJobLog fetch failed for ${id}:`, fetchErr.message);
+    return;
+  }
+
   const current: string[] = Array.isArray(data?.logs) ? data.logs : [];
   const updated = [...current, line].slice(-MAX_LOGS);
 
-  await supabase
+  const { error: updateErr } = await supabase
     .from("jobs")
     .update({ logs: updated, updated_at: new Date().toISOString() })
     .eq("id", id);
+
+  if (updateErr) {
+    console.error(`[jobStore] appendJobLog update failed for ${id}:`, updateErr.message);
+  }
 }
 
 export async function finishJob(
@@ -84,13 +94,20 @@ export async function finishJob(
   stats?: Record<string, number>,
   error?: string
 ): Promise<void> {
-  await supabase.from("jobs").update({
-    status,
-    finished_at: new Date().toISOString(),
-    ...(stats ? { stats } : {}),
-    ...(error ? { error } : {}),
-    updated_at: new Date().toISOString(),
-  }).eq("id", id);
+  const { error: updateErr } = await supabase
+    .from("jobs")
+    .update({
+      status,
+      finished_at: new Date().toISOString(),
+      ...(stats ? { stats } : {}),
+      ...(error ? { error } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (updateErr) {
+    console.error(`[jobStore] finishJob failed for ${id}:`, updateErr.message);
+  }
 }
 
 export async function isCancelled(id: string): Promise<boolean> {
@@ -103,8 +120,15 @@ export async function isCancelled(id: string): Promise<boolean> {
 }
 
 export async function requestCancel(id: string): Promise<void> {
-  await supabase.from("jobs").update({
-    status: "cancelled",
-    updated_at: new Date().toISOString(),
-  }).eq("id", id);
+  const { error } = await supabase
+    .from("jobs")
+    .update({
+      status: "cancelled",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+
+  if (error) {
+    console.error(`[jobStore] requestCancel failed for ${id}:`, error.message);
+  }
 }
