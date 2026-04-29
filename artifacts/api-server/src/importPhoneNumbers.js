@@ -101,7 +101,7 @@ export async function importPhoneNumbers(log = console.log, isCancelled = () => 
 
   // ── Process each player ───────────────────────────────────────────────────
   for (let i = 0; i < players.length; i++) {
-    if (isCancelled()) throw new CancelledError();
+    if (await isCancelled()) throw new CancelledError();
 
     const player = players[i];
     const progress = `[${i + 1}/${players.length}]`;

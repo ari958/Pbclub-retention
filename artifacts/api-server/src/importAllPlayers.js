@@ -41,7 +41,7 @@ async function fetchAllPodPlayUsers(isCancelled) {
   let page = 1;
 
   while (true) {
-    if (isCancelled()) throw new CancelledError();
+    if (await isCancelled()) throw new CancelledError();
 
     const url = `${PODPLAY_BASE}/users?page=${page}&ipp=${IPP}`;
     const res = await fetch(url, {
@@ -109,7 +109,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   // 3. Process each PodPlay user
   for (const user of podplayUsers) {
-    if (isCancelled()) throw new CancelledError();
+    if (await isCancelled()) throw new CancelledError();
 
     stats.processed++;
     const externalId = String(user.id);
@@ -215,7 +215,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     log(`[import] Syncing attendance for ${linkedPlayers.length} players…`);
 
     for (let i = 0; i < linkedPlayers.length; i++) {
-      if (isCancelled()) throw new CancelledError();
+      if (await isCancelled()) throw new CancelledError();
 
       const p = linkedPlayers[i];
       try {
