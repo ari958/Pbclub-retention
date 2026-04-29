@@ -128,7 +128,7 @@ function SyncLogPanel() {
   const fetchJobs = useCallback(async () => {
     try {
       const [syncRes, importRes] = await Promise.all([
-        fetch("/api/sync/status"),
+        fetch("/api/sync/events/status"),
         fetch("/api/import/status"),
       ]);
       if (syncRes.ok) setSyncJob(await syncRes.json());
