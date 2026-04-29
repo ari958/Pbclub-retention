@@ -577,7 +577,6 @@ function MessageQueuePanel({
           toast.success("Message sent");
         }
       } else {
-        // Surface unresolved variable errors clearly
         if (data.unresolved_vars?.length) {
           toast.error(`Unresolved variables: ${data.unresolved_vars.join(", ")}`);
         } else {
@@ -759,7 +758,7 @@ export default function Dashboard() {
       )
       .eq("direction", "outbound")
       .eq("sent_by", "agent")
-      .eq("status", "pending"); // only show pending messages — uses new status column
+      .eq("status", "pending");
     if (res.data) setMessages(res.data as unknown as MessageQueueItem[]);
   }, []);
 
@@ -838,18 +837,47 @@ export default function Dashboard() {
   const syncAll = useCallback(async () => {
     setSyncRunning(true);
     try {
-      const res = await fetch("/api/sync/all", { method: "POST" });
+      const res = await fetch("/api/sync/events", { method: "POST" });
       if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        toast.success(`Sync complete — ${data.synced ?? 0} players updated`);
-        await fetchData();
+        toast.success("Sync started — check Settings → Sync Log for progress");
       } else {
-        toast.error("Sync failed");
+        const data = await res.json().catch(() => ({}));
+        toast.error(data.error ?? "Sync failed");
+        setSyncRunning(false);
       }
-    } finally {
+    } catch {
+      toast.error("Sync failed");
       setSyncRunning(false);
     }
-  }, [fetchData, toast]);
+  }, [toast]);
+
+  useEffect(() => {
+    fetch("/api/sync/events/status")
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.status === "running") setSyncRunning(true);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!syncRunning) return;
+    const interval = setInterval(() => {
+      fetch("/api/sync/events/status")
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.status !== "running") {
+            setSyncRunning(false);
+            if (data.status === "done") {
+              toast.success(`Sync complete — ${data.stats?.attendancesUpserted ?? 0} records upserted`);
+              fetchData();
+            }
+          }
+        })
+        .catch(() => {});
+    }, 15000);
+    return () => clearInterval(interval);
+  }, [syncRunning, fetchData, toast]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
