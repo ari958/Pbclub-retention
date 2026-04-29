@@ -1,8 +1,6 @@
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const PODPLAY_WEB_BASE = "https://pbclub.podplay.app";
-
 const EXCLUDED_PROGRAM_TYPES = new Set(["Private Event", "Private", "Tournaments"]);
-
 const SKILL_LEVEL_TAGS = [
   "Beginner",
   "Advanced Beginner",
@@ -13,11 +11,16 @@ const SKILL_LEVEL_TAGS = [
   "All Level",
 ];
 
-/**
- * Extract a skill level from a tags array by matching against known level keywords.
- * @param {string[]} tags
- * @returns {string|null}
- */
+// ─── Cache ────────────────────────────────────────────────────────────────────
+// Prevents one PodPlay API call per player during batch agent runs.
+// Cache TTL: 10 minutes — programs don't change that fast.
+
+const CACHE_TTL_MS = 10 * 60 * 1000;
+let cachedPrograms = null;
+let cacheExpiresAt = 0;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
 function extractSkillLevel(tags) {
   if (!Array.isArray(tags)) return null;
   for (const level of SKILL_LEVEL_TAGS) {
@@ -26,11 +29,6 @@ function extractSkillLevel(tags) {
   return null;
 }
 
-/**
- * Format a raw PodPlay event into the available_programs shape the agent expects.
- * @param {object} event
- * @returns {object}
- */
 const ET_DATE_FMT = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/New_York",
   weekday: "long",
@@ -46,19 +44,15 @@ function formatProgram(event) {
       : null;
   const price_member =
     rate && typeof rate === "object" ? (rate.member ?? null) : null;
-
   const capacity = event.guests?.max ?? null;
   const currentSignups = event.signups?._total ?? 0;
   const spots_remaining =
     capacity != null && capacity > 0 ? Math.max(0, capacity - currentSignups) : null;
-
   const tags = Array.isArray(event.tags) ? event.tags : [];
-
   const rawStartTime = event.startTime ?? null;
   const start_time = rawStartTime
     ? ET_DATE_FMT.format(new Date(rawStartTime))
     : null;
-
   return {
     name: event.name,
     description: event.description?.trim() || null,
@@ -73,56 +67,47 @@ function formatProgram(event) {
   };
 }
 
+// ─── Main export ──────────────────────────────────────────────────────────────
+
 /**
- * Fetch upcoming events from PodPlay and return them formatted
- * as the available_programs array the agent expects.
+ * Fetch upcoming programs from PodPlay, formatted for the agent.
+ * Results are cached for 10 minutes — safe to call once per agent run
+ * in a batch of 50 players without hammering the PodPlay API.
  *
- * Filters to events that:
- * - Start in the future (startTime > now)
- * - Are not cancelled
- * - Have a PUBLISHED status
- * - Are not Private Event, Private, or Tournaments program types
- * - Have a non-empty description
- * - Do not contain "AJ's Wicked Wednesday" in the name
- *
- * Deduplicates by program name, keeping the earliest upcoming instance.
- *
- * @returns {Promise<Array<{name: string, description: string|null, program_type: string|null, price: number|null, price_member: number|null, skill_level: string|null, tags: string[], spots_remaining: number|null, start_time: string|null}>>}
+ * Pass force=true to bypass the cache (e.g. in tests).
  */
-export async function fetchAvailablePrograms() {
+export async function fetchAvailablePrograms(force = false) {
+  const now = Date.now();
+
+  // Return cached result if still valid
+  if (!force && cachedPrograms !== null && now < cacheExpiresAt) {
+    return cachedPrograms;
+  }
+
   const res = await fetch(`${PODPLAY_BASE}/events`, {
     headers: { "x-api-key": process.env.PODPLAY_API_KEY },
   });
-
   if (!res.ok) {
     throw new Error(`PodPlay /events returned ${res.status}: ${await res.text()}`);
   }
-
   const data = await res.json();
   const events = data.items ?? [];
-
-  const now = new Date();
+  const nowDate = new Date();
 
   const upcoming = events.filter((e) => {
     if (e.isCanceled) return false;
     if (e.status !== "PUBLISHED") return false;
-    if (new Date(e.startTime) <= now) return false;
-
+    if (new Date(e.startTime) <= nowDate) return false;
     const programType = e.customType ?? e.type ?? null;
     if (programType && EXCLUDED_PROGRAM_TYPES.has(programType)) return false;
-
     const description = e.description?.trim();
     if (!description) return false;
-
     if (e.name?.includes("AJ's Wicked Wednesday")) return false;
-
     return true;
   });
 
-  // Sort by startTime ascending so earliest instance comes first
   upcoming.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
-  // Deduplicate by name — keep only the earliest upcoming instance
   const seen = new Set();
   const deduped = [];
   for (const e of upcoming) {
@@ -132,5 +117,11 @@ export async function fetchAvailablePrograms() {
     }
   }
 
-  return deduped.map(formatProgram);
+  const result = deduped.map(formatProgram);
+
+  // Store in cache
+  cachedPrograms = result;
+  cacheExpiresAt = now + CACHE_TTL_MS;
+
+  return result;
 }
