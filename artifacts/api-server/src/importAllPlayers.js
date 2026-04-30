@@ -72,7 +72,7 @@ async function fetchAllPodPlayUsers(isCancelled) {
  * @param {(msg: string) => void} log
  * @param {() => boolean} isCancelled - returns true if the job should stop
  */
-export async function importAllPlayers(log = console.log, isCancelled = () => false) {
+export async function importAllPlayers(log = console.log, isCancelled = () => false, skipAttendanceSync = false) {
   const stats = {
     processed: 0,
     created: 0,
@@ -199,8 +199,13 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   log(`[import] ── Player import complete ──`);
   log(`[import] Processed: ${stats.processed} | Created: ${stats.created} | Updated: ${stats.updated} | Skipped: ${stats.skipped} | Errors: ${stats.errors}`);
 
-  // 4. Sync attendance for all linked players
-  if (isCancelled()) throw new CancelledError();
+  // 4. Sync attendance for all linked players (skipped when called from nightly chain)
+  if (skipAttendanceSync) {
+    log(`[import] Skipping attendance sync (handled by nightly event sync step)`);
+    return stats;
+  }
+
+  if (await isCancelled()) throw new CancelledError();
 
   log(`[import] Starting attendance sync…`);
 

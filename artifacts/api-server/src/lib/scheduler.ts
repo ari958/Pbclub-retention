@@ -63,7 +63,8 @@ export async function runNightlyChain(): Promise<void> {
     try {
       const importStats: Record<string, number> = await importAllPlayers(
         (msg: string) => appendJobLog(JOB_IMPORT, msg),
-        () => isCancelled(JOB_IMPORT)
+        () => isCancelled(JOB_IMPORT),
+        true  // skipAttendanceSync — nightly chain handles this in step 2
       );
       await finishJob(JOB_IMPORT, "done", importStats);
       await appendJobLog(JOB_IMPORT, "Nightly: player import finished");
