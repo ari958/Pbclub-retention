@@ -56,18 +56,26 @@ export default function Assessments() {
   const [checkmarks, setCheckmarks] = useState<Set<string>>(new Set());
 
   const fetchData = async () => {
-    const [playersRes, clubRes] = await Promise.all([
-      supabase
+    const clubRes = await supabase.from("clubs").select("name").limit(1).maybeSingle();
+    if (clubRes.data?.name) setClubName(clubRes.data.name);
+
+    const allPlayers: Player[] = [];
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
         .from("players")
         .select(
           "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id"
         )
         .is("progression_status", null)
-        .order("last_visit_date", { ascending: false, nullsFirst: false }),
-      supabase.from("clubs").select("name").limit(1).maybeSingle(),
-    ]);
-    if (playersRes.data) setPlayers(playersRes.data as Player[]);
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
+        .order("last_visit_date", { ascending: false, nullsFirst: false })
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      allPlayers.push(...(data as Player[]));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    setPlayers(allPlayers);
     setLoading(false);
   };
 

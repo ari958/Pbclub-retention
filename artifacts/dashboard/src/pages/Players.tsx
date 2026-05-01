@@ -182,17 +182,24 @@ export default function Players() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const fetchData = async () => {
-    const [playersRes, clubRes] = await Promise.all([
-      supabase
+    const clubRes = await supabase.from("clubs").select("name").limit(1).maybeSingle();
+    if (clubRes.data?.name) setClubName(clubRes.data.name);
+
+    const allPlayers: Player[] = [];
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
         .from("players")
         .select(
           "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in"
         )
-        .limit(2000),
-      supabase.from("clubs").select("name").limit(1).maybeSingle(),
-    ]);
-    if (playersRes.data) setPlayers(playersRes.data as Player[]);
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      allPlayers.push(...(data as Player[]));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    setPlayers(allPlayers);
     setLoading(false);
   };
 

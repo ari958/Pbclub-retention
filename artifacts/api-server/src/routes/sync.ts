@@ -41,26 +41,45 @@ async function runSyncAll() {
   let players: any[] = [];
   let hasLastSyncedAt = true;
 
-  const withCol = await supabase
+  // Probe whether last_synced_at column exists with a single-row check
+  const probe = await supabase
     .from("players")
     .select("id, external_id, last_synced_at")
-    .not("external_id", "is", null);
+    .not("external_id", "is", null)
+    .limit(1);
 
-  if (withCol.error) {
-    if (withCol.error.code === "42703" || withCol.error.message?.includes("last_synced_at")) {
-      await appendJobLog(JOB_SYNC_ALL, "last_synced_at column missing — syncing all players");
-      hasLastSyncedAt = false;
-      const fallback = await supabase
+  if (probe.error && (probe.error.code === "42703" || probe.error.message?.includes("last_synced_at"))) {
+    await appendJobLog(JOB_SYNC_ALL, "last_synced_at column missing — syncing all players");
+    hasLastSyncedAt = false;
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
         .from("players")
         .select("id, external_id")
-        .not("external_id", "is", null);
-      if (fallback.error) throw new Error(fallback.error.message);
-      players = fallback.data ?? [];
-    } else {
-      throw new Error(withCol.error.message);
+        .not("external_id", "is", null)
+        .range(offset, offset + 999);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      players.push(...data);
+      if (data.length < 1000) break;
+      offset += 1000;
     }
+  } else if (probe.error) {
+    throw new Error(probe.error.message);
   } else {
-    players = withCol.data ?? [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("id, external_id, last_synced_at")
+        .not("external_id", "is", null)
+        .range(offset, offset + 999);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      players.push(...data);
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
   }
 
   const eligible = hasLastSyncedAt

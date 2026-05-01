@@ -763,11 +763,7 @@ export default function Dashboard() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [playersRes, clubRes, outboundRes, inboundRes, winbackData] = await Promise.all([
-      supabase
-        .from("players")
-        .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
-        .limit(2000),
+    const [clubRes, outboundRes, inboundRes, winbackData] = await Promise.all([
       supabase.from("clubs").select("name").limit(1).maybeSingle(),
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "outbound")
@@ -778,7 +774,20 @@ export default function Dashboard() {
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()),
       fetch("/api/players/winback-stats").then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
-    if (playersRes.data) setPlayers(playersRes.data as Player[]);
+
+    const allPlayers: Player[] = [];
+    let offset = 0;
+    while (true) {
+      const { data } = await supabase
+        .from("players")
+        .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
+        .range(offset, offset + 999);
+      if (!data || data.length === 0) break;
+      allPlayers.push(...(data as Player[]));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+    setPlayers(allPlayers);
     if (clubRes.data?.name) setClubName(clubRes.data.name);
     const outCount = outboundRes.count ?? 0;
     const inCount = inboundRes.count ?? 0;
