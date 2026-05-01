@@ -126,6 +126,8 @@ export async function syncDuprRatings(log, isCancelled) {
   log(`[dupr] Starting DUPR sync for ${players.length} players (250 ms delay between calls)…`);
 
   const updates = []; // { id, dupr_rating, dupr_updated_at }
+  const seenTypes = new Set(); // track all item.type values we encounter
+  let firstDuprItemLogged = false;
 
   for (let i = 0; i < players.length; i++) {
     if (await isCancelled()) throw new CancelledError();
@@ -140,7 +142,7 @@ export async function syncDuprRatings(log, isCancelled) {
       // 404 = no ratings record at all — silent skip
       if (res.status === 404) {
         stats.skipped++;
-        if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped so far: ${stats.skipped}`);
+        if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped: ${stats.skipped} rated: ${updates.length}`);
         await new Promise(r => setTimeout(r, DELAY_MS));
         continue;
       }
@@ -155,14 +157,39 @@ export async function syncDuprRatings(log, isCancelled) {
       const data = await res.json();
       stats.fetched++;
 
-      // Log full response shape on first successful hit so we can verify field names
+      // Track every type value we see across all players
+      for (const item of (data.items ?? [])) {
+        if (item.type && !seenTypes.has(item.type)) {
+          seenTypes.add(item.type);
+          log(`[dupr] New item type seen: "${item.type}" — full item: ${JSON.stringify(item)}`);
+        }
+      }
+
+      // Log full response on first successful call (any type) for shape reference
       if (!firstResponseLogged) {
         log(`[dupr] First /ratings response: ${JSON.stringify(data)}`);
         firstResponseLogged = true;
       }
 
+      // Only act on type === "DUPR" — skip CUSTOM and anything else
       const duprItem = (data.items ?? []).find(item => item.type === "DUPR");
-      if (!duprItem || duprItem.doubles == null) {
+
+      // Log the first DUPR item we actually find so we can verify the rating field
+      if (duprItem && !firstDuprItemLogged) {
+        log(`[dupr] First DUPR item found (player ${p.id}): ${JSON.stringify(duprItem)}`);
+        firstDuprItemLogged = true;
+      }
+
+      if (!duprItem) {
+        stats.skipped++;
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        continue;
+      }
+
+      // Accept whichever numeric field is present: doubles takes priority, then singles
+      const rating = duprItem.doubles ?? duprItem.singles ?? null;
+      if (typeof rating !== "number") {
+        log(`[dupr] DUPR item for player ${p.id} has no numeric rating — fields: ${Object.keys(duprItem).join(", ")}`);
         stats.skipped++;
         await new Promise(r => setTimeout(r, DELAY_MS));
         continue;
@@ -170,11 +197,11 @@ export async function syncDuprRatings(log, isCancelled) {
 
       updates.push({
         id: p.id,
-        dupr_rating: duprItem.doubles,
+        dupr_rating: rating,
         dupr_updated_at: duprItem.lastUpdated ?? new Date().toISOString(),
       });
 
-      if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — rated so far: ${updates.length}`);
+      if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped: ${stats.skipped} rated: ${updates.length}`);
     } catch (err) {
       if (err.name === "CancelledError") throw err;
       log(`[dupr] ERROR player ${p.id} (ext=${p.external_id}): ${err.message}`);
@@ -183,6 +210,9 @@ export async function syncDuprRatings(log, isCancelled) {
 
     await new Promise(r => setTimeout(r, DELAY_MS));
   }
+
+  log(`[dupr] Types seen across all players: ${[...seenTypes].join(", ")}`);
+
 
   log(`[dupr] Fetch pass complete — writing ${updates.length} ratings to DB…`);
 
