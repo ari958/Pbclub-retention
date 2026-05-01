@@ -19,6 +19,29 @@ const SIGNUP_FETCH_DELAY_MS = 300;
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const DEFAULT_TIMEZONE = "America/New_York";
 
+// Canonical skill-level tags on PodPlay events — order matters (most specific first)
+const SKILL_LEVEL_TAGS = [
+  "Beginner",
+  "Advanced Beginner",
+  "Low Intermediate",
+  "Intermediate",
+  "Advanced Intermediate",
+  "All Levels",
+  "All Level",
+];
+
+/**
+ * Return the first skill-level tag found in an event's tags array, or null.
+ * Identical logic to fetchAvailablePrograms.js — keep in sync if tags change.
+ */
+function extractSkillLevel(tags) {
+  if (!Array.isArray(tags)) return null;
+  for (const level of SKILL_LEVEL_TAGS) {
+    if (tags.includes(level)) return level;
+  }
+  return null;
+}
+
 // Win-back window: if a player attends within this many days of receiving a message,
 // count it as a conversion
 const WINBACK_WINDOW_DAYS = 14;
@@ -174,7 +197,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         .from("attendances")
         .upsert(batch, {
           onConflict: "player_id,program_name,attended_at",
-          ignoreDuplicates: true,
         });
       if (error) {
         log(`[sync/events] UPSERT ERROR (batch ${i / UPSERT_BATCH + 1}): ${error.message}`);
@@ -247,6 +269,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           program_name: event.name,
           attended_at: attendedAt,
           program_type: event.customType ?? event.type ?? null,
+          level: extractSkillLevel(event.tags),
         });
 
         // Track newest attendance per player for win-back check
