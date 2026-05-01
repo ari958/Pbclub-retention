@@ -7,6 +7,7 @@ import { syncSinglePlayer } from "../syncPlayerAttendance.js";
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 import { runNightlyChain } from "../lib/scheduler";
+import { computeLevelConfidence } from "../lib/levelConfidence";
 
 const router: IRouter = Router();
 
@@ -288,6 +289,66 @@ router.post("/sync/nightly", async (_req, res) => {
 
 router.get("/sync/nightly/status", async (_req, res) => {
   const job = await getJob(JOB_NIGHTLY);
+  res.json({
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
+  });
+});
+
+// ─── Level confidence batch recompute ─────────────────────────────────────────
+
+const JOB_CONFIDENCE = "compute_confidence";
+
+router.post("/sync/level-confidence", async (_req, res) => {
+  const current = await getJob(JOB_CONFIDENCE);
+  if (current.status === "running") {
+    return res.status(409).json({ error: "Confidence compute already running" });
+  }
+
+  await startJob(JOB_CONFIDENCE);
+  await appendJobLog(JOB_CONFIDENCE, "Batch confidence compute started");
+
+  (async () => {
+    try {
+      const { data: rows, error } = await supabase
+        .from("attendances")
+        .select("player_id")
+        .not("player_id", "is", null);
+
+      if (error) throw new Error(error.message);
+
+      const playerIds = [...new Set((rows ?? []).map((r: any) => r.player_id as string))];
+      await appendJobLog(JOB_CONFIDENCE, `Computing confidence for ${playerIds.length} players`);
+
+      let count = 0;
+      for (const playerId of playerIds) {
+        await computeLevelConfidence(playerId);
+        count++;
+        if (count % 50 === 0) {
+          await appendJobLog(JOB_CONFIDENCE, `Computed confidence for ${count}/${playerIds.length} players...`);
+        }
+      }
+
+      await finishJob(JOB_CONFIDENCE, "done", { players_computed: count });
+      await appendJobLog(JOB_CONFIDENCE, `Done — computed confidence for ${count} players`);
+    } catch (err: any) {
+      await finishJob(JOB_CONFIDENCE, "error", undefined, err.message);
+      await appendJobLog(JOB_CONFIDENCE, `Failed: ${err.message}`);
+    }
+  })();
+
+  return res.status(202).json({
+    message: "Confidence compute started",
+    statusUrl: "/api/sync/level-confidence/status",
+  });
+});
+
+router.get("/sync/level-confidence/status", async (_req, res) => {
+  const job = await getJob(JOB_CONFIDENCE);
   res.json({
     status: job.status,
     startedAt: job.started_at,

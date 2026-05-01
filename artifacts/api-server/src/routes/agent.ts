@@ -52,6 +52,23 @@ You will receive a JSON object with the following fields:
 - membership_status: string — membership tier or "non-member"
 - progression_status: "ready-to-advance" | "developing" | "at-ceiling" | null
 - notes: string or null — freeform coach or staff observations about this player
+- coach_assigned_level: string or null — the level a coach has formally assigned to this player
+- level_confidence: array of objects with fields: level, score, certainty, tier
+  - tier values: "trusted" (score ≥ 60), "emerging" (score 40–59), "new" (score < 40), "unknown" (low certainty + low score)
+
+---
+
+LEVEL TRUST RULES
+Each player has a confidence score per level they have played. Use it as follows:
+
+- trusted (score ≥ 60, certainty ≥ 0.6): You may treat this player as a confirmed player at that level when selecting programs.
+- trusted (score ≥ 60, certainty < 0.6): Recommend freely but data is thin — do not name them to others as confirmed.
+- emerging (score 40–59): Recommend programs at this level freely. If no coach assignment exists, gently mention the placement rally option.
+- new/unknown (score < 40 OR certainty < 0.2): Do not recommend programs above the coach_assigned_level. Surface the placement rally as the first step. Never recommend a level more than one step above coach_assigned_level.
+
+If a player is booking at a level that is 2+ steps above their coach_assigned_level, do not recommend continuing at that level. Instead surface programs at the coach-assigned level and phrase it positively: "There are some great [coach level] sessions coming up that would be a strong fit for where you are right now."
+
+Never mention the confidence score number itself to the player.
 
 ---
 
@@ -120,14 +137,21 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   }
   const { player_id } = parsed.data;
 
-  // Fetch player profile and live programs in parallel
+  // Fetch player profile, live programs, and level confidence in parallel
   let assembled: any;
   let available_programs: any[];
+  let levelConfidenceRows: any[] = [];
   try {
     [assembled, available_programs] = await Promise.all([
       assembleProfile(player_id),
       fetchAvailablePrograms(),
     ]);
+    // Fetch confidence rows (non-fatal if missing)
+    const { data: confRows } = await supabase
+      .from("level_confidence")
+      .select("level, score, certainty, sessions")
+      .eq("player_id", player_id);
+    levelConfidenceRows = confRows ?? [];
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     const supabaseError = (err as any)?.supabaseError;
@@ -181,6 +205,16 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   const conversation_id: string = conversationData.id;
 
+  const levelConfidenceForAgent = levelConfidenceRows.map((row) => {
+    let tier: string;
+    if (row.score >= 60 && row.certainty >= 0.6) tier = "trusted";
+    else if (row.score >= 60) tier = "trusted";
+    else if (row.score >= 40) tier = "emerging";
+    else if (row.certainty < 0.2) tier = "unknown";
+    else tier = "new";
+    return { level: row.level, score: row.score, certainty: row.certainty, tier };
+  });
+
   const playerProfileForAgent = {
     name: profile.name,
     skill_level: profile.skill_level ?? null,
@@ -189,6 +223,8 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     membership_status: profile.membership_status ?? "non-member",
     progression_status: profile.progression_status ?? null,
     notes: profile.notes ?? null,
+    coach_assigned_level: profile.coach_assigned_level ?? null,
+    level_confidence: levelConfidenceForAgent,
   };
 
   const userMessage = `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}\n\nAVAILABLE PROGRAMS:\n${JSON.stringify(available_programs, null, 2)}`;

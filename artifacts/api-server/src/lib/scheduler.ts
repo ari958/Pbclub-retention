@@ -4,6 +4,7 @@ import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
+import { computeLevelConfidence } from "./levelConfidence";
 import { logger } from "./logger";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
@@ -99,7 +100,27 @@ export async function runNightlyChain(): Promise<void> {
       throw err;
     }
 
-    // Step 3: Mark nightly_sync done
+    // Step 3: Incremental confidence recompute for players with recent sessions
+    try {
+      const cutoff = new Date(Date.now() - INCREMENTAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const { data: recentRows } = await getSupabase()
+        .from("attendances")
+        .select("player_id")
+        .gte("attended_at", cutoff)
+        .not("player_id", "is", null);
+
+      const recentPlayerIds = [...new Set((recentRows ?? []).map((r: any) => r.player_id as string))];
+      await appendJobLog(JOB_NIGHTLY, `Recomputing confidence for ${recentPlayerIds.length} players with recent sessions`);
+
+      for (const pid of recentPlayerIds) {
+        await computeLevelConfidence(pid);
+      }
+      await appendJobLog(JOB_NIGHTLY, `Recomputed confidence for ${recentPlayerIds.length} players`);
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
+    }
+
+    // Step 4: Mark nightly_sync done
     await finishJob(JOB_NIGHTLY, "done");
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
     logger.info("[scheduler] Nightly chain completed");

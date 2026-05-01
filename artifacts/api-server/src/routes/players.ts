@@ -1,7 +1,9 @@
 import { Router, type IRouter } from "express";
 import { createClient } from "@supabase/supabase-js";
+import { z } from "zod";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
+import { computeLevelConfidence } from "../lib/levelConfidence";
 
 const router: IRouter = Router();
 
@@ -80,6 +82,138 @@ router.post("/players/:id/progression", async (req, res) => {
   }
 
   res.json({ updated: true, previous: current?.progression_status, current: status });
+});
+
+// ─── PATCH /api/players/:id/coach-level ──────────────────────────────────────
+
+const CoachLevelSchema = z.object({
+  coach_assigned_level: z.string().min(1),
+  coach_level_notes: z.string().optional(),
+  coach_level_set_by: z.string().optional(),
+});
+
+router.patch("/players/:id/coach-level", async (req, res) => {
+  const parsed = CoachLevelSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
+    return;
+  }
+  const { coach_assigned_level, coach_level_notes, coach_level_set_by } = parsed.data;
+
+  // Validate level exists in taxonomy
+  const { data: taxRow } = await supabase
+    .from("level_taxonomy")
+    .select("level")
+    .eq("level", coach_assigned_level)
+    .maybeSingle();
+
+  if (!taxRow) {
+    res.status(400).json({ error: `Level "${coach_assigned_level}" not found in level_taxonomy` });
+    return;
+  }
+
+  const { data: updated, error } = await supabase
+    .from("players")
+    .update({
+      coach_assigned_level,
+      coach_level_notes: coach_level_notes ?? null,
+      coach_level_set_by: coach_level_set_by ?? null,
+      coach_level_set_at: new Date().toISOString(),
+    })
+    .eq("id", req.params.id)
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Recompute confidence for all levels this player has attended
+  computeLevelConfidence(req.params.id).catch(() => {});
+
+  // Return updated player + fresh confidence rows
+  const { data: confidence } = await supabase
+    .from("level_confidence")
+    .select("level, score, certainty, sessions, peer_positive, peer_total, last_computed")
+    .eq("player_id", req.params.id);
+
+  res.json({ player: updated, level_confidence: confidence ?? [] });
+});
+
+// ─── GET /api/players/:id/confidence ─────────────────────────────────────────
+
+router.get("/players/:id/confidence", async (req, res) => {
+  const { data: confidence, error } = await supabase
+    .from("level_confidence")
+    .select("level, score, certainty, sessions, peer_positive, peer_total, last_computed")
+    .eq("player_id", req.params.id)
+    .order("score", { ascending: false });
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Fetch taxonomy for rank ordering
+  const { data: taxonomy } = await supabase
+    .from("level_taxonomy")
+    .select("level, rank")
+    .order("rank", { ascending: true });
+
+  const taxMap = new Map<string, number>(
+    (taxonomy ?? []).map((t: any) => [t.level as string, t.rank as number])
+  );
+
+  const sorted = (confidence ?? []).sort((a: any, b: any) => {
+    const ra = taxMap.get(a.level) ?? 999;
+    const rb = taxMap.get(b.level) ?? 999;
+    return ra - rb;
+  });
+
+  res.json(sorted);
+});
+
+// ─── PATCH /api/players/:id — generic field update (DUPR etc.) ───────────────
+
+const PlayerPatchSchema = z.object({
+  dupr_rating: z.number().min(1).max(6).optional(),
+}).passthrough();
+
+router.patch("/players/:id", async (req, res) => {
+  const parsed = PlayerPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
+    return;
+  }
+
+  const updates: Record<string, unknown> = {};
+  if (parsed.data.dupr_rating !== undefined) {
+    updates.dupr_rating = parsed.data.dupr_rating;
+    updates.dupr_updated_at = new Date().toISOString();
+  }
+
+  if (Object.keys(updates).length === 0) {
+    res.status(400).json({ error: "No recognised fields to update" });
+    return;
+  }
+
+  const { data: updated, error } = await supabase
+    .from("players")
+    .update(updates)
+    .eq("id", req.params.id)
+    .select()
+    .single();
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  // Recompute confidence after DUPR change
+  computeLevelConfidence(req.params.id).catch(() => {});
+
+  res.json(updated);
 });
 
 // ─── GET /api/players/winback-stats ──────────────────────────────────────────

@@ -1,0 +1,214 @@
+I need you to implement a Level Confidence Scoring system for the pickleball club retention app. This is a significant feature addition. Read everything carefully before writing any code. Complete ALL sections without stopping or asking for confirmation between them.
+
+CONTEXT — What already exists
+
+Stack: Node/TypeScript API server in artifacts/api-server/src/, React dashboard in artifacts/dashboard/src/
+Supabase client available via service role key — used in all server-side files
+artifacts/api-server/src/lib/jobStore.ts — job state management (startJob, finishJob, appendJobLog, isCancelled)
+artifacts/api-server/src/lib/scheduler.ts — nightly chain runner (runNightlyChain)
+Nightly chain currently runs: importAllPlayers → syncEventAttendance
+artifacts/api-server/src/routes/sync.ts — existing sync routes
+artifacts/api-server/src/routes/import.ts — existing import routes
+Dashboard pages: Dashboard.tsx, Players.tsx, Settings.tsx — React + TypeScript + Tailwind
+Player drawer already exists in Players.tsx — it slides in from the right and shows player detail
+players table columns relevant here: id, external_id, first_name, last_name, coach_assigned_level, coach_level_notes, coach_level_set_at, coach_level_set_by, dupr_rating, dupr_updated_at
+attendances table columns: player_id, event_id, program_name, program_type, attended_at
+New tables just created in Supabase: level_confidence, session_feedback, level_taxonomy
+
+
+SECTION 1 — Scoring engine
+Create artifacts/api-server/src/lib/levelConfidence.ts
+This module exports one function: computeLevelConfidence(playerId: string): Promise<void>
+It computes and upserts a level_confidence row for every level the player has attended, using this exact scoring model:
+C1 — Session exposure (max 25 pts)
+sessions = COUNT of attendances rows for this player at this level
+days_since_last = days since most recent attendance at this level
+
+C1_raw = 25 × ln(sessions + 1) / ln(11)
+         (naturally approaches 25 as sessions → 10+, never exceeds 25)
+
+recency_decay = e^(−0.5 × days_since_last / 180)
+C1 = C1_raw × recency_decay
+C2 — Peer fit rate (max 25 pts)
+peer_positive = COUNT of session_feedback rows where player_id matches
+                AND level matches AND fit_rating = 1
+peer_total    = COUNT of session_feedback rows where player_id matches
+                AND level matches
+
+If peer_total >= 3:
+  C2 = 25 × (peer_positive / peer_total)
+Else:
+  C2 = 12.5   ← neutral prior, not enough data
+C3 — Coach assignment (max 35 pts)
+coach_level = players.coach_assigned_level
+coach_set_at = players.coach_level_set_at
+
+If coach_level is null: C3 = 0
+
+Else:
+  coach_rank   = level_taxonomy.rank WHERE level = coach_assigned_level
+  booking_rank = level_taxonomy.rank WHERE level = this_level
+  distance     = ABS(coach_rank - booking_rank)
+
+  base = 35 × MAX(0, 1 − 0.4 × distance)
+    distance 0 → 35 pts (exact match)
+    distance 1 → 21 pts
+    distance 2 → 7 pts
+    distance 3+ → 0 pts
+
+  days_since_assessment = days since coach_level_set_at
+  decay = e^(−0.693 × days_since_assessment / 90)
+  C3 = base × decay
+C4 — DUPR alignment (max 15 pts)
+dupr_rating = players.dupr_rating (may be null)
+dupr_updated_at = players.dupr_updated_at
+
+If dupr_rating is null: C4 = 0
+
+Else:
+  dupr_implied_rank = ROUND(dupr_rating)
+    (e.g. 3.5 → rank 4 in a 1-6 scale, map to nearest level rank)
+  booking_rank = level_taxonomy.rank WHERE level = this_level
+
+  alignment = MAX(0, 1 − ABS(dupr_implied_rank - booking_rank) / 1.0)
+  base = 15 × alignment
+
+  days_since_dupr = days since dupr_updated_at
+  decay = e^(−0.693 × days_since_dupr / 60)
+  C4 = base × decay
+Final score and certainty
+score = C1 + C2 + C3 + C4   (will be between 0 and 100)
+
+certainty components:
+  c1_cert = MIN(1.0, sessions / 10)
+  c2_cert = MIN(1.0, peer_total / 5)
+  c3_cert = 1.0 if coach_level assigned, else 0
+  c4_cert = 0.5 if dupr_rating present, else 0
+
+certainty = (c1_cert × 0.25) + (c2_cert × 0.30) + (c3_cert × 0.35) + (c4_cert × 0.10)
+After computing, upsert into level_confidence:
+
+player_id, level, sessions, days_since_last, peer_positive, peer_total, score, certainty, last_computed = now()
+Use ON CONFLICT (player_id, level) DO UPDATE
+
+The function should be silent — no console logs unless there's an error.
+
+SECTION 2 — Batch recompute route
+Add to artifacts/api-server/src/routes/sync.ts:
+POST /api/sync/level-confidence
+
+Returns 202 immediately, runs in background
+Uses jobStore: job id 'compute_confidence'
+Fetches all distinct player_ids from attendances
+Calls computeLevelConfidence(playerId) for each
+Logs progress every 50 players: "Computed confidence for 50/2001 players..."
+On completion, calls finishJob with stats: { players_computed: N }
+Wrap everything in try/catch, call finishJob with error on failure
+
+GET /api/sync/level-confidence/status
+
+Returns jobStore state for 'compute_confidence'
+
+Then add this job to Supabase (tell the user to run):
+sqlINSERT INTO jobs (id) VALUES ('compute_confidence') ON CONFLICT (id) DO NOTHING;
+
+SECTION 3 — Wire into nightly chain
+In artifacts/api-server/src/lib/scheduler.ts, add a Step 3 to runNightlyChain:
+After syncEventAttendance completes, call computeLevelConfidence for any player whose attendances.attended_at is within the last 14 days. This is incremental — only recompute players who had new sessions synced, not all 2000+ every night.
+Pattern:
+Step 3: Get distinct player_ids from attendances WHERE attended_at >= now - 14 days
+For each: await computeLevelConfidence(playerId)
+Log: "Recomputed confidence for N players"
+
+SECTION 4 — Coach assignment API
+Add a new route file artifacts/api-server/src/routes/players.ts:
+PATCH /api/players/:id/coach-level
+Request body:
+json{
+  "coach_assigned_level": "Low Intermediate",
+  "coach_level_notes": "Good third shot, dinks need work",
+  "coach_level_set_by": "Coach name or staff name"
+}
+
+Validates that coach_assigned_level exists in level_taxonomy for this club
+Updates players row: sets coach_assigned_level, coach_level_notes, coach_level_set_by, coach_level_set_at = now()
+After saving, immediately calls computeLevelConfidence(id) to recompute scores for all levels this player has attended — coach assignment affects all of them
+Returns updated player row + updated level_confidence rows
+Use service role Supabase client (not anon)
+
+GET /api/players/:id/confidence
+
+Returns all level_confidence rows for this player, joined with level_taxonomy for rank ordering
+Order by level_taxonomy.rank ASC
+Include: level, score, certainty, sessions, peer_positive, peer_total, last_computed
+
+Register this router in artifacts/api-server/src/index.ts at /api/players.
+
+SECTION 5 — Dashboard: coach assignment UI in player drawer
+In artifacts/dashboard/src/pages/Players.tsx, inside the existing player detail drawer, add a new "Level Assessment" section. Place it after the progression status field and before the notes field.
+Coach Level Assignment
+A label "Coach-assigned level" with a row of pill buttons, one per level from level_taxonomy ordered by rank. Fetch taxonomy on component mount from GET /api/players/{id}/confidence or a separate taxonomy endpoint — whichever is simpler.
+Pills: Beginner · Adv. Beginner · Low Intermediate · Intermediate · Adv. Intermediate · Advanced
+The currently assigned level (from player.coach_assigned_level) shows as selected (blue background, matching the info color variables). Clicking a different pill calls PATCH /api/players/:id/coach-level with the new level. Show a saving spinner inline while the request is in flight.
+Below the pills, a textarea for coach notes (bound to coach_level_notes). Auto-saves on blur, same pattern as the existing notes field. Shows "Saved ✓" for 2 seconds after save.
+Confidence Scores Panel
+Below the coach assignment, show a compact panel titled "Level confidence" that displays the player's level_confidence rows. Only show levels where sessions > 0.
+For each level row show:
+
+Level name
+Score as a small horizontal bar (width = score%) with the score number to the right
+Bar color: green if score ≥ 60, amber if 40–59, red if < 40
+Certainty shown as a secondary label: "high certainty" / "moderate" / "low" based on certainty > 0.6 / 0.3–0.6 / < 0.3
+If no confidence data yet, show "No sessions recorded yet"
+
+Fetch confidence data from GET /api/players/:id/confidence when the drawer opens. Show a skeleton loader while fetching.
+
+SECTION 6 — Agent prompt integration
+In the file that builds the agent prompt (wherever the player context object is assembled before calling the Claude API), add this to the player context:
+level_confidence: [
+  {
+    level: "Low Intermediate",
+    score: 65,
+    certainty: 0.72,
+    tier: "trusted"     // trusted ≥60, emerging 40-59, new <40, unknown = low certainty + low score
+  },
+  ...
+]
+coach_assigned_level: "Low Intermediate" | null
+Then update the agent system prompt section that handles program recommendations to include:
+LEVEL TRUST RULES:
+Each player has a confidence score per level they have played. Use it as follows:
+
+- trusted (score ≥ 60, certainty ≥ 0.6): You may name this player to others as a confirmed player at that level when relevant.
+- trusted (score ≥ 60, certainty < 0.6): Recommend freely but do not name them to others yet — the score looks good but data is thin.
+- emerging (score 40–59): Recommend programs at this level freely. If no coach assignment exists, gently mention the placement rally option.
+- new/unknown (score < 40 OR certainty < 0.2): Do not recommend programs above the coach-assigned level. Surface the placement rally as the first step. Never recommend a level more than one step above coach_assigned_level.
+
+If a player is booking at a level that is 2+ steps above their coach_assigned_level, do not recommend continuing at that level. Instead surface programs at the coach-assigned level and phrase it positively: "There are some great [coach level] sessions coming up that would be a strong fit for where you are right now."
+
+Never mention the confidence score number itself to the player.
+
+SECTION 7 — Settings page: DUPR field
+In artifacts/dashboard/src/pages/Players.tsx, in the player drawer, add a DUPR rating field below the coach level section:
+Label: "DUPR rating (optional)"
+Input: number, step 0.01, min 1.0, max 6.0, placeholder "e.g. 3.48"
+If player.dupr_rating is set, show the current value. On blur, save via:
+PATCH /api/players/:id (add this to the players route):
+Request body: { dupr_rating: 3.48 }
+
+Sets dupr_rating and dupr_updated_at = now()
+Recomputes computeLevelConfidence for this player after saving
+
+
+COMPLETION REQUIREMENTS
+Do not stop between sections. Do not ask for confirmation. If you hit a blocker on one item, skip it, note it in your final summary, and continue.
+When complete, provide a summary that lists:
+
+Every file created or modified
+Any sections that were skipped and why
+The exact SQL statement to insert the compute_confidence job row into Supabase
+
+After the agent completes, manually trigger the batch recompute by calling:
+POST /api/sync/level-confidence
+Then check:
+GET /api/sync/level-confidence/status

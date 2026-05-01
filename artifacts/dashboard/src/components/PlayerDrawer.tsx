@@ -14,6 +14,26 @@ interface FullPlayer {
   phone: string | null;
   notes: string | null;
   club_id: string | null;
+  coach_assigned_level: string | null;
+  coach_level_notes: string | null;
+  coach_level_set_at: string | null;
+  dupr_rating: number | null;
+  dupr_updated_at: string | null;
+}
+
+interface LevelConfidenceRow {
+  level: string;
+  score: number;
+  certainty: number;
+  sessions: number;
+  peer_positive: number;
+  peer_total: number;
+  last_computed: string | null;
+}
+
+interface TaxonomyRow {
+  level: string;
+  rank: number;
 }
 
 interface Attendance {
@@ -103,6 +123,23 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
   const [noteSaved, setNoteSaved] = useState(false);
   const noteSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Coach level
+  const [taxonomy, setTaxonomy] = useState<TaxonomyRow[]>([]);
+  const [savingCoachLevel, setSavingCoachLevel] = useState(false);
+  const [coachLevelNotesDraft, setCoachLevelNotesDraft] = useState("");
+  const [coachLevelNotesSaved, setCoachLevelNotesSaved] = useState(false);
+  const coachNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // DUPR
+  const [duprDraft, setDuprDraft] = useState("");
+  const [savingDupr, setSavingDupr] = useState(false);
+  const [duprSaved, setDuprSaved] = useState(false);
+  const duprTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Confidence
+  const [confidence, setConfidence] = useState<LevelConfidenceRow[]>([]);
+  const [loadingConfidence, setLoadingConfidence] = useState(false);
+
   // Agent inline result
   const [agentResult, setAgentResult] = useState<string | null>(null);
   const [editingResult, setEditingResult] = useState(false);
@@ -141,10 +178,14 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
       return;
     }
     setLoadingData(true);
+    // Fetch taxonomy (doesn't change between players)
+    supabase.from("level_taxonomy").select("level, rank").order("rank", { ascending: true })
+      .then(({ data }) => { if (data) setTaxonomy(data as TaxonomyRow[]); });
+
     Promise.all([
       supabase
         .from("players")
-        .select("id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id")
+        .select("id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, coach_assigned_level, coach_level_notes, coach_level_set_at, dupr_rating, dupr_updated_at")
         .eq("id", playerId)
         .single(),
       supabase
@@ -160,12 +201,23 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
         .order("id", { ascending: false }),
     ]).then(([pRes, aRes, cRes]) => {
       if (pRes.data) {
-        setPlayer(pRes.data as FullPlayer);
-        setNotesDraft(pRes.data.notes ?? "");
+        const p = pRes.data as FullPlayer;
+        setPlayer(p);
+        setNotesDraft(p.notes ?? "");
+        setCoachLevelNotesDraft(p.coach_level_notes ?? "");
+        setDuprDraft(p.dupr_rating != null ? String(p.dupr_rating) : "");
       }
       if (aRes.data) setAttendance(aRes.data as Attendance[]);
       if (cRes.data) setConversations(cRes.data as ConversationRow[]);
     }).finally(() => setLoadingData(false));
+
+    // Fetch confidence data via API
+    setLoadingConfidence(true);
+    fetch(`/api/players/${playerId}/confidence`)
+      .then((r) => r.ok ? r.json() : [])
+      .then((data) => setConfidence(Array.isArray(data) ? data : []))
+      .catch(() => setConfidence([]))
+      .finally(() => setLoadingConfidence(false));
   }, [playerId]);
 
   const updateProgression = async (val: ProgressionStatus) => {
@@ -188,6 +240,79 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
     setNoteSaved(true);
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
     noteSaveTimer.current = setTimeout(() => setNoteSaved(false), 2000);
+  };
+
+  const assignCoachLevel = async (level: string) => {
+    if (!player || savingCoachLevel) return;
+    if (player.coach_assigned_level === level) return;
+    setSavingCoachLevel(true);
+    try {
+      const res = await fetch(`/api/players/${player.id}/coach-level`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coach_assigned_level: level }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setPlayer((p) => p ? { ...p, coach_assigned_level: level, coach_level_set_at: data.player?.coach_level_set_at ?? null } : p);
+        if (data.level_confidence) setConfidence(data.level_confidence);
+        toast.info(`Coach level set to ${level}`);
+        onDataChanged?.();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? "Failed to set coach level");
+      }
+    } catch {
+      toast.error("Failed to set coach level");
+    } finally {
+      setSavingCoachLevel(false);
+    }
+  };
+
+  const saveCoachLevelNotes = async () => {
+    if (!player) return;
+    const trimmed = coachLevelNotesDraft.trim();
+    if (trimmed === (player.coach_level_notes ?? "")) return;
+    await supabase.from("players").update({ coach_level_notes: trimmed || null }).eq("id", player.id);
+    setPlayer((p) => p ? { ...p, coach_level_notes: trimmed || null } : p);
+    setCoachLevelNotesSaved(true);
+    if (coachNoteTimer.current) clearTimeout(coachNoteTimer.current);
+    coachNoteTimer.current = setTimeout(() => setCoachLevelNotesSaved(false), 2000);
+  };
+
+  const saveDupr = async () => {
+    if (!player) return;
+    const val = parseFloat(duprDraft);
+    if (isNaN(val) || duprDraft.trim() === "") {
+      if (player.dupr_rating === null) return;
+    }
+    const parsed = isNaN(val) ? null : Math.round(val * 100) / 100;
+    if (parsed === player.dupr_rating) return;
+    setSavingDupr(true);
+    try {
+      const res = await fetch(`/api/players/${player.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dupr_rating: parsed }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setPlayer((p) => p ? { ...p, dupr_rating: updated.dupr_rating, dupr_updated_at: updated.dupr_updated_at } : p);
+        setDuprDraft(updated.dupr_rating != null ? String(updated.dupr_rating) : "");
+        setDuprSaved(true);
+        if (duprTimer.current) clearTimeout(duprTimer.current);
+        duprTimer.current = setTimeout(() => setDuprSaved(false), 2000);
+        // Refresh confidence scores
+        fetch(`/api/players/${player.id}/confidence`).then((r) => r.ok ? r.json() : []).then((d) => setConfidence(Array.isArray(d) ? d : [])).catch(() => {});
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? "Failed to save DUPR rating");
+      }
+    } catch {
+      toast.error("Failed to save DUPR rating");
+    } finally {
+      setSavingDupr(false);
+    }
   };
 
   const runAgent = async () => {
@@ -438,6 +563,171 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
                   ))}
                 </select>
               </div>
+
+              {/* Coach Level Assessment */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <label style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    Coach Level
+                  </label>
+                  {savingCoachLevel && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Saving…</span>}
+                </div>
+                {taxonomy.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                    No levels in taxonomy — add rows to level_taxonomy table
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {taxonomy.map((t) => {
+                      const isActive = player.coach_assigned_level === t.level;
+                      return (
+                        <button
+                          key={t.level}
+                          onClick={() => assignCoachLevel(t.level)}
+                          disabled={savingCoachLevel}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: 4,
+                            fontSize: 12,
+                            fontWeight: 500,
+                            fontFamily: "var(--font-sans)",
+                            border: `1px solid ${isActive ? "var(--accent)" : "var(--border)"}`,
+                            background: isActive ? "rgba(var(--accent-rgb,232,168,56),0.12)" : "var(--bg-surface-2)",
+                            color: isActive ? "var(--accent)" : "var(--text-secondary)",
+                            cursor: savingCoachLevel ? "not-allowed" : "pointer",
+                            opacity: savingCoachLevel && !isActive ? 0.5 : 1,
+                            transition: "all 120ms ease",
+                          }}
+                        >
+                          {t.level}
+                        </button>
+                      );
+                    })}
+                    {player.coach_assigned_level && (
+                      <button
+                        onClick={() => {
+                          supabase.from("players").update({ coach_assigned_level: null }).eq("id", player.id).then(() => {
+                            setPlayer((p) => p ? { ...p, coach_assigned_level: null } : p);
+                            toast.info("Coach level cleared");
+                          });
+                        }}
+                        style={{
+                          padding: "4px 10px",
+                          borderRadius: 4,
+                          fontSize: 11,
+                          fontFamily: "var(--font-sans)",
+                          border: "1px solid var(--border)",
+                          background: "transparent",
+                          color: "var(--text-tertiary)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                )}
+                {player.coach_assigned_level && (
+                  <div style={{ marginTop: 8 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                      <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Coach notes</span>
+                      {coachLevelNotesSaved && <span style={{ fontSize: 11, color: "var(--state-active)", fontWeight: 500 }}>Saved ✓</span>}
+                    </div>
+                    <textarea
+                      value={coachLevelNotesDraft}
+                      onChange={(e) => setCoachLevelNotesDraft(e.target.value)}
+                      onBlur={saveCoachLevelNotes}
+                      placeholder="Observations about this placement…"
+                      rows={2}
+                      style={{
+                        width: "100%",
+                        padding: "6px 10px",
+                        fontSize: 12,
+                        fontFamily: "var(--font-sans)",
+                        lineHeight: 1.5,
+                        border: "1px solid var(--border)",
+                        borderRadius: 5,
+                        background: "var(--bg-surface-2)",
+                        color: "var(--text-primary)",
+                        resize: "vertical",
+                        outline: "none",
+                        boxSizing: "border-box",
+                      }}
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* DUPR Rating */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <label style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                    DUPR Rating
+                  </label>
+                  {duprSaved && <span style={{ fontSize: 11, color: "var(--state-active)", fontWeight: 500 }}>Saved ✓</span>}
+                  {savingDupr && <span style={{ fontSize: 11, color: "var(--text-tertiary)" }}>Saving…</span>}
+                </div>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="1"
+                  max="6"
+                  value={duprDraft}
+                  onChange={(e) => setDuprDraft(e.target.value)}
+                  onBlur={saveDupr}
+                  placeholder="e.g. 3.25"
+                  style={{
+                    width: "100%",
+                    padding: "6px 10px",
+                    fontSize: 13,
+                    fontFamily: "var(--font-sans)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 5,
+                    background: "var(--bg-surface-2)",
+                    color: "var(--text-primary)",
+                    outline: "none",
+                    boxSizing: "border-box",
+                  }}
+                />
+              </div>
+
+              {/* Level Confidence Scores */}
+              {(loadingConfidence || confidence.length > 0) && (
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: "block", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                    Level Confidence
+                  </label>
+                  {loadingConfidence ? (
+                    <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Computing…</div>
+                  ) : (
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {confidence.map((row) => {
+                        const tier = row.score >= 60 ? "trusted" : row.score >= 40 ? "emerging" : row.certainty < 0.2 ? "unknown" : "new";
+                        const tierColor = tier === "trusted" ? "var(--state-active)" : tier === "emerging" ? "var(--state-lapsing)" : "var(--text-tertiary)";
+                        const barWidth = Math.min(100, row.score);
+                        return (
+                          <div key={row.level}>
+                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
+                              <span style={{ fontSize: 12, color: "var(--text-primary)" }}>{row.level}</span>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: tierColor, fontWeight: 600 }}>
+                                  {tier}
+                                </span>
+                                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>
+                                  {row.score.toFixed(0)}
+                                </span>
+                              </div>
+                            </div>
+                            <div style={{ height: 4, borderRadius: 2, background: "var(--border)", overflow: "hidden" }}>
+                              <div style={{ height: "100%", width: `${barWidth}%`, background: tierColor, borderRadius: 2, transition: "width 400ms ease" }} />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Notes */}
               <div>
