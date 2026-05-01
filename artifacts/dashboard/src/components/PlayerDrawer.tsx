@@ -58,6 +58,7 @@ interface ConversationRow {
 
 interface PlayerDrawerProps {
   playerId: string | null;
+  clubId: string | null;
   onClose: () => void;
   onDataChanged?: () => void;
 }
@@ -109,7 +110,7 @@ function MembershipPill({ status }: { status: string | null }) {
   );
 }
 
-export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerProps) {
+export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: PlayerDrawerProps) {
   const toast = useToast();
   const [player, setPlayer] = useState<FullPlayer | null>(null);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -178,13 +179,6 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
       return;
     }
     setLoadingData(true);
-    // Fetch taxonomy scoped to this club
-    supabase
-      .from("level_taxonomy")
-      .select("level, rank")
-      .eq("club_id", "c8976e15-e002-4619-bb4b-b1a70f5cd7ab")
-      .order("rank", { ascending: true })
-      .then(({ data }) => { if (data) setTaxonomy(data as TaxonomyRow[]); });
 
     Promise.all([
       supabase
@@ -223,6 +217,17 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
       .catch(() => setConfidence([]))
       .finally(() => setLoadingConfidence(false));
   }, [playerId]);
+
+  // Taxonomy depends on clubId — waits until club is known before fetching
+  useEffect(() => {
+    if (!playerId || !clubId) return;
+    supabase
+      .from("level_taxonomy")
+      .select("level, rank")
+      .eq("club_id", clubId)
+      .order("rank", { ascending: true })
+      .then(({ data }) => { if (data) setTaxonomy(data as TaxonomyRow[]); });
+  }, [playerId, clubId]);
 
   const updateProgression = async (val: ProgressionStatus) => {
     if (!player) return;

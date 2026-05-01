@@ -170,6 +170,7 @@ function SkeletonRows({ cols }: { cols: number }) {
 export default function Players() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [clubName, setClubName] = useState("");
+  const [clubId, setClubId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [engFilter, setEngFilter] = useState("");
@@ -182,8 +183,9 @@ export default function Players() {
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
 
   const fetchData = async () => {
-    const clubRes = await supabase.from("clubs").select("name").limit(1).maybeSingle();
+    const clubRes = await supabase.from("clubs").select("id, name").limit(1).maybeSingle();
     if (clubRes.data?.name) setClubName(clubRes.data.name);
+    if (clubRes.data?.id) setClubId(clubRes.data.id);
 
     const allPlayers: Player[] = [];
     let offset = 0;
@@ -632,6 +634,7 @@ export default function Players() {
 
       <PlayerDrawer
         playerId={drawerPlayerId}
+        clubId={clubId}
         onClose={() => setDrawerPlayerId(null)}
         onDataChanged={fetchData}
       />
