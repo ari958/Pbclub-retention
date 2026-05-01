@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 // @ts-ignore — plain JS module
-import { importAllPlayers } from "../importAllPlayers.js";
+import { importAllPlayers, syncDuprRatings } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { importPhoneNumbers } from "../importPhoneNumbers.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
@@ -10,6 +10,7 @@ const router: IRouter = Router();
 
 const JOB_IMPORT_PLAYERS = "import_players";
 const JOB_IMPORT_PHONES  = "import_phones";
+const JOB_IMPORT_DUPR    = "import_dupr";
 
 // ─── Player import ────────────────────────────────────────────────────────────
 
@@ -170,6 +171,61 @@ router.post("/import/phone-numbers/cancel", async (_req, res) => {
   res.json({
     status: "cancelling",
     message: "Phone import will stop after the current player. Poll GET /api/import/phone-numbers/status to confirm.",
+  });
+});
+
+// ─── DUPR ratings sync ────────────────────────────────────────────────────────
+
+router.post("/import/dupr", async (_req, res) => {
+  const current = await getJob(JOB_IMPORT_DUPR);
+
+  if (current.status === "running") {
+    res.status(409).json({
+      error: "DUPR sync already running.",
+      startedAt: current.started_at,
+      recentLogs: current.logs.slice(-10),
+    });
+    return;
+  }
+
+  await startJob(JOB_IMPORT_DUPR);
+  await appendJobLog(JOB_IMPORT_DUPR, "DUPR sync triggered via POST /api/import/dupr");
+
+  res.status(202).json({
+    status: "started",
+    message: "DUPR sync running in background.",
+    statusUrl: "/api/import/dupr/status",
+    startedAt: new Date().toISOString(),
+  });
+
+  syncDuprRatings(
+    (msg: string) => appendJobLog(JOB_IMPORT_DUPR, msg),
+    () => isCancelled(JOB_IMPORT_DUPR)
+  )
+    .then(async (stats: Record<string, number>) => {
+      await finishJob(JOB_IMPORT_DUPR, "done", stats);
+      await appendJobLog(JOB_IMPORT_DUPR, "DUPR sync finished successfully");
+    })
+    .catch(async (err: Error) => {
+      if (err.name === "CancelledError") {
+        await finishJob(JOB_IMPORT_DUPR, "cancelled");
+        await appendJobLog(JOB_IMPORT_DUPR, "DUPR sync cancelled");
+      } else {
+        await finishJob(JOB_IMPORT_DUPR, "error", undefined, err.message);
+        await appendJobLog(JOB_IMPORT_DUPR, `DUPR sync failed: ${err.message}`);
+      }
+    });
+});
+
+router.get("/import/dupr/status", async (_req, res) => {
+  const job = await getJob(JOB_IMPORT_DUPR);
+  res.json({
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
   });
 });
 

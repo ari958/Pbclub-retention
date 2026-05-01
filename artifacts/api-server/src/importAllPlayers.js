@@ -97,7 +97,7 @@ async function fetchAllSupabasePlayers(log) {
 // Rate limited to ~4 req/sec (250 ms delay) — well under PodPlay's 300 req/min cap.
 // Failures are logged and skipped; never blocks the main import.
 
-async function syncDuprRatings(log, isCancelled) {
+export async function syncDuprRatings(log, isCancelled) {
   const DELAY_MS = 250;
   const stats = { fetched: 0, updated: 0, skipped: 0, errors: 0 };
   let firstResponseLogged = false;
