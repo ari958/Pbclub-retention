@@ -2,17 +2,9 @@ import { createClient } from "@supabase/supabase-js";
 // @ts-ignore
 import { syncSinglePlayer } from "./syncPlayerAttendance.js";
 
-// Anon client — used for reads and updates (RLS allows these with anon key)
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
-);
-
-// Service role client — used only for INSERT of new players (bypasses RLS)
-const supabaseAdmin = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY,
-  { auth: { persistSession: false } }
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
@@ -265,7 +257,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     for (let i = 0; i < toInsert.length; i += UPSERT_BATCH) {
       if (await isCancelled()) throw new CancelledError();
       const batch = toInsert.slice(i, i + UPSERT_BATCH);
-      const { error } = await supabaseAdmin
+      const { error } = await supabase
         .from("players")
         .insert(batch);
       if (error) {
