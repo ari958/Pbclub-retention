@@ -229,4 +229,23 @@ router.get("/import/dupr/status", async (_req, res) => {
   });
 });
 
+router.post("/import/dupr/cancel", async (_req, res) => {
+  const current = await getJob(JOB_IMPORT_DUPR);
+
+  if (current.status !== "running") {
+    res.status(400).json({
+      error: `No DUPR sync currently running (status: ${current.status})`,
+    });
+    return;
+  }
+
+  await requestCancel(JOB_IMPORT_DUPR);
+  await appendJobLog(JOB_IMPORT_DUPR, "Cancellation requested — stopping after current player…");
+
+  res.json({
+    status: "cancelling",
+    message: "DUPR sync will stop after the current player. Poll GET /api/import/dupr/status to confirm.",
+  });
+});
+
 export default router;
