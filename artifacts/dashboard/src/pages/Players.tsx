@@ -193,7 +193,7 @@ export default function Players() {
       const { data } = await supabase
         .from("players")
         .select(
-          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in"
+          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating"
         )
         .range(offset, offset + 999);
       if (!data || data.length === 0) break;

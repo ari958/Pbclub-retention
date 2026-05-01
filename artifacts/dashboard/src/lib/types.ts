@@ -15,6 +15,7 @@ export interface Player {
   club_id: string | null;
   sms_opt_in: boolean | null;
   last_outbound_at: string | null;
+  dupr_rating: number | null;
 }
 
 export interface MessageQueueItem {

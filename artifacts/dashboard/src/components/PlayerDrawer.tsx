@@ -705,6 +705,9 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                     boxSizing: "border-box",
                   }}
                 />
+                <div style={{ marginTop: 5, fontSize: 11, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                  Auto-synced from PodPlay nightly where available
+                </div>
               </div>
 
               {/* Level Confidence Scores */}
