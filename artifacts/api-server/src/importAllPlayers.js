@@ -10,6 +10,7 @@ const supabase = createClient(
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const IPP = 100;
+const UPSERT_BATCH = 100;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -34,7 +35,7 @@ class CancelledError extends Error {
   }
 }
 
-// ─── PodPlay fetch: all users ─────────────────────────────────────────────────
+// ─── PodPlay fetch: all users (already paginated correctly) ───────────────────
 
 async function fetchAllPodPlayUsers(isCancelled) {
   const allUsers = [];
@@ -66,24 +67,48 @@ async function fetchAllPodPlayUsers(isCancelled) {
   return allUsers;
 }
 
+// ─── Supabase fetch: all existing players (paginated past 1,000 row cap) ─────
+
+async function fetchAllSupabasePlayers(log) {
+  const all = [];
+  let offset = 0;
+  const PAGE = 1000;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from("players")
+      .select("id, external_id, phone, email")
+      .range(offset, offset + PAGE - 1);
+
+    if (error) throw new Error(`Failed to load Supabase players (offset ${offset}): ${error.message}`);
+    all.push(...data);
+    log(`[import] Loaded Supabase players: ${all.length} so far…`);
+    if (data.length < PAGE) break;
+    offset += PAGE;
+  }
+
+  return all;
+}
+
 // ─── Main import ──────────────────────────────────────────────────────────────
 
 /**
  * @param {(msg: string) => void} log
- * @param {() => boolean} isCancelled - returns true if the job should stop
+ * @param {() => boolean | Promise<boolean>} isCancelled
+ * @param {boolean} skipAttendanceSync
  */
 export async function importAllPlayers(log = console.log, isCancelled = () => false, skipAttendanceSync = false) {
   const stats = {
     processed: 0,
     created: 0,
     updated: 0,
-    skipped: 0,
+    linked: 0,       // matched by phone/email, external_id now set
     errors: 0,
     attendanceSynced: 0,
     attendanceErrors: 0,
   };
 
-  // 1. Read club schedule context for logging
+  // 1. Read club context for logging
   const { data: clubRow } = await supabase
     .from("clubs")
     .select("id, name, scheduled_sync_time, timezone")
@@ -104,102 +129,152 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     log(`[import] FATAL: Failed to fetch PodPlay users: ${err.message}`);
     throw err;
   }
+  log(`[import] Fetched ${podplayUsers.length} PodPlay users across ${Math.ceil(podplayUsers.length / IPP)} page(s)`);
 
-  log(`[import] Fetched ${podplayUsers.length} PodPlay users. Processing…`);
+  // 3. Pre-load all existing Supabase players into memory — one paginated fetch,
+  //    no per-player queries. Bypasses the 1,000 row cap.
+  log(`[import] Loading all existing Supabase players…`);
+  let existingPlayers;
+  try {
+    existingPlayers = await fetchAllSupabasePlayers(log);
+  } catch (err) {
+    log(`[import] FATAL: ${err.message}`);
+    throw err;
+  }
+  log(`[import] Loaded ${existingPlayers.length} existing Supabase players`);
 
-  // 3. Process each PodPlay user
+  // Build lookup maps for O(1) matching
+  const byExtId = new Map();   // external_id  → player row
+  const byPhone = new Map();   // phone        → player row
+  const byEmail = new Map();   // email        → player row
+
+  for (const p of existingPlayers) {
+    if (p.external_id) byExtId.set(p.external_id, p);
+    if (p.phone)       byPhone.set(p.phone, p);
+    if (p.email)       byEmail.set(p.email, p);
+  }
+
+  // 4. Classify every PodPlay user — no per-player DB queries needed
+  const toUpsert = [];    // already linked by external_id → UPDATE via upsert
+  const toLink   = [];    // matched by phone/email        → UPDATE individual (set external_id)
+  const toInsert = [];    // brand new                     → INSERT
+
   for (const user of podplayUsers) {
     if (await isCancelled()) throw new CancelledError();
 
     stats.processed++;
-    const externalId = String(user.id);
-    const name = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
-    const phone = formatPhone(user.phoneNumber);
-    const email = user.email ?? null;
+    const extId      = String(user.id);
+    const name       = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
+    const phone      = formatPhone(user.phoneNumber);
+    const email      = user.email ?? null;
     const membership = mapMembership(user.membershipType);
 
-    try {
-      // Check for existing player by external_id first (already imported → skip)
-      const { data: byExtId } = await supabase
-        .from("players")
-        .select("id, external_id")
-        .eq("external_id", externalId)
-        .maybeSingle();
+    const linked = byExtId.get(extId);
+    if (linked) {
+      // Already linked — queue an UPDATE (name, email, membership_status).
+      // This was previously a SKIP — fixed.
+      toUpsert.push({
+        external_id:       extId,
+        club_id:           CLUB_ID,
+        name,
+        email,
+        membership_status: membership,
+      });
+      continue;
+    }
 
-      if (byExtId) {
-        log(`[import] [${stats.processed}/${podplayUsers.length}] SKIP: ${name} (external_id already set)`);
-        stats.skipped++;
-        continue;
-      }
+    // Try to match by phone, then email, for players not yet linked
+    const phoneMatch = phone ? byPhone.get(phone) : null;
+    const emailMatch = email ? byEmail.get(email) : null;
+    const match = phoneMatch || emailMatch;
 
-      // Match by phone, then email
-      let existingPlayer = null;
-      if (phone) {
-        const { data } = await supabase
-          .from("players")
-          .select("id, external_id")
-          .eq("phone", phone)
-          .maybeSingle();
-        existingPlayer = data;
-      }
-      if (!existingPlayer && email) {
-        const { data } = await supabase
-          .from("players")
-          .select("id, external_id")
-          .eq("email", email)
-          .maybeSingle();
-        existingPlayer = data;
-      }
-
-      if (existingPlayer) {
-        const updatePayload = { external_id: externalId, membership_status: membership };
-        if (email) updatePayload.email = email;
-
-        const { error } = await supabase
-          .from("players")
-          .update(updatePayload)
-          .eq("id", existingPlayer.id);
-
-        if (error) {
-          log(`[import] [${stats.processed}/${podplayUsers.length}] ERROR updating ${name}: ${error.message}`);
-          stats.errors++;
-        } else {
-          log(`[import] [${stats.processed}/${podplayUsers.length}] UPDATE: ${name} → external_id=${externalId}`);
-          stats.updated++;
-        }
-      } else {
-        const insertPayload = {
-          club_id: CLUB_ID,
-          name,
-          phone,
-          external_id: externalId,
-          membership_status: membership,
-        };
-        if (email) insertPayload.email = email;
-
-        const { error } = await supabase
-          .from("players")
-          .insert(insertPayload);
-
-        if (error) {
-          log(`[import] [${stats.processed}/${podplayUsers.length}] ERROR creating ${name}: ${error.message}`);
-          stats.errors++;
-        } else {
-          log(`[import] [${stats.processed}/${podplayUsers.length}] CREATE: ${name} (external_id=${externalId})`);
-          stats.created++;
-        }
-      }
-    } catch (err) {
-      if (err.name === "CancelledError") throw err;
-      log(`[import] [${stats.processed}/${podplayUsers.length}] EXCEPTION for ${name}: ${err.message}`);
-      stats.errors++;
+    if (match) {
+      toLink.push({
+        id:                match.id,
+        external_id:       extId,
+        name,
+        email,
+        membership_status: membership,
+      });
+      // Keep Maps consistent so a second PodPlay user doesn't double-match
+      byExtId.set(extId, match);
+      if (phone) byPhone.set(phone, match);
+      if (email) byEmail.set(email, match);
+    } else {
+      toInsert.push({
+        club_id:           CLUB_ID,
+        external_id:       extId,
+        name,
+        phone,
+        email,
+        membership_status: membership,
+      });
     }
   }
 
-  log(`[import] ── Player import complete ──`);
-  log(`[import] Processed: ${stats.processed} | Created: ${stats.created} | Updated: ${stats.updated} | Skipped: ${stats.skipped} | Errors: ${stats.errors}`);
+  log(`[import] Classification: ${toUpsert.length} to update, ${toLink.length} to link, ${toInsert.length} to create`);
 
-  // 4. Sync attendance for all linked players (skipped when called from nightly chain)
+  // 5a. Batch upsert already-linked players on external_id
+  //     INSERT ... ON CONFLICT (external_id) DO UPDATE SET name, email, membership_status
+  if (toUpsert.length > 0) {
+    for (let i = 0; i < toUpsert.length; i += UPSERT_BATCH) {
+      if (await isCancelled()) throw new CancelledError();
+      const batch = toUpsert.slice(i, i + UPSERT_BATCH);
+      const { error } = await supabase
+        .from("players")
+        .upsert(batch, { onConflict: "external_id" });
+      if (error) {
+        log(`[import] UPSERT ERROR (batch ${Math.floor(i / UPSERT_BATCH) + 1}): ${error.message}`);
+        stats.errors += batch.length;
+      } else {
+        stats.updated += batch.length;
+      }
+    }
+    log(`[import] Updated ${stats.updated} already-linked players`);
+  }
+
+  // 5b. Link players matched by phone/email (individual updates — needs id)
+  for (const p of toLink) {
+    if (await isCancelled()) throw new CancelledError();
+    const updatePayload = { external_id: p.external_id, membership_status: p.membership_status, name: p.name };
+    if (p.email) updatePayload.email = p.email;
+
+    const { error } = await supabase
+      .from("players")
+      .update(updatePayload)
+      .eq("id", p.id);
+
+    if (error) {
+      log(`[import] LINK ERROR for id=${p.id}: ${error.message}`);
+      stats.errors++;
+    } else {
+      log(`[import] LINK: ${p.name} (id=${p.id}) → external_id=${p.external_id}`);
+      stats.linked++;
+    }
+  }
+
+  // 5c. Batch insert brand-new players
+  if (toInsert.length > 0) {
+    for (let i = 0; i < toInsert.length; i += UPSERT_BATCH) {
+      if (await isCancelled()) throw new CancelledError();
+      const batch = toInsert.slice(i, i + UPSERT_BATCH);
+      const { error } = await supabase
+        .from("players")
+        .insert(batch);
+      if (error) {
+        log(`[import] INSERT ERROR (batch ${Math.floor(i / UPSERT_BATCH) + 1}): ${error.message}`);
+        stats.errors += batch.length;
+      } else {
+        stats.created += batch.length;
+      }
+    }
+    log(`[import] Created ${stats.created} new players`);
+  }
+
+  log(`[import] ── Player import complete ──`);
+  log(`[import] Processed: ${stats.processed} | Updated: ${stats.updated} | Linked: ${stats.linked} | Created: ${stats.created} | Errors: ${stats.errors}`);
+
+  // 6. Sync attendance for all linked players (skipped when called from nightly chain)
   if (skipAttendanceSync) {
     log(`[import] Skipping attendance sync (handled by nightly event sync step)`);
     return stats;
@@ -209,33 +284,45 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] Starting attendance sync…`);
 
-  const { data: linkedPlayers, error: fetchErr } = await supabase
-    .from("players")
-    .select("id, external_id")
-    .not("external_id", "is", null);
-
-  if (fetchErr) {
-    log(`[import] ERROR fetching linked players: ${fetchErr.message}`);
-  } else {
-    log(`[import] Syncing attendance for ${linkedPlayers.length} players…`);
-
-    for (let i = 0; i < linkedPlayers.length; i++) {
-      if (await isCancelled()) throw new CancelledError();
-
-      const p = linkedPlayers[i];
-      try {
-        const result = await syncSinglePlayer(p.id, p.external_id);
-        await supabase
-          .from("players")
-          .update({ last_synced_at: new Date().toISOString() })
-          .eq("id", p.id);
-        stats.attendanceSynced++;
-        log(`[import] Attendance [${i + 1}/${linkedPlayers.length}] ${p.id}: inserted=${result.inserted}, lastVisit=${result.lastVisitDate ?? "—"}`);
-      } catch (err) {
-        if (err.name === "CancelledError") throw err;
-        stats.attendanceErrors++;
-        log(`[import] Attendance ERROR [${i + 1}/${linkedPlayers.length}] ${p.id}: ${err.message}`);
+  // Paginate linked players to bypass 1,000 row cap
+  const linkedPlayers = [];
+  {
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("id, external_id")
+        .not("external_id", "is", null)
+        .range(offset, offset + PAGE - 1);
+      if (error) {
+        log(`[import] ERROR fetching linked players (offset ${offset}): ${error.message}`);
+        break;
       }
+      linkedPlayers.push(...data);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+  }
+
+  log(`[import] Syncing attendance for ${linkedPlayers.length} players…`);
+
+  for (let i = 0; i < linkedPlayers.length; i++) {
+    if (await isCancelled()) throw new CancelledError();
+
+    const p = linkedPlayers[i];
+    try {
+      const result = await syncSinglePlayer(p.id, p.external_id);
+      await supabase
+        .from("players")
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq("id", p.id);
+      stats.attendanceSynced++;
+      log(`[import] Attendance [${i + 1}/${linkedPlayers.length}] ${p.id}: inserted=${result.inserted}, lastVisit=${result.lastVisitDate ?? "—"}`);
+    } catch (err) {
+      if (err.name === "CancelledError") throw err;
+      stats.attendanceErrors++;
+      log(`[import] Attendance ERROR [${i + 1}/${linkedPlayers.length}] ${p.id}: ${err.message}`);
     }
   }
 

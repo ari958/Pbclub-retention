@@ -162,17 +162,27 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   const clubTimezone = clubRow?.timezone ?? DEFAULT_TIMEZONE;
   log(`[sync/events] Using timezone: ${clubTimezone}`);
 
-  // Step 1: Build player lookup map
+  // Step 1: Build player lookup map — paginate to bypass Supabase's 1,000 row cap
   log("[sync/events] Loading players from Supabase…");
-  const { data: players, error: playersErr } = await getSupabase()
-    .from("players")
-    .select("id, external_id, name, last_visit_date")
-    .not("external_id", "is", null);
+  const allPlayers = [];
+  {
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await getSupabase()
+        .from("players")
+        .select("id, external_id, name, last_visit_date")
+        .not("external_id", "is", null)
+        .range(offset, offset + PAGE - 1);
+      if (error) throw new Error(`Failed to load players (offset ${offset}): ${error.message}`);
+      allPlayers.push(...data);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+  }
 
-  if (playersErr) throw new Error(`Failed to load players: ${playersErr.message}`);
-
-  const playerMap = new Map(players.map((p) => [p.external_id, p]));
-  log(`[sync/events] Loaded ${playerMap.size} linked players into lookup map`);
+  const playerMap = new Map(allPlayers.map((p) => [p.external_id, p]));
+  log(`[sync/events] Loaded ${playerMap.size} linked players into lookup map (${Math.ceil(playerMap.size / 1000)} page(s))`);
 
   // Track which players got new attendances this sync for win-back checks
   const newAttendancesByPlayer = new Map(); // player_id -> most recent attended_at
