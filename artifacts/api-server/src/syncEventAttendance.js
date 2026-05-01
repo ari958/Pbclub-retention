@@ -207,6 +207,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         .from("attendances")
         .upsert(batch, {
           onConflict: "player_id,program_name,attended_at",
+          ignoreDuplicates: true,
         });
       if (error) {
         log(`[sync/events] UPSERT ERROR (batch ${i / UPSERT_BATCH + 1}): ${error.message}`);
@@ -314,7 +315,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   log("[sync/events] Updating last_visit_date and checking win-backs…");
   let visitUpdates = 0;
 
-  for (const player of players) {
+  for (const player of allPlayers) {
     if (await isCancelled()) break;
 
     const { data: latest } = await getSupabase()

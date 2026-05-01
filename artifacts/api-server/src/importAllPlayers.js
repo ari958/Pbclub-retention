@@ -172,10 +172,9 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     const linked = byExtId.get(extId);
     if (linked) {
       // Already linked — queue an UPDATE (name, email, membership_status).
-      // This was previously a SKIP — fixed.
+      // This was previously a SKIP — fixed. Store id so we UPDATE by pk, not upsert.
       toUpsert.push({
-        external_id:       extId,
-        club_id:           CLUB_ID,
+        id:                linked.id,
         name,
         email,
         membership_status: membership,
@@ -214,24 +213,24 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] Classification: ${toUpsert.length} to update, ${toLink.length} to link, ${toInsert.length} to create`);
 
-  // 5a. Batch upsert already-linked players on external_id
-  //     INSERT ... ON CONFLICT (external_id) DO UPDATE SET name, email, membership_status
-  if (toUpsert.length > 0) {
-    for (let i = 0; i < toUpsert.length; i += UPSERT_BATCH) {
-      if (await isCancelled()) throw new CancelledError();
-      const batch = toUpsert.slice(i, i + UPSERT_BATCH);
-      const { error } = await supabase
-        .from("players")
-        .upsert(batch, { onConflict: "external_id" });
-      if (error) {
-        log(`[import] UPSERT ERROR (batch ${Math.floor(i / UPSERT_BATCH) + 1}): ${error.message}`);
-        stats.errors += batch.length;
-      } else {
-        stats.updated += batch.length;
-      }
+  // 5a. Update already-linked players — individual UPDATE by pk to satisfy RLS
+  //     (upsert uses INSERT ON CONFLICT DO UPDATE which fails the anon key INSERT policy)
+  for (const p of toUpsert) {
+    if (await isCancelled()) throw new CancelledError();
+    const payload = { name: p.name, membership_status: p.membership_status };
+    if (p.email) payload.email = p.email;
+    const { error } = await supabase
+      .from("players")
+      .update(payload)
+      .eq("id", p.id);
+    if (error) {
+      log(`[import] UPDATE ERROR for id=${p.id}: ${error.message}`);
+      stats.errors++;
+    } else {
+      stats.updated++;
     }
-    log(`[import] Updated ${stats.updated} already-linked players`);
   }
+  if (toUpsert.length > 0) log(`[import] Updated ${stats.updated} already-linked players`);
 
   // 5b. Link players matched by phone/email (individual updates — needs id)
   for (const p of toLink) {
