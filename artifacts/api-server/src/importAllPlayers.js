@@ -90,6 +90,120 @@ async function fetchAllSupabasePlayers(log) {
   return all;
 }
 
+// ─── DUPR ratings sync ────────────────────────────────────────────────────────
+// Runs as a separate pass after all player upserts complete.
+// Calls GET /apis/v2/users/{external_id}/ratings, finds the DUPR item,
+// and writes doubles rating + lastUpdated to players.dupr_rating / dupr_updated_at.
+// Rate limited to ~4 req/sec (250 ms delay) — well under PodPlay's 300 req/min cap.
+// Failures are logged and skipped; never blocks the main import.
+
+async function syncDuprRatings(log, isCancelled) {
+  const DELAY_MS = 250;
+  const stats = { fetched: 0, updated: 0, skipped: 0, errors: 0 };
+  let firstResponseLogged = false;
+
+  // Paginate all players that have a PodPlay external_id
+  const players = [];
+  {
+    let offset = 0;
+    const PAGE = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("id, external_id")
+        .not("external_id", "is", null)
+        .range(offset, offset + PAGE - 1);
+      if (error) {
+        log(`[dupr] ERROR fetching players (offset ${offset}): ${error.message}`);
+        break;
+      }
+      players.push(...data);
+      if (data.length < PAGE) break;
+      offset += PAGE;
+    }
+  }
+
+  log(`[dupr] Starting DUPR sync for ${players.length} players (250 ms delay between calls)…`);
+
+  const updates = []; // { id, dupr_rating, dupr_updated_at }
+
+  for (let i = 0; i < players.length; i++) {
+    if (await isCancelled()) throw new CancelledError();
+
+    const p = players[i];
+    try {
+      const res = await fetch(`${PODPLAY_BASE}/users/${p.external_id}/ratings`, {
+        headers: { "x-api-key": process.env.PODPLAY_API_KEY },
+        signal: AbortSignal.timeout(15_000),
+      });
+
+      // 404 = no ratings record at all — silent skip
+      if (res.status === 404) {
+        stats.skipped++;
+        if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped so far: ${stats.skipped}`);
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        continue;
+      }
+
+      if (!res.ok) {
+        log(`[dupr] WARN player ${p.id} HTTP ${res.status} — skipping`);
+        stats.skipped++;
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        continue;
+      }
+
+      const data = await res.json();
+      stats.fetched++;
+
+      // Log full response shape on first successful hit so we can verify field names
+      if (!firstResponseLogged) {
+        log(`[dupr] First /ratings response: ${JSON.stringify(data)}`);
+        firstResponseLogged = true;
+      }
+
+      const duprItem = (data.items ?? []).find(item => item.type === "DUPR");
+      if (!duprItem || duprItem.doubles == null) {
+        stats.skipped++;
+        await new Promise(r => setTimeout(r, DELAY_MS));
+        continue;
+      }
+
+      updates.push({
+        id: p.id,
+        dupr_rating: duprItem.doubles,
+        dupr_updated_at: duprItem.lastUpdated ?? new Date().toISOString(),
+      });
+
+      if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — rated so far: ${updates.length}`);
+    } catch (err) {
+      if (err.name === "CancelledError") throw err;
+      log(`[dupr] ERROR player ${p.id} (ext=${p.external_id}): ${err.message}`);
+      stats.errors++;
+    }
+
+    await new Promise(r => setTimeout(r, DELAY_MS));
+  }
+
+  log(`[dupr] Fetch pass complete — writing ${updates.length} ratings to DB…`);
+
+  for (const u of updates) {
+    if (await isCancelled()) throw new CancelledError();
+    const { error } = await supabase
+      .from("players")
+      .update({ dupr_rating: u.dupr_rating, dupr_updated_at: u.dupr_updated_at })
+      .eq("id", u.id);
+    if (error) {
+      log(`[dupr] DB UPDATE ERROR player ${u.id}: ${error.message}`);
+      stats.errors++;
+    } else {
+      stats.updated++;
+    }
+  }
+
+  log(`[dupr] ── DUPR sync complete — fetched: ${stats.fetched} | updated: ${stats.updated} | skipped: ${stats.skipped} | errors: ${stats.errors}`);
+  return stats;
+}
+
 // ─── Main import ──────────────────────────────────────────────────────────────
 
 /**
@@ -104,6 +218,8 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     updated: 0,
     linked: 0,       // matched by phone/email, external_id now set
     errors: 0,
+    duprUpdated: 0,
+    duprErrors: 0,
     attendanceSynced: 0,
     attendanceErrors: 0,
   };
@@ -272,6 +388,17 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] ── Player import complete ──`);
   log(`[import] Processed: ${stats.processed} | Updated: ${stats.updated} | Linked: ${stats.linked} | Created: ${stats.created} | Errors: ${stats.errors}`);
+
+  // 5d. DUPR ratings sync — separate pass, never blocks import on failure
+  log(`[import] ── Starting DUPR ratings sync ──`);
+  try {
+    const duprStats = await syncDuprRatings(log, isCancelled);
+    stats.duprUpdated = duprStats.updated;
+    stats.duprErrors  = duprStats.errors;
+  } catch (err) {
+    if (err.name === "CancelledError") throw err;
+    log(`[import] DUPR sync failed (non-fatal): ${err.message}`);
+  }
 
   // 6. Sync attendance for all linked players (skipped when called from nightly chain)
   if (skipAttendanceSync) {
