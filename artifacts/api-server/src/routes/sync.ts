@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { createClient } from "@supabase/supabase-js";
 // @ts-ignore — plain JS module
 import { syncSinglePlayer } from "../syncPlayerAttendance.js";
 // @ts-ignore — plain JS module
@@ -8,13 +7,9 @@ import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 import { runNightlyChain } from "../lib/scheduler";
 import { computeLevelConfidence } from "../lib/levelConfidence";
+import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
-);
 
 const SYNC_TIMEOUT_MS = 30_000;
 const STALE_HOURS = 6;

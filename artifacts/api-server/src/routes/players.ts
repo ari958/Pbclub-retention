@@ -1,16 +1,11 @@
 import { Router, type IRouter } from "express";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
 import { computeLevelConfidence } from "../lib/levelConfidence";
+import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY!
-);
 
 // ─── GET /api/players/:id/profile ────────────────────────────────────────────
 

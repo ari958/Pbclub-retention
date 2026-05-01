@@ -1,4 +1,3 @@
-import { createClient } from "@supabase/supabase-js";
 // @ts-ignore — plain JS module
 import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
@@ -6,6 +5,7 @@ import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
 import { logger } from "./logger";
+import { supabase } from "./supabaseClient";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -14,16 +14,9 @@ const JOB_EVENTS              = "sync_events";
 const JOB_CONFIDENCE_NIGHTLY  = "confidence_nightly";
 const INCREMENTAL_DAYS        = 14;
 
-function getSupabase() {
-  return createClient(
-    process.env.SUPABASE_URL!,
-    process.env.SUPABASE_ANON_KEY!
-  );
-}
-
 async function getClubSchedule(): Promise<{ scheduledTime: string; timezone: string } | null> {
   try {
-    const { data, error } = await getSupabase()
+    const { data, error } = await supabase
       .from("clubs")
       .select("scheduled_sync_time, timezone")
       .eq("id", CLUB_ID)
@@ -106,7 +99,7 @@ export async function runNightlyChain(): Promise<void> {
     await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS} days`);
     try {
       const cutoff = new Date(Date.now() - INCREMENTAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-      const { data: recentRows, error: recentErr } = await getSupabase()
+      const { data: recentRows, error: recentErr } = await supabase
         .from("attendances")
         .select("player_id")
         .gte("attended_at", cutoff)

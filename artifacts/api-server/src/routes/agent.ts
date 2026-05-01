@@ -1,17 +1,12 @@
 import { Router, type IRouter } from "express";
 import Anthropic from "@anthropic-ai/sdk";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { rateLimit } from "express-rate-limit";
 // @ts-ignore — plain JS module
 import { assembleProfile } from "../assembleProfile.js";
 // @ts-ignore — plain JS module
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
-);
+import { supabase } from "../lib/supabaseClient";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {

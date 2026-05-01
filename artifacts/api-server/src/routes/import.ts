@@ -1,17 +1,12 @@
 import { Router, type IRouter } from "express";
-import { createClient } from "@supabase/supabase-js";
 // @ts-ignore — plain JS module
 import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { importPhoneNumbers } from "../importPhoneNumbers.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
+import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_ANON_KEY!
-);
 
 const JOB_IMPORT_PLAYERS = "import_players";
 const JOB_IMPORT_PHONES  = "import_phones";

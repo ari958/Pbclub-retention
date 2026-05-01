@@ -1,15 +1,9 @@
 import { Router, type IRouter } from "express";
 import twilio from "twilio";
-import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
+import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
-
-// Use service role key server-side so writes always succeed regardless of RLS
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY!
-);
 
 function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;

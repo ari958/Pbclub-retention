@@ -1,7 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { createClient } from "@supabase/supabase-js";
 import { startScheduler } from "./lib/scheduler";
+import { supabase } from "./lib/supabaseClient";
 
 const rawPort = process.env["PORT"];
 
@@ -39,17 +39,6 @@ const BUILTIN_TEMPLATES = [
 ];
 
 async function seedBuiltinTemplates() {
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseKey) {
-    logger.warn("Supabase credentials not set — skipping template seed");
-    return;
-  }
-
-  const supabase = createClient(supabaseUrl, supabaseKey);
-
   const { data, error } = await supabase
     .from("message_templates")
     .select("id")
