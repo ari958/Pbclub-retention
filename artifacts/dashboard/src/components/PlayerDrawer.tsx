@@ -178,8 +178,12 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
       return;
     }
     setLoadingData(true);
-    // Fetch taxonomy (doesn't change between players)
-    supabase.from("level_taxonomy").select("level, rank").order("rank", { ascending: true })
+    // Fetch taxonomy scoped to this club
+    supabase
+      .from("level_taxonomy")
+      .select("level, rank")
+      .eq("club_id", "c8976e15-e002-4619-bb4b-b1a70f5cd7ab")
+      .order("rank", { ascending: true })
       .then(({ data }) => { if (data) setTaxonomy(data as TaxonomyRow[]); });
 
     Promise.all([
@@ -692,42 +696,87 @@ export function PlayerDrawer({ playerId, onClose, onDataChanged }: PlayerDrawerP
               </div>
 
               {/* Level Confidence Scores */}
-              {(loadingConfidence || confidence.length > 0) && (
-                <div style={{ marginBottom: 14 }}>
-                  <label style={{ display: "block", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
-                    Level Confidence
-                  </label>
-                  {loadingConfidence ? (
-                    <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>Computing…</div>
-                  ) : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                      {confidence.map((row) => {
-                        const tier = row.score >= 60 ? "trusted" : row.score >= 40 ? "emerging" : row.certainty < 0.2 ? "unknown" : "new";
-                        const tierColor = tier === "trusted" ? "var(--state-active)" : tier === "emerging" ? "var(--state-lapsing)" : "var(--text-tertiary)";
-                        const barWidth = Math.min(100, row.score);
-                        return (
-                          <div key={row.level}>
-                            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 3 }}>
-                              <span style={{ fontSize: 12, color: "var(--text-primary)" }}>{row.level}</span>
-                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: tierColor, fontWeight: 600 }}>
-                                  {tier}
-                                </span>
-                                <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>
-                                  {row.score.toFixed(0)}
-                                </span>
-                              </div>
-                            </div>
-                            <div style={{ height: 4, borderRadius: 2, background: "var(--border)", overflow: "hidden" }}>
-                              <div style={{ height: "100%", width: `${barWidth}%`, background: tierColor, borderRadius: 2, transition: "width 400ms ease" }} />
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  Level Confidence
+                </label>
+                {loadingConfidence ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[120, 80, 100].map((w, i) => (
+                      <div key={i}>
+                        <div className="skeleton-bar" style={{ width: w, height: 11, borderRadius: 3, marginBottom: 4 }} />
+                        <div className="skeleton-bar" style={{ width: "100%", height: 4, borderRadius: 2 }} />
+                      </div>
+                    ))}
+                  </div>
+                ) : confidence.filter((r) => r.sessions > 0).length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                    No sessions recorded yet
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {confidence.filter((r) => r.sessions > 0).map((row) => {
+                      // 5-tier system
+                      let tier: string;
+                      if      (row.score >= 60 && row.certainty >= 0.6) tier = "trusted";
+                      else if (row.score >= 60)                          tier = "promising";
+                      else if (row.score >= 40)                          tier = "emerging";
+                      else if (row.certainty >= 0.3)                     tier = "misfit";
+                      else                                               tier = "unknown";
+
+                      // bar colour: green ≥60, amber 40-59, red <40
+                      const barColor =
+                        row.score >= 60 ? "#2ea043" :
+                        row.score >= 40 ? "#e8a838" :
+                        "#cf222e";
+
+                      // tier label colour matches bar
+                      const tierColor =
+                        row.score >= 60 ? "#2ea043" :
+                        row.score >= 40 ? "#e8a838" :
+                        "#cf222e";
+
+                      // certainty label
+                      const certLabel =
+                        row.certainty > 0.6 ? "high" :
+                        row.certainty >= 0.3 ? "moderate" :
+                        "low";
+
+                      return (
+                        <div key={row.level}>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 3 }}>
+                            <span style={{ fontSize: 12, color: "var(--text-primary)", fontWeight: 500 }}>
+                              {row.level}
+                            </span>
+                            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                              <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)" }}>
+                                {row.sessions}s · {certLabel}
+                              </span>
+                              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: tierColor, fontWeight: 600 }}>
+                                {tier}
+                              </span>
+                              <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", minWidth: 22, textAlign: "right" }}>
+                                {row.score.toFixed(0)}
+                              </span>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
+                          <div style={{ height: 4, borderRadius: 2, background: "var(--border)", overflow: "hidden" }}>
+                            <div
+                              style={{
+                                height: "100%",
+                                width: `${Math.min(100, row.score)}%`,
+                                background: barColor,
+                                borderRadius: 2,
+                                transition: "width 400ms ease",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
               {/* Notes */}
               <div>

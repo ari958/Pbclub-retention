@@ -8,10 +8,11 @@ import { computeLevelConfidence } from "./levelConfidence";
 import { logger } from "./logger";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
-const JOB_NIGHTLY        = "nightly_sync";
-const JOB_IMPORT         = "import_players";
-const JOB_EVENTS         = "sync_events";
-const INCREMENTAL_DAYS   = 14;
+const JOB_NIGHTLY             = "nightly_sync";
+const JOB_IMPORT              = "import_players";
+const JOB_EVENTS              = "sync_events";
+const JOB_CONFIDENCE_NIGHTLY  = "confidence_nightly";
+const INCREMENTAL_DAYS        = 14;
 
 function getSupabase() {
   return createClient(
@@ -100,23 +101,32 @@ export async function runNightlyChain(): Promise<void> {
       throw err;
     }
 
-    // Step 3: Incremental confidence recompute for players with recent sessions
+    // Step 3: Incremental confidence recompute for players with recent tagged sessions
+    await startJob(JOB_CONFIDENCE_NIGHTLY);
+    await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS} days`);
     try {
       const cutoff = new Date(Date.now() - INCREMENTAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
-      const { data: recentRows } = await getSupabase()
+      const { data: recentRows, error: recentErr } = await getSupabase()
         .from("attendances")
         .select("player_id")
         .gte("attended_at", cutoff)
-        .not("player_id", "is", null);
+        .not("player_id", "is", null)
+        .not("level", "is", null);         // only players with level-tagged records
+
+      if (recentErr) throw new Error(recentErr.message);
 
       const recentPlayerIds = [...new Set((recentRows ?? []).map((r: any) => r.player_id as string))];
-      await appendJobLog(JOB_NIGHTLY, `Recomputing confidence for ${recentPlayerIds.length} players with recent sessions`);
+      await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputing confidence for ${recentPlayerIds.length} players`);
 
       for (const pid of recentPlayerIds) {
         await computeLevelConfidence(pid);
       }
-      await appendJobLog(JOB_NIGHTLY, `Recomputed confidence for ${recentPlayerIds.length} players`);
+
+      await finishJob(JOB_CONFIDENCE_NIGHTLY, "done", { players_computed: recentPlayerIds.length });
+      await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputed confidence for ${recentPlayerIds.length} players`);
+      await appendJobLog(JOB_NIGHTLY, `Step 3 complete — confidence recomputed for ${recentPlayerIds.length} players`);
     } catch (err: any) {
+      await finishJob(JOB_CONFIDENCE_NIGHTLY, "error", undefined, err.message);
       await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
     }
 

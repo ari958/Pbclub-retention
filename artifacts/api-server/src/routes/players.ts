@@ -100,15 +100,17 @@ router.patch("/players/:id/coach-level", async (req, res) => {
   }
   const { coach_assigned_level, coach_level_notes, coach_level_set_by } = parsed.data;
 
-  // Validate level exists in taxonomy
+  // Validate level exists in taxonomy for this club
+  const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
   const { data: taxRow } = await supabase
     .from("level_taxonomy")
     .select("level")
     .eq("level", coach_assigned_level)
+    .eq("club_id", CLUB_ID)
     .maybeSingle();
 
   if (!taxRow) {
-    res.status(400).json({ error: `Level "${coach_assigned_level}" not found in level_taxonomy` });
+    res.status(400).json({ error: `Level "${coach_assigned_level}" not found in level_taxonomy for this club` });
     return;
   }
 
@@ -155,10 +157,11 @@ router.get("/players/:id/confidence", async (req, res) => {
     return;
   }
 
-  // Fetch taxonomy for rank ordering
+  // Fetch taxonomy for rank ordering (scoped to this club)
   const { data: taxonomy } = await supabase
     .from("level_taxonomy")
     .select("level, rank")
+    .eq("club_id", "c8976e15-e002-4619-bb4b-b1a70f5cd7ab")
     .order("rank", { ascending: true });
 
   const taxMap = new Map<string, number>(

@@ -317,7 +317,8 @@ router.post("/sync/level-confidence", async (_req, res) => {
       const { data: rows, error } = await supabase
         .from("attendances")
         .select("player_id")
-        .not("player_id", "is", null);
+        .not("player_id", "is", null)
+        .not("level", "is", null);          // only players with tagged attendance
 
       if (error) throw new Error(error.message);
 

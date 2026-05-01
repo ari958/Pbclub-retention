@@ -53,22 +53,27 @@ You will receive a JSON object with the following fields:
 - progression_status: "ready-to-advance" | "developing" | "at-ceiling" | null
 - notes: string or null — freeform coach or staff observations about this player
 - coach_assigned_level: string or null — the level a coach has formally assigned to this player
-- level_confidence: array of objects with fields: level, score, certainty, tier
-  - tier values: "trusted" (score ≥ 60), "emerging" (score 40–59), "new" (score < 40), "unknown" (low certainty + low score)
+- level_confidence: array of objects per level the player has attended:
+    { level, score, certainty, sessions, tier }
+    tier is one of: "trusted" | "promising" | "emerging" | "misfit" | "unknown"
+    (see LEVEL TRUST RULES below for definitions)
 
 ---
 
 LEVEL TRUST RULES
-Each player has a confidence score per level they have played. Use it as follows:
+Each player has a level_confidence array. Each entry has a tier computed from score and certainty:
 
-- trusted (score ≥ 60, certainty ≥ 0.6): You may treat this player as a confirmed player at that level when selecting programs.
-- trusted (score ≥ 60, certainty < 0.6): Recommend freely but data is thin — do not name them to others as confirmed.
-- emerging (score 40–59): Recommend programs at this level freely. If no coach assignment exists, gently mention the placement rally option.
-- new/unknown (score < 40 OR certainty < 0.2): Do not recommend programs above the coach_assigned_level. Surface the placement rally as the first step. Never recommend a level more than one step above coach_assigned_level.
+- trusted  (score ≥ 60, certainty ≥ 0.6): Recommend freely. May refer to this player as confirmed at this level when talking to staff.
+- promising (score ≥ 60, certainty < 0.6): Recommend freely. Do not name to others as confirmed yet — data is still thin.
+- emerging  (score 40–59): Recommend freely. If no coach_assigned_level exists, gently surface a placement rally as an optional next step.
+- misfit    (score < 40, certainty ≥ 0.3): Do not recommend programs at this level. Surface coach_assigned_level programs instead. Flag for staff review.
+- unknown   (score < 40, certainty < 0.3): Do not recommend any level program. Surface the placement rally as the first step before any other recommendation.
 
-If a player is booking at a level that is 2+ steps above their coach_assigned_level, do not recommend continuing at that level. Instead surface programs at the coach-assigned level and phrase it positively: "There are some great [coach level] sessions coming up that would be a strong fit for where you are right now."
+If a player's booking level is 2 or more ranks above their coach_assigned_level, do not recommend continuing at the booking level. Pivot to coach_assigned_level programs. Frame positively: "There are some great [coach level] sessions coming up that would be a strong fit right now."
 
-Never mention the confidence score number itself to the player.
+Never mention confidence score numbers to the player.
+Never use the word "misfit" in player-facing messages.
+Always frame level guidance as opportunity, not limitation.
 
 ---
 
@@ -123,7 +128,13 @@ Return only a valid JSON object. No preamble, no explanation outside the JSON.
   "progression_routing": "ready-to-advance" | "developing" | "at-ceiling" | "lateral-default",
   "recommended_programs": ["program name 1", "program name 2"],
   "message": "The SMS message text",
-  "reasoning": "1–2 sentences explaining why you selected these programs for this player"
+  "reasoning": "1–2 sentences explaining why you selected these programs for this player",
+  "level_assessment": {
+    "primary_level": "the level with the highest trusted/promising tier, or highest score if none",
+    "tier": "the tier of the primary level",
+    "coach_assigned": "coach_assigned_level value or null",
+    "level_mismatch": true | false
+  }
 }`;
 
 router.post("/agent/run", agentRateLimit, async (req, res) => {
@@ -207,12 +218,18 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   const levelConfidenceForAgent = levelConfidenceRows.map((row) => {
     let tier: string;
-    if (row.score >= 60 && row.certainty >= 0.6) tier = "trusted";
-    else if (row.score >= 60) tier = "trusted";
-    else if (row.score >= 40) tier = "emerging";
-    else if (row.certainty < 0.2) tier = "unknown";
-    else tier = "new";
-    return { level: row.level, score: row.score, certainty: row.certainty, tier };
+    if      (row.score >= 60 && row.certainty >= 0.6) tier = "trusted";
+    else if (row.score >= 60)                          tier = "promising";
+    else if (row.score >= 40)                          tier = "emerging";
+    else if (row.certainty >= 0.3)                     tier = "misfit";
+    else                                               tier = "unknown";
+    return {
+      level:     row.level,
+      score:     row.score,
+      certainty: row.certainty,
+      sessions:  row.sessions,
+      tier,
+    };
   });
 
   const playerProfileForAgent = {

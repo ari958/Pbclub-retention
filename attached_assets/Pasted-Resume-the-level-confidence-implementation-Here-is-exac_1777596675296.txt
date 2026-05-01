@@ -1,0 +1,152 @@
+Resume the level confidence implementation. Here is exactly 
+what was completed and what remains.
+
+COMPLETED:
+- syncEventAttendance.js: extracts skill level from event.tags,
+  writes level field to attendances table, upsert backfills 
+  existing rows
+- levelConfidence.ts: reads attendances.level, scoring math 
+  C1-C4 complete
+
+REMAINING — complete these sections in order without stopping:
+
+SECTION 2 — Batch recompute route
+Add to artifacts/api-server/src/routes/sync.ts:
+
+POST /api/sync/level-confidence
+- Returns 202 immediately, runs in background
+- Job id: 'compute_confidence'
+- Fetches all distinct player_ids from attendances WHERE 
+  level IS NOT NULL
+- Calls computeLevelConfidence(playerId) for each
+- Logs progress every 50 players: 
+  "Computed confidence for 50/2001 players..."
+- finishJob with stats: { players_computed: N }
+- Wrap in try/catch, finishJob with error on failure
+
+GET /api/sync/level-confidence/status
+- Returns jobStore state for 'compute_confidence'
+
+SECTION 3 — Wire into nightly chain
+In artifacts/api-server/src/lib/scheduler.ts, add Step 3 
+to runNightlyChain after syncEventAttendance completes:
+
+- Query: SELECT DISTINCT player_id FROM attendances 
+  WHERE attended_at >= now() - interval '14 days'
+  AND level IS NOT NULL
+- For each player_id: await computeLevelConfidence(playerId)
+- Log: "Recomputed confidence for N players"
+- Use startJob/finishJob with job id 'confidence_nightly'
+- Insert that job row: 
+  INSERT INTO jobs (id) VALUES ('confidence_nightly') 
+  ON CONFLICT (id) DO NOTHING;
+
+SECTION 4 — Coach assignment API
+Create artifacts/api-server/src/routes/players.ts:
+
+PATCH /api/players/:id/coach-level
+Body: { coach_assigned_level, coach_level_notes, 
+        coach_level_set_by }
+- Validate coach_assigned_level exists in level_taxonomy 
+  for club_id = 'c8976e15-e002-4619-bb4b-b1a70f5cd7ab'
+- Update players row: set coach_assigned_level, 
+  coach_level_notes, coach_level_set_by, 
+  coach_level_set_at = now()
+- Call computeLevelConfidence(id) after saving
+- Return updated player + level_confidence rows
+- Use service role Supabase client
+
+GET /api/players/:id/confidence
+- Return all level_confidence rows for this player
+- Join level_taxonomy for rank ordering
+- Order by level_taxonomy.rank ASC
+- Include: level, score, certainty, sessions, 
+  peer_positive, peer_total, last_computed
+
+PATCH /api/players/:id (extend or create if missing)
+Body: { dupr_rating }
+- Sets dupr_rating and dupr_updated_at = now()
+- Calls computeLevelConfidence(id) after saving
+
+Register the players router in 
+artifacts/api-server/src/index.ts at /api/players
+
+SECTION 5 — Dashboard: coach assignment UI
+In artifacts/dashboard/src/pages/Players.tsx, inside the 
+existing player detail drawer, add a "Level Assessment" 
+section after the progression status field:
+
+Coach-assigned level:
+- Row of pill buttons, one per level from level_taxonomy 
+  ordered by rank
+- Fetch taxonomy on drawer open from 
+  GET /api/players/{id}/confidence
+- Selected pill (coach_assigned_level) shows blue background
+- Clicking a pill calls PATCH /api/players/:id/coach-level
+- Inline saving spinner while request is in flight
+
+Coach notes textarea below pills:
+- Bound to coach_level_notes
+- Auto-saves on blur, shows "Saved ✓" for 2s
+
+Confidence scores panel below coach section:
+- Title: "Level confidence"
+- Only show levels where sessions > 0
+- Per level row: level name, score bar (width = score%), 
+  score number
+- Bar color: green ≥60, amber 40-59, red <40
+- Certainty label: "high" >0.6, "moderate" 0.3-0.6, 
+  "low" <0.3
+- Empty state: "No sessions recorded yet"
+- Skeleton loader while fetching
+
+SECTION 6 — Agent prompt integration
+In the file that assembles player context before calling 
+the Claude API, add to the player context object:
+
+level_confidence: rows mapped to:
+  { level, score, certainty, sessions, tier }
+  where tier = 'trusted' if score>=60 && certainty>=0.6
+              'promising' if score>=60 && certainty<0.6
+              'emerging' if score>=40
+              'misfit' if score<40 && certainty>=0.3
+              'unknown' if score<40 && certainty<0.3
+
+coach_assigned_level: player.coach_assigned_level ?? null
+
+Then add this block to the agent system prompt in the 
+program recommendation section:
+
+LEVEL TRUST RULES:
+trusted (score≥60, certainty≥0.6): recommend freely, 
+  may name player to others as confirmed at this level
+promising (score≥60, certainty<0.6): recommend freely,
+  do not name to others yet
+emerging (score 40-59): recommend freely, nudge toward
+  placement rally if no coach assignment
+misfit (score<40, certainty≥0.3): do not recommend this
+  level, surface coach_assigned_level instead, staff flag
+unknown (score<40, certainty<0.3): surface placement 
+  rally before any program recommendation
+
+If booking level is 2+ ranks above coach_assigned_level:
+  do not recommend — pivot to coach_assigned_level programs
+Never mention score numbers to the player.
+Never use the word "misfit" in player-facing messages.
+Always frame level guidance as opportunity, not limitation.
+
+Add level_assessment to agent reasoning JSON output:
+{
+  "level_assessment": {
+    "primary_level": "Low Intermediate",
+    "tier": "trusted",
+    "coach_assigned": "Low Intermediate",
+    "level_mismatch": false
+  }
+}
+
+COMPLETION REQUIREMENTS:
+- Complete all sections without stopping
+- If blocked on one item, skip it, note it, continue
+- Final summary: every file modified, any skips and why,
+  confirm the two Supabase job rows to insert manually
