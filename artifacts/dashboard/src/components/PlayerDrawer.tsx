@@ -220,17 +220,20 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
 
   // Taxonomy depends on clubId — waits until club is known before fetching
   useEffect(() => {
-    console.log("[taxonomy] effect fired, clubId:", clubId, "playerId:", playerId);
-    if (!playerId || !clubId) return;
-    (async () => {
-      const { data, error } = await supabase
-        .from("level_taxonomy")
-        .select("level, rank")
-        .eq("club_id", clubId)
-        .order("rank", { ascending: true });
-      console.log("[taxonomy] result:", data, "error:", error);
-      if (data) setTaxonomy(data as TaxonomyRow[]);
-    })();
+    console.log("[taxonomy] effect fired — clubId:", clubId, "playerId:", playerId);
+    if (!playerId || !clubId) {
+      console.log("[taxonomy] bailing — missing id");
+      return;
+    }
+    supabase
+      .from("level_taxonomy")
+      .select("level, rank")
+      .eq("club_id", clubId)
+      .order("rank", { ascending: true })
+      .then(({ data, error }) => {
+        console.log("[taxonomy] data:", data, "error:", error);
+        if (data) setTaxonomy(data as TaxonomyRow[]);
+      });
   }, [playerId, clubId]);
 
   const updateProgression = async (val: ProgressionStatus) => {
