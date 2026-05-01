@@ -740,6 +740,7 @@ export default function Dashboard() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [messages, setMessages] = useState<MessageQueueItem[]>([]);
   const [clubName, setClubName] = useState("");
+  const [clubId, setClubId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
@@ -764,7 +765,7 @@ export default function Dashboard() {
 
   const fetchData = useCallback(async () => {
     const [clubRes, outboundRes, inboundRes, winbackData] = await Promise.all([
-      supabase.from("clubs").select("name").limit(1).maybeSingle(),
+      supabase.from("clubs").select("id, name").limit(1).maybeSingle(),
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "outbound")
         .eq("status", "sent")
@@ -789,6 +790,7 @@ export default function Dashboard() {
     }
     setPlayers(allPlayers);
     if (clubRes.data?.name) setClubName(clubRes.data.name);
+    if (clubRes.data?.id) setClubId(clubRes.data.id);
     const outCount = outboundRes.count ?? 0;
     const inCount = inboundRes.count ?? 0;
     setResponseRate(outCount > 0 ? Math.round((inCount / outCount) * 100) : null);
@@ -955,7 +957,7 @@ export default function Dashboard() {
           </div>
         </main>
       </div>
-      <PlayerDrawer playerId={drawerPlayerId} onClose={() => setDrawerPlayerId(null)} onDataChanged={fetchData} />
+      <PlayerDrawer playerId={drawerPlayerId} clubId={clubId} onClose={() => setDrawerPlayerId(null)} onDataChanged={fetchData} />
       {confirmDialog && <ConfirmDialog message={confirmDialog.message} onConfirm={confirmDialog.onConfirm} onCancel={() => setConfirmDialog(null)} />}
     </div>
   );
