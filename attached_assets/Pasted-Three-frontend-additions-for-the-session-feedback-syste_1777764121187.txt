@@ -1,0 +1,188 @@
+Three frontend additions for the session feedback system. Keep all 
+changes scoped — do not touch bulk messaging templates or any 
+existing template UI.
+
+--- PART 1: SEED THE FEEDBACK TEMPLATE ---
+
+In artifacts/api-server/src/migrate_templates.mjs (or a new 
+migrate_feedback_template.mjs following the same pattern), add a 
+seed for the session feedback template if it doesn't already exist:
+
+{
+  name: "Post-Session Feedback",
+  body: "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n1️⃣ Did you feel like YOU belonged at this level?\n2️⃣ Did the OTHER players belong at this level?\n\nReply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'",
+  use_case_tags: ["session_feedback"],
+  is_builtin: false
+}
+
+is_builtin: false so staff can edit the wording.
+Only insert if no row with use_case_tags containing "session_feedback" 
+already exists.
+
+Run this migration on server startup (same pattern as existing 
+migrate_templates.mjs).
+
+--- PART 2: UPDATE postSessionFeedback.ts TO USE THE TEMPLATE ---
+
+In artifacts/api-server/src/lib/postSessionFeedback.ts, replace 
+the hardcoded buildFeedbackMessage() function with a Supabase 
+lookup:
+
+async function getFeedbackTemplate(): Promise<string> {
+  const { data } = await supabase
+    .from("message_templates")
+    .select("body")
+    .contains("use_case_tags", ["session_feedback"])
+    .limit(1)
+    .single();
+  // Fallback to hardcoded if template not found
+  return data?.body ?? 
+    "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n1️⃣ Did you feel like YOU belonged at this level?\n2️⃣ Did the OTHER players belong at this level?\n\nReply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'";
+}
+
+Then in sendFeedbackForEvent(), call getFeedbackTemplate() once 
+before the player loop and replace {{first_name}} and {{level}} 
+for each player:
+
+const templateBody = await getFeedbackTemplate();
+// ... then for each player:
+const messageBody = templateBody
+  .replace(/\{\{first_name\}\}/g, firstName)
+  .replace(/\{\{level\}\}/g, level!);
+
+Remove the old buildFeedbackMessage() function entirely.
+
+--- PART 3: NEW PAGE — Session Feedback (new file) ---
+
+Create artifacts/dashboard/src/pages/SessionFeedback.tsx
+
+This page has two sections side by side: Session Health on the 
+left (60%), Template Editor on the right (40%).
+
+Follow the exact same styling patterns as Dashboard.tsx and 
+Players.tsx — same CSS variables, same filterSelectStyle, same 
+ActionBtn component pattern, same header/sidebar layout.
+
+SECTION A — SESSION HEALTH TABLE (left, 60%)
+
+Header: "Session Feedback" with a mono badge showing total 
+sessions with feedback in the last 30 days.
+
+Fetch from Supabase:
+SELECT 
+  sf.event_id,
+  sf.level,
+  COUNT(*) as total_responses,
+  SUM(sf.self_fit) as self_fit_yes,
+  SUM(sf.others_fit) as others_fit_yes,
+  MIN(sf.responded_at) as first_response
+FROM session_feedback sf
+GROUP BY sf.event_id, sf.level
+ORDER BY first_response DESC
+LIMIT 50
+
+Do this via a direct Supabase query using .select() with 
+aggregates — if Supabase client doesn't support this cleanly, 
+fetch raw rows and aggregate in JS instead.
+
+For each session row show:
+- Level badge (colored by level — use same color logic as 
+  skill_level elsewhere, or just use var(--accent) for all)
+- Date (from first_response, formatted as "Apr 28")
+- Self fit %: (self_fit_yes / total_responses * 100) rounded, 
+  shown as "82% felt they belonged"
+- Others fit %: (others_fit_yes / total_responses * 100) rounded,
+  shown as "76% said others belonged"
+- Response count: "4 responses" in mono secondary color
+- Warning flag: if others_fit % < 60 OR self_fit % < 60, show 
+  an amber ⚠️ badge: "Review needed"
+
+Sort: most recent first by default.
+Filter: dropdown for level (All Levels, Beginner, Advanced 
+Beginner, Low Intermediate, Intermediate, Advanced Intermediate, 
+Advanced).
+
+SECTION B — FEEDBACK TEMPLATE EDITOR (right, 40%)
+
+Header: "Feedback Message Template"
+
+Fetch template: GET /api/templates filtered to 
+use_case_tags containing "session_feedback" only.
+Show only session_feedback templates — never show bulk or other 
+templates here.
+
+Display:
+- Template name (editable text input)
+- Template body (editable textarea, 8 rows)
+- Available variables shown below the textarea as small mono 
+  chips: {{first_name}}  {{level}}
+- Save button (calls PATCH /api/templates/:id)
+- If is_builtin is true, show read-only with a note 
+  "Built-in — cannot be edited" (though our seed sets 
+  is_builtin: false so this is just a safety guard)
+- Success/error toast on save (follow existing toast pattern)
+
+--- PART 4: MISFIT BADGE ON PLAYERS PAGE ---
+
+In artifacts/dashboard/src/pages/Players.tsx, add a misfit 
+signal to the player rows.
+
+On data fetch, also query:
+SELECT player_id, COUNT(*) as misfit_count
+FROM session_feedback
+WHERE self_fit = 0
+GROUP BY player_id
+HAVING COUNT(*) >= 2
+
+Store as a Set<string> of player_ids with 2+ self-reported 
+misfits: misfitPlayerIds.
+
+In the player row, in the PLAYER name cell (after the name div), 
+add:
+{misfitPlayerIds.has(p.id) && (
+  <span style={{
+    fontSize: 10,
+    fontFamily: "var(--font-mono)",
+    padding: "1px 5px",
+    borderRadius: 3,
+    background: "rgba(212,129,58,0.10)",
+    color: "var(--state-lapsing)",
+    border: "1px solid rgba(212,129,58,0.25)",
+    marginTop: 2,
+    display: "inline-block"
+  }}>
+    ⚠ level concern
+  </span>
+)}
+
+Also add a "Level concern" filter option to the existing 
+filter bar:
+<select value={misfitFilter} onChange={...}>
+  <option value="">All players</option>
+  <option value="misfit">Level concern only</option>
+</select>
+
+When misfitFilter === "misfit", filter displayed list to only 
+players in misfitPlayerIds.
+
+--- PART 5: ADD ROUTE TO SIDEBAR AND ROUTER ---
+
+In artifacts/dashboard/src/components/Sidebar.tsx, add a nav 
+link for "Session Feedback" below the existing nav items.
+
+In artifacts/dashboard/src/App.tsx (or wherever routes are 
+defined), add the route:
+import SessionFeedback from "./pages/SessionFeedback";
+<Route path="/feedback" element={<SessionFeedback />} />
+
+--- ARCHITECTURE NOTES ---
+- use_case_tags is the scoping mechanism — never fetch templates 
+  without filtering by tag
+- Session feedback templates never appear in bulk messaging UI 
+  and vice versa
+- The Supabase query for misfit badges runs once on page load 
+  alongside the players fetch — no separate polling
+- Follow existing CSS variable patterns exactly — no new colors 
+  or font sizes
+- The template editor saves via PATCH /api/templates/:id — same 
+  endpoint as existing templates, just scoped by tag on fetch

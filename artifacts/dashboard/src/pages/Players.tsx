@@ -172,10 +172,12 @@ export default function Players() {
   const [clubName, setClubName] = useState("");
   const [clubId, setClubId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [misfitPlayerIds, setMisfitPlayerIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [engFilter, setEngFilter] = useState("");
   const [progFilter, setProgFilter] = useState("");
   const [memberFilter, setMemberFilter] = useState("");
+  const [misfitFilter, setMisfitFilter] = useState("");
   const [sortCol, setSortCol] = useState<SortCol>("state");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
@@ -203,6 +205,21 @@ export default function Players() {
     }
     setPlayers(allPlayers);
     setLoading(false);
+
+    // Misfit query: players with 2+ self-reported level mismatches
+    const { data: misfitRows } = await supabase
+      .from("session_feedback")
+      .select("player_id")
+      .eq("self_fit", 0);
+    const counts = new Map<string, number>();
+    for (const row of (misfitRows ?? []) as { player_id: string }[]) {
+      counts.set(row.player_id, (counts.get(row.player_id) ?? 0) + 1);
+    }
+    const ids = new Set<string>();
+    for (const [id, count] of counts) {
+      if (count >= 2) ids.add(id);
+    }
+    setMisfitPlayerIds(ids);
   };
 
   useEffect(() => {
@@ -220,15 +237,16 @@ export default function Players() {
   };
 
   // Reset page when filters change
-  useEffect(() => { setPage(1); }, [search, engFilter, progFilter, memberFilter]);
+  useEffect(() => { setPage(1); }, [search, engFilter, progFilter, memberFilter, misfitFilter]);
 
-  const hasFilters = search || engFilter || progFilter || memberFilter;
+  const hasFilters = search || engFilter || progFilter || memberFilter || misfitFilter;
 
   const clearFilters = () => {
     setSearch("");
     setEngFilter("");
     setProgFilter("");
     setMemberFilter("");
+    setMisfitFilter("");
     setPage(1);
   };
 
@@ -244,6 +262,7 @@ export default function Players() {
     }
     if (memberFilter === "member") list = list.filter((p) => p.membership_status === "member");
     if (memberFilter === "non-member") list = list.filter((p) => p.membership_status !== "member");
+    if (misfitFilter === "misfit") list = list.filter((p) => misfitPlayerIds.has(p.id));
 
     list.sort((a, b) => {
       let cmp = 0;
@@ -273,7 +292,7 @@ export default function Players() {
     });
 
     return list;
-  }, [players, search, engFilter, progFilter, memberFilter, sortCol, sortDir]);
+  }, [players, search, engFilter, progFilter, memberFilter, misfitFilter, misfitPlayerIds, sortCol, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(displayed.length / PAGE_SIZE));
   const paginated = displayed.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -397,6 +416,10 @@ export default function Players() {
                 <option value="">All members</option>
                 <option value="member">Member</option>
                 <option value="non-member">Non-member</option>
+              </select>
+              <select value={misfitFilter} onChange={(e) => setMisfitFilter(e.target.value)} style={selectStyle}>
+                <option value="">All players</option>
+                <option value="misfit">Level concern only</option>
               </select>
               {hasFilters && (
                 <button
@@ -524,13 +547,37 @@ export default function Players() {
                           <td
                             style={{
                               padding: "12px 16px",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
                               borderLeft: `3px solid ${STATE_ROW_BORDER[state]}`,
                             }}
                           >
-                            <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
+                            <div
+                              style={{
+                                fontWeight: 500,
+                                fontSize: 13,
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                                whiteSpace: "nowrap",
+                              }}
+                            >
+                              {p.name}
+                            </div>
+                            {misfitPlayerIds.has(p.id) && (
+                              <span
+                                style={{
+                                  fontSize: 10,
+                                  fontFamily: "var(--font-mono)",
+                                  padding: "1px 5px",
+                                  borderRadius: 3,
+                                  background: "rgba(212,129,58,0.10)",
+                                  color: "var(--state-lapsing)",
+                                  border: "1px solid rgba(212,129,58,0.25)",
+                                  marginTop: 2,
+                                  display: "inline-block",
+                                }}
+                              >
+                                ⚠ level concern
+                              </span>
+                            )}
                           </td>
                           <td style={{ padding: "12px 16px" }}>
                             <StatePill state={state} />

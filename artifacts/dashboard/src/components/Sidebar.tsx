@@ -52,6 +52,7 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
     { label: "Dashboard", path: "/" },
     { label: "Players", path: "/players" },
     { label: "Assessments", path: "/assessments" },
+    { label: "Session Feedback", path: "/feedback" },
     {
       label: "Messages",
       path: "/messages",

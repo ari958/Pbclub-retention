@@ -7,13 +7,20 @@ const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function buildFeedbackMessage(firstName: string, level: string): string {
-  return (
-    `Hi ${firstName}! Quick question about today's ${level} session 🎾\n\n` +
-    `1️⃣ Did you feel like YOU belonged at this level?\n` +
-    `2️⃣ Did the OTHER players belong at this level?\n\n` +
-    `Reply with 2 numbers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'`
-  );
+const FEEDBACK_FALLBACK =
+  "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n" +
+  "1️⃣ Did you feel like YOU belonged at this level?\n" +
+  "2️⃣ Did the OTHER players belong at this level?\n\n" +
+  "Reply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'";
+
+async function getFeedbackTemplate(): Promise<string> {
+  const { data } = await supabase
+    .from("message_templates")
+    .select("body")
+    .contains("use_case_tags", ["session_feedback"])
+    .limit(1)
+    .maybeSingle();
+  return data?.body ?? FEEDBACK_FALLBACK;
 }
 
 /**
@@ -151,11 +158,14 @@ export async function sendFeedbackForEvent(
     `${eligible.length} eligible / ${playerIds.length} total attendees`
   );
 
+  const templateBody = await getFeedbackTemplate();
   const twilioAvailable = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 
   for (const player of eligible) {
     const firstName = (player.name as string).split(" ")[0];
-    const messageBody = buildFeedbackMessage(firstName, level!);
+    const messageBody = templateBody
+      .replace(/\{\{first_name\}\}/g, firstName)
+      .replace(/\{\{level\}\}/g, level!);
 
     try {
       // Create a conversation tagged as session_feedback

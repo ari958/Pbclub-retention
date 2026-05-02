@@ -38,6 +38,37 @@ const BUILTIN_TEMPLATES = [
   },
 ];
 
+async function seedFeedbackTemplate() {
+  const { data, error } = await supabase
+    .from("message_templates")
+    .select("id")
+    .contains("use_case_tags", ["session_feedback"])
+    .limit(1);
+
+  if (error) {
+    logger.warn({ err: error.message }, "Could not check feedback template — skipping seed");
+    return;
+  }
+
+  if (data && data.length > 0) {
+    logger.info("Feedback template already seeded — skipping");
+    return;
+  }
+
+  const { error: insertErr } = await supabase.from("message_templates").insert({
+    name: "Post-Session Feedback",
+    body: "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n1️⃣ Did you feel like YOU belonged at this level?\n2️⃣ Did the OTHER players belong at this level?\n\nReply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'",
+    use_case_tags: ["session_feedback"],
+    is_builtin: false,
+  });
+
+  if (insertErr) {
+    logger.error({ err: insertErr.message }, "Failed to seed feedback template");
+  } else {
+    logger.info("Post-Session Feedback template seeded");
+  }
+}
+
 async function seedBuiltinTemplates() {
   const { data, error } = await supabase
     .from("message_templates")
@@ -75,5 +106,6 @@ app.listen(port, async (err) => {
   logger.info({ port }, "Server listening");
 
   await seedBuiltinTemplates();
+  await seedFeedbackTemplate();
   startScheduler();
 });

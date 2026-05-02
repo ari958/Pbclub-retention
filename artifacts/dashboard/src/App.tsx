@@ -6,6 +6,7 @@ import Players from "./pages/Players";
 import Assessments from "./pages/Assessments";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
+import SessionFeedback from "./pages/SessionFeedback";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 // Catches runtime errors in any page so a crash in one doesn't blank the whole app.
@@ -165,6 +166,14 @@ export default function App() {
             element={
               <ErrorBoundary pageName="Settings">
                 <Settings />
+              </ErrorBoundary>
+            }
+          />
+          <Route
+            path="/feedback"
+            element={
+              <ErrorBoundary pageName="Session Feedback">
+                <SessionFeedback />
               </ErrorBoundary>
             }
           />
