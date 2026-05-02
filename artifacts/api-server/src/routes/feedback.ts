@@ -36,4 +36,45 @@ router.post("/feedback/send-post-session", async (req, res) => {
   })();
 });
 
+// ─── Test / dev routes ────────────────────────────────────────────────────────
+
+/**
+ * POST /api/feedback/test/send-event
+ * Body: { event_id: string }
+ * Sends feedback texts for a specific event immediately.
+ */
+router.post("/feedback/test/send-event", async (req, res) => {
+  const { event_id } = req.body as { event_id?: string };
+
+  if (!event_id) {
+    res.status(400).json({ error: "event_id is required" });
+    return;
+  }
+
+  try {
+    const log = (msg: string) => req.log.info(msg);
+    const stats = await sendFeedbackForEvent(event_id, log);
+    res.json({ success: true, stats });
+  } catch (err: any) {
+    req.log.error({ err }, "[feedback/test] send-event failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/feedback/test/poll-now
+ * Triggers a 2-hour lookback immediately — useful for testing against
+ * events that already ended without waiting for the 30-minute poller.
+ */
+router.post("/feedback/test/poll-now", async (req, res) => {
+  try {
+    const log = (msg: string) => req.log.info(msg);
+    const result = await sendFeedbackForRecentEvents(log, 2);
+    res.json({ success: true, result });
+  } catch (err: any) {
+    req.log.error({ err }, "[feedback/test] poll-now failed");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;

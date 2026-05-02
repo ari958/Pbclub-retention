@@ -1,0 +1,58 @@
+Two changes to the scheduler and one new test route.
+
+--- CHANGE 1: ADD A FEEDBACK POLLER (runs every 30 minutes) ---
+
+In artifacts/api-server/src/lib/scheduler.ts, add a second interval 
+alongside the existing nightly scheduler.
+
+Add this to the startScheduler() function, after the existing 
+setInterval for the nightly chain:
+
+  // Feedback poller — runs every 30 minutes, independent of nightly chain
+  setInterval(async () => {
+    try {
+      const fbLog = (msg: string) => logger.info(msg);
+      const result = await sendFeedbackForRecentEvents(fbLog, 0.5);
+      // windowHours = 0.5 = look back 30 minutes only
+      if (result.eventsFound > 0) {
+        logger.info(result, "[feedback-poller] Feedback texts triggered");
+      }
+    } catch (err) {
+      logger.error({ err }, "[feedback-poller] Error — will retry next interval");
+    }
+  }, 30 * 60 * 1000); // every 30 minutes
+
+  logger.info("[scheduler] Feedback poller started — checking every 30 minutes");
+
+Also REMOVE Step 4 from runNightlyChain() entirely — the poller 
+replaces it. The nightly chain no longer needs to call 
+sendFeedbackForRecentEvents.
+
+--- CHANGE 2: ADD TEST ROUTES ---
+
+In artifacts/api-server/src/routes/feedback.ts, add these two 
+test endpoints below the existing POST /send-post-session route:
+
+POST /api/feedback/test/send-event
+Body: { event_id: string }
+Does exactly what the poller does but for a specific event_id.
+Calls sendFeedbackForEvent(event_id) directly.
+Returns: { success: true, stats: { sent, skipped, errors } }
+No auth required — this is a dev/test tool.
+
+POST /api/feedback/test/poll-now
+No body required.
+Triggers sendFeedbackForRecentEvents with windowHours = 2 
+(2-hour lookback so you can test against events that already ended).
+Returns: { success: true, result: { eventsFound, totalSent, totalSkipped, totalErrors } }
+No auth required — this is a dev/test tool.
+
+These endpoints bypass the 30-minute timer so you can test 
+immediately without waiting for the next poll interval.
+
+--- ARCHITECTURE NOTES ---
+- Do not change postSessionFeedback.ts at all
+- sendFeedbackForRecentEvents already accepts windowHours as a 
+  second parameter — use that, do not add new parameters
+- The poller should be silent (no log) when eventsFound === 0 
+  to avoid log spam every 30 minutes

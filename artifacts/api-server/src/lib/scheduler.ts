@@ -124,22 +124,6 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
     }
 
-    // Step 4: Post-session feedback texts for events that ended in the last 2 hours
-    try {
-      await appendJobLog(JOB_NIGHTLY, "Step 4: triggering post-session feedback");
-      const fbLog = (msg: string) => appendJobLog(JOB_NIGHTLY, msg);
-      const fbResult = await sendFeedbackForRecentEvents(fbLog);
-      await appendJobLog(
-        JOB_NIGHTLY,
-        `Step 4 complete — events: ${fbResult.eventsFound} sent: ${fbResult.totalSent} ` +
-        `skipped: ${fbResult.totalSkipped} errors: ${fbResult.totalErrors}`
-      );
-      logger.info(fbResult, "[scheduler] Post-session feedback triggered for events ending in last 2 hours");
-    } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY, `Post-session feedback error (non-fatal): ${err.message}`);
-      logger.warn({ err }, "[scheduler] Post-session feedback step failed (non-fatal)");
-    }
-
     // Mark nightly_sync done
     await finishJob(JOB_NIGHTLY, "done");
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
@@ -154,6 +138,22 @@ export async function runNightlyChain(): Promise<void> {
 
 export function startScheduler(): void {
   logger.info("[scheduler] Scheduler started — checking every 60s");
+
+  // Feedback poller — runs every 30 minutes, independent of nightly chain
+  setInterval(async () => {
+    try {
+      const fbLog = (msg: string) => logger.info(msg);
+      const result = await sendFeedbackForRecentEvents(fbLog, 0.5);
+      // windowHours = 0.5 = look back 30 minutes only
+      if (result.eventsFound > 0) {
+        logger.info(result, "[feedback-poller] Feedback texts triggered");
+      }
+    } catch (err) {
+      logger.error({ err }, "[feedback-poller] Error — will retry next interval");
+    }
+  }, 30 * 60 * 1000); // every 30 minutes
+
+  logger.info("[scheduler] Feedback poller started — checking every 30 minutes");
 
   setInterval(async () => {
     try {
