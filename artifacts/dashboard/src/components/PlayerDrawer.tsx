@@ -220,18 +220,13 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
 
   // Taxonomy depends on clubId — waits until club is known before fetching
   useEffect(() => {
-    console.log("[taxonomy] effect fired — clubId:", clubId, "playerId:", playerId);
-    if (!playerId || !clubId) {
-      console.log("[taxonomy] bailing — missing id");
-      return;
-    }
+    if (!playerId || !clubId) return;
     supabase
       .from("level_taxonomy")
       .select("level, rank")
       .eq("club_id", clubId)
       .order("rank", { ascending: true })
-      .then(({ data, error }) => {
-        console.log("[taxonomy] data:", data, "error:", error);
+      .then(({ data }) => {
         if (data) setTaxonomy(data as TaxonomyRow[]);
       });
   }, [playerId, clubId]);

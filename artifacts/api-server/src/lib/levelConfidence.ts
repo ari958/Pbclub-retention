@@ -19,7 +19,7 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
       .from("attendances")
       .select("level, attended_at")
       .eq("player_id", playerId)
-      .not("level", "is", null),          // only rows with a real level tag
+      .not("level", "is", null),
   ]);
 
   if (playerRes.error || !playerRes.data) {
@@ -34,10 +34,8 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
   const player = playerRes.data;
   const attendances: { level: string; attended_at: string }[] = attRes.data ?? [];
 
-  // Nothing to score — no tagged attendance rows yet
   if (attendances.length === 0) return;
 
-  // Group by level tag
   const byLevel = new Map<string, { sessions: number; lastAt: string }>();
   for (const att of attendances) {
     const cur = byLevel.get(att.level);
@@ -51,19 +49,33 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
 
   const [taxRes, fbRes] = await Promise.all([
     supabase.from("level_taxonomy").select("level, rank"),
-    supabase.from("session_feedback").select("level, fit_rating").eq("player_id", playerId),
+    supabase
+      .from("session_feedback")
+      .select("level, self_fit, others_fit")
+      .eq("player_id", playerId),
   ]);
 
   const taxMap = new Map<string, number>(
     (taxRes.data ?? []).map((t: any) => [t.level as string, t.rank as number])
   );
 
-  const fbMap = new Map<string, { positive: number; total: number }>();
+  // Build separate maps for the two signals
+  const othersFbMap = new Map<string, { positive: number; total: number }>();
+  const selfFbMap   = new Map<string, { positive: number; total: number }>();
+
   for (const fb of fbRes.data ?? []) {
-    const cur = fbMap.get(fb.level) ?? { positive: 0, total: 0 };
-    cur.total++;
-    if (fb.fit_rating === 1) cur.positive++;
-    fbMap.set(fb.level, cur);
+    if (fb.others_fit !== null && fb.others_fit !== undefined) {
+      const cur = othersFbMap.get(fb.level) ?? { positive: 0, total: 0 };
+      cur.total++;
+      if (fb.others_fit === 1) cur.positive++;
+      othersFbMap.set(fb.level, cur);
+    }
+    if (fb.self_fit !== null && fb.self_fit !== undefined) {
+      const cur = selfFbMap.get(fb.level) ?? { positive: 0, total: 0 };
+      cur.total++;
+      if (fb.self_fit === 1) cur.positive++;
+      selfFbMap.set(fb.level, cur);
+    }
   }
 
   const coachLevel: string | null = player.coach_assigned_level ?? null;
@@ -82,10 +94,22 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
     const C1_raw = 25 * Math.log(sessions + 1) / Math.log(11);
     const C1 = C1_raw * Math.exp(-0.5 * daysSinceLast / 180);
 
-    // C2 — Peer fit (max 25 pts)
-    // needs ≥3 feedback samples; defaults to 12.5 (neutral) below that
-    const fb = fbMap.get(level) ?? { positive: 0, total: 0 };
-    const C2 = fb.total >= 3 ? 25 * (fb.positive / fb.total) : 12.5;
+    // C2 — Peer fit (max 25 pts total, split: 60% others-signal + 40% self-signal)
+    // Requires ≥3 samples per signal before exiting neutral-prior mode (12.5 pts each at 50%).
+    // others_fit is weighted higher (60%) because peer consensus is more objective.
+    // self_fit is weighted lower (40%) because players often underestimate themselves.
+    const othersFb = othersFbMap.get(level) ?? { positive: 0, total: 0 };
+    const selfFb   = selfFbMap.get(level)   ?? { positive: 0, total: 0 };
+
+    const othersScore = othersFb.total >= 3
+      ? 25 * 0.6 * (othersFb.positive / othersFb.total)
+      : 12.5 * 0.6;
+
+    const selfScore = selfFb.total >= 3
+      ? 25 * 0.4 * (selfFb.positive / selfFb.total)
+      : 12.5 * 0.4;
+
+    const C2 = othersScore + selfScore;
 
     // C3 — Coach assignment (max 35 pts)
     // full credit when coach level == booking level; -40% per level of distance;
@@ -114,10 +138,13 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
 
     const score = Math.min(100, C1 + C2 + C3 + C4);
 
+    // Use the larger of the two sample sizes for certainty so both signals count
+    const fbTotal = Math.max(othersFb.total, selfFb.total);
+
     // Certainty — weighted composite of data quality across all four signals
     const certainty =
       Math.min(1.0, sessions / 10) * 0.25 +
-      Math.min(1.0, fb.total / 5)  * 0.30 +
+      Math.min(1.0, fbTotal / 5)   * 0.30 +
       (coachLevel !== null ? 1.0 : 0) * 0.35 +
       (duprRating  !== null ? 0.5 : 0) * 0.10;
 
@@ -126,8 +153,8 @@ export async function computeLevelConfidence(playerId: string): Promise<void> {
       level,
       sessions,
       days_since_last: Math.round(daysSinceLast),
-      peer_positive: fb.positive,
-      peer_total: fb.total,
+      peer_positive: othersFb.positive,   // others signal is the primary/objective measure
+      peer_total: othersFb.total,
       score: Math.round(score * 100) / 100,
       certainty: Math.round(certainty * 1000) / 1000,
       last_computed: new Date().toISOString(),

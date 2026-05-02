@@ -9,6 +9,7 @@ import importRouter from "./import";
 import adminRouter from "./admin";
 import templatesRouter from "./templates";
 import eventsRouter from "./events";
+import feedbackRouter from "./feedback";
 
 const router: IRouter = Router();
 
@@ -22,5 +23,6 @@ router.use(importRouter);
 router.use(adminRouter);
 router.use(templatesRouter);
 router.use(eventsRouter);
+router.use(feedbackRouter);
 
 export default router;

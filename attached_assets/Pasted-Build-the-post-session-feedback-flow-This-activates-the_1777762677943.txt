@@ -1,0 +1,110 @@
+Build the post-session feedback flow. This activates the C2 signal in our level confidence scoring system.
+
+--- WHAT IT DOES ---
+After a leveled session ends, send a 2-question SMS to every attendee. Their replies write to session_feedback and feed the C2 peer fit signal in levelConfidence.ts.
+
+--- WHICH EVENTS GET FEEDBACK TEXTS ---
+Only send for events where extractSkillLevel(event.tags) returns a real skill level.
+SKIP the event entirely if the level is: null, "All Levels", "All Level", or empty string.
+These events have no level to validate — do not send feedback texts for them.
+
+--- THE TWO-QUESTION FORMAT ---
+Send as a SINGLE message with two questions:
+
+"Hi {first_name}! Quick question about today's {level} session 🎾
+
+1️⃣ Did you feel like YOU belonged at this level?
+2️⃣ Did the OTHER players belong at this level?
+
+Reply with 2 numbers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'"
+
+--- REPLY PARSING ---
+Accept flexible replies. Parse the two answers from the reply text:
+- First token = self-fit, second token = others-fit
+- Accept: Y/N, 1/2, YES/NO (case-insensitive)
+  Y, 1, YES → 1 (belonged)
+  N, 2, NO  → 0 (did not belong)
+- If reply can't be parsed into exactly 2 answers → send:
+  "Thanks! Just reply with two answers like 'Y Y' or 'N Y' — first for yourself, second for the other players."
+  Do not write to session_feedback yet, keep conversation open for retry.
+
+--- SESSION_FEEDBACK TABLE ---
+The table needs two columns for the two signals. Run this migration in Supabase:
+
+CREATE TABLE IF NOT EXISTS session_feedback (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id uuid REFERENCES players(id) ON DELETE CASCADE,
+  event_id text NOT NULL,
+  level text NOT NULL,
+  self_fit integer CHECK (self_fit IN (0, 1)),
+  others_fit integer CHECK (others_fit IN (0, 1)),
+  responded_at timestamptz DEFAULT now(),
+  UNIQUE(player_id, event_id)
+);
+ALTER TABLE session_feedback ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE ON session_feedback TO service_role;
+GRANT SELECT ON session_feedback TO anon;
+
+--- C2 SCORING — HOW TO USE BOTH SIGNALS ---
+In levelConfidence.ts, the C2 calculation uses BOTH columns:
+
+For a given player X at level Y:
+  others_fit responses = SELECT others_fit FROM session_feedback WHERE player_id=X AND level=Y AND others_fit IS NOT NULL
+  self_fit responses   = SELECT self_fit FROM session_feedback WHERE player_id=X AND level=Y AND self_fit IS NOT NULL
+
+  others_positive = COUNT where others_fit = 1
+  others_total    = COUNT of others_fit responses
+  self_positive   = COUNT where self_fit = 1
+  self_total      = COUNT of self_fit responses
+
+  If others_total >= 3:
+    others_score = 25 × 0.6 × (others_positive / others_total)   ← 60% weight on what others thought of them
+  Else:
+    others_score = 12.5 × 0.6   ← neutral prior
+
+  If self_total >= 3:
+    self_score = 25 × 0.4 × (self_positive / self_total)   ← 40% weight on self-assessment
+  Else:
+    self_score = 12.5 × 0.4   ← neutral prior
+
+  C2 = others_score + self_score   (still max 25 pts total)
+
+Note: self_fit is weighted lower (40%) because players often underestimate themselves.
+Others_fit is weighted higher (60%) because peer consensus is more objective.
+
+--- NEW ROUTE ---
+POST /api/feedback/send-post-session in artifacts/api-server/src/routes/feedback.ts (create this file)
+
+1. Accept optional body { event_id }
+   - If event_id provided: process that one event only
+   - If omitted: process all events that ended in the last 2 hours
+2. For each event: call extractSkillLevel(event.tags) — SKIP if null / "All Levels" / "All Level" / empty
+3. Check pending_sends for existing feedback messages for this event — skip if already sent
+4. Get attendees: SELECT p.id, p.phone, p.first_name FROM attendances a JOIN players p ON p.id = a.player_id WHERE a.event_id = {event_id} AND p.phone IS NOT NULL
+5. For each attendee: create pending_sends record with type = 'session_feedback' and metadata = { event_id, level } (add JSONB metadata column to pending_sends if it doesn't exist: ALTER TABLE pending_sends ADD COLUMN IF NOT EXISTS metadata JSONB)
+6. Send immediately via Twilio — do not wait for nightly queue
+7. Write Twilio SID to messages table as normal
+
+--- INBOUND REPLY HANDLER ---
+In POST /api/messages/webhook/inbound, add a branch:
+
+If the most recent outbound message to this player has type = 'session_feedback' AND session_feedback for this player+event does not already exist:
+  1. Parse the two-part reply as described above
+  2. If unparseable: send retry prompt, return early
+  3. Look up event_id and level from pending_sends metadata
+  4. INSERT into session_feedback: { player_id, event_id, level, self_fit, others_fit, responded_at: now() }
+     ON CONFLICT (player_id, event_id) DO UPDATE SET self_fit, others_fit, responded_at
+  5. Call computeLevelConfidence(player_id) to immediately recompute their score
+  6. Reply: "Thanks! That really helps us keep sessions great for everyone 🙌"
+
+--- NIGHTLY CHAIN ---
+Add Step 4 to runNightlyChain in artifacts/api-server/src/lib/scheduler.ts:
+  After level confidence recompute: call POST /api/feedback/send-post-session (no body)
+  Log: "Post-session feedback triggered for events ending in last 2 hours"
+
+--- ARCHITECTURE NOTES ---
+- NEVER create an inline Supabase client — import from src/lib/supabaseClient.ts
+- Level always from event.tags via extractSkillLevel() — never parse from program name
+- Add route in server.ts: app.use('/api/feedback', feedbackRouter)
+- CHECK constraint on self_fit and others_fit: both must be 0 or 1
+- The UNIQUE(player_id, event_id) constraint prevents double-counting if player replies twice

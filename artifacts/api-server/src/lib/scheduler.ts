@@ -4,6 +4,7 @@ import { importAllPlayers } from "../importAllPlayers.js";
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
+import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 
@@ -123,7 +124,23 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
     }
 
-    // Step 4: Mark nightly_sync done
+    // Step 4: Post-session feedback texts for events that ended in the last 2 hours
+    try {
+      await appendJobLog(JOB_NIGHTLY, "Step 4: triggering post-session feedback");
+      const fbLog = (msg: string) => appendJobLog(JOB_NIGHTLY, msg);
+      const fbResult = await sendFeedbackForRecentEvents(fbLog);
+      await appendJobLog(
+        JOB_NIGHTLY,
+        `Step 4 complete — events: ${fbResult.eventsFound} sent: ${fbResult.totalSent} ` +
+        `skipped: ${fbResult.totalSkipped} errors: ${fbResult.totalErrors}`
+      );
+      logger.info(fbResult, "[scheduler] Post-session feedback triggered for events ending in last 2 hours");
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Post-session feedback error (non-fatal): ${err.message}`);
+      logger.warn({ err }, "[scheduler] Post-session feedback step failed (non-fatal)");
+    }
+
+    // Mark nightly_sync done
     await finishJob(JOB_NIGHTLY, "done");
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
     logger.info("[scheduler] Nightly chain completed");

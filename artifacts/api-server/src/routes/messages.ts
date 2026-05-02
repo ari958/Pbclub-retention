@@ -1,18 +1,11 @@
 import { Router, type IRouter } from "express";
-import twilio from "twilio";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
+import { getTwilioClient, sendViaTwilio } from "../lib/twilio";
+import { computeLevelConfidence } from "../lib/levelConfidence";
+import { parseFeedbackReply } from "../lib/postSessionFeedback";
 
 const router: IRouter = Router();
-
-function getTwilioClient() {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-  if (!accountSid || !authToken) {
-    throw new Error("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be set");
-  }
-  return twilio(accountSid, authToken);
-}
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
@@ -50,35 +43,6 @@ function interpolate(body: string, player: any): string {
     .replace(/\{\{skill_level\}\}/gi, skillLevel)
     .replace(/\{\{last_visit\}\}/gi, lastVisit)
     .replace(/\{\{club_name\}\}/gi, "PB Club");
-}
-
-async function sendViaTwilio(to: string, body: string): Promise<string> {
-  const client = getTwilioClient();
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  const from = process.env.TWILIO_PHONE_NUMBER;
-  const statusCallbackUrl = process.env.PUBLIC_API_URL
-    ? `${process.env.PUBLIC_API_URL}/api/messages/webhook/status`
-    : undefined;
-
-  let msg;
-  if (messagingServiceSid) {
-    msg = await client.messages.create({
-      body,
-      to,
-      messagingServiceSid,
-      shortenUrls: true,
-      ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
-    });
-  } else {
-    msg = await client.messages.create({
-      body,
-      to,
-      from: from!,
-      ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
-    });
-  }
-
-  return msg.sid;
 }
 
 // ─── POST /api/messages/send ─────────────────────────────────────────────────
@@ -462,7 +426,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   // Look up player by phone — try with and without leading +1
   const { data: player } = await supabase
     .from("players")
-    .select("id, name, sms_opt_in, club_id")
+    .select("id, name, phone, sms_opt_in, club_id")
     .or(`phone.eq.${From},phone.eq.${From.replace(/^\+1/, "")}`)
     .limit(1)
     .maybeSingle();
@@ -513,6 +477,115 @@ router.post("/messages/webhook/inbound", async (req, res) => {
     res.setHeader("Content-Type", "text/xml");
     res.status(200).send("<Response></Response>");
     return;
+  }
+
+  // ── Session feedback reply ──
+  // Check whether the most recent outbound to this player was a session_feedback request
+  // that hasn't yet received a response.
+  const { data: pendingFeedback } = await supabase
+    .from("pending_sends")
+    .select("id, metadata, conversation_id")
+    .eq("player_id", player.id)
+    .eq("type", "session_feedback")
+    .order("sent_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (pendingFeedback?.metadata) {
+    const meta = pendingFeedback.metadata as { event_id: string; level: string };
+
+    // Check if they already submitted feedback for this event
+    const { data: existingFb } = await supabase
+      .from("session_feedback")
+      .select("id")
+      .eq("player_id", player.id)
+      .eq("event_id", meta.event_id)
+      .maybeSingle();
+
+    if (!existingFb) {
+      // Thread reply into the feedback conversation
+      const conversationId: string | undefined =
+        pendingFeedback.conversation_id ?? undefined;
+
+      await supabase.from("messages").insert({
+        conversation_id: conversationId,
+        body: Body,
+        direction: "inbound",
+        sent_by: "player",
+        status: "sent",
+      });
+
+      const parsed = parseFeedbackReply(Body);
+
+      if (!parsed) {
+        // Unparseable — send retry prompt and leave the conversation open
+        const retryMsg =
+          "Thanks! Just reply with two answers like 'Y Y' or 'N Y' — " +
+          "first for yourself, second for the other players.";
+        try {
+          const sid = await sendViaTwilio(From, retryMsg);
+          await supabase.from("messages").insert({
+            conversation_id: conversationId,
+            body: retryMsg,
+            direction: "outbound",
+            sent_by: "system",
+            status: "sent",
+            twilio_message_sid: sid,
+            sent_at: new Date().toISOString(),
+          });
+        } catch (err) {
+          req.log.error({ err }, "Feedback retry prompt send failed");
+        }
+        res.setHeader("Content-Type", "text/xml");
+        res.status(200).send("<Response></Response>");
+        return;
+      }
+
+      // Valid reply — persist to session_feedback
+      await supabase.from("session_feedback").upsert(
+        {
+          player_id: player.id,
+          event_id: meta.event_id,
+          level: meta.level,
+          self_fit: parsed.self_fit,
+          others_fit: parsed.others_fit,
+          responded_at: new Date().toISOString(),
+        },
+        { onConflict: "player_id,event_id" }
+      );
+
+      // Recompute confidence in background — don't block the webhook response
+      computeLevelConfidence(player.id).catch((err) =>
+        req.log.error({ err }, "Confidence recompute failed after feedback reply")
+      );
+
+      // Send thanks
+      const thanksMsg = "Thanks! That really helps us keep sessions great for everyone 🙌";
+      try {
+        const sid = await sendViaTwilio(From, thanksMsg);
+        const sentAt = new Date().toISOString();
+        await supabase.from("messages").insert({
+          conversation_id: conversationId,
+          body: thanksMsg,
+          direction: "outbound",
+          sent_by: "system",
+          status: "sent",
+          twilio_message_sid: sid,
+          sent_at: sentAt,
+        });
+        await supabase.from("players").update({ last_outbound_at: sentAt }).eq("id", player.id);
+      } catch (err) {
+        req.log.error({ err }, "Thanks message send failed");
+      }
+
+      req.log.info(
+        { player_id: player.id, event_id: meta.event_id, ...parsed },
+        "Session feedback recorded"
+      );
+      res.setHeader("Content-Type", "text/xml");
+      res.status(200).send("<Response></Response>");
+      return;
+    }
   }
 
   // ── Regular reply: thread into most recent conversation ──
