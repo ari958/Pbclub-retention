@@ -1,0 +1,247 @@
+We are applying a consistent dark theme and UX polish across 
+all remaining pages of Pulse. The Dashboard was just rebuilt 
+with a full dark theme — all other pages must now match it 
+exactly. Users are club owners and coaches. The product should 
+feel like a premium tool, not a developer admin panel.
+
+DESIGN SYSTEM — apply consistently to ALL pages:
+Background: #161b22 (page bg), #0f1117 (cards/panels/topbar)
+Borders: #30363d (primary), #1e2530 (inner/subtle)
+Text: #e6edf3 (primary), #8b949e (secondary/labels)
+Accent: #E8A838 (amber — buttons, links, active states)
+Green: #2ea043, Orange: #d4813a, Red: #cf222e
+Font: DM Sans (existing)
+All pages: marginLeft 240px, same topbar pattern as dashboard
+Topbar: background #0f1117, border-bottom 1px solid #30363d,
+  title 14px fontWeight 600 color #fff
+
+SHARED COMPONENT RULES:
+Buttons — primary: #E8A838 bg, #0f1117 text, fontWeight 600
+  ghost: #1e2530 bg, #30363d border, #8b949e text
+  danger: #1e2530 bg on rest, rgba(207,34,46,0.15) on hover,
+  #ff6b6b text on hover
+Pills — same as dashboard: Inactive red, Drifting orange, 
+  Active green, all with low-opacity backgrounds
+Cards/panels — #0f1117 bg, #30363d border, 8px borderRadius
+Table rows — border-bottom #1e2530, hover background #161b22
+  Row left border accent by status (same as before)
+Filter chips — replace ALL dropdown selects with toggleable 
+  chips: background #1e2530, border #30363d, color #8b949e,
+  active state: background rgba(232,168,56,0.12), 
+  border #E8A838, color #E8A838
+Inputs/textareas — background #1e2530, border #30363d, 
+  color #e6edf3, borderRadius 6px, padding 8px 12px
+  focus: border-color #E8A838, outline none
+
+--- PAGE 1: PLAYERS (artifacts/dashboard/src/pages/Players.tsx) ---
+
+GOAL: The most-used page after the dashboard. Coaches come 
+here to find a specific player or browse by status. It should 
+feel like a fast, searchable roster — not a spreadsheet.
+
+Changes:
+1. Dark theme throughout — page bg #161b22, table bg #0f1117
+2. Topbar: "Players" title left, count right in mono secondary
+3. Filter bar: replace all 4 dropdown selects with chip groups:
+   Row 1 status chips: All · Active · Drifting · Inactive · 
+   Never Visited · Level Concern
+   Row 2 progress chips: All · Needs Attention · Move Up a Level
+   · Still Developing · At Their Level
+   Row 3 member toggle: All · Members · Non-members
+   Search input stays — dark styled
+4. Table header row: background #0f1117, border-bottom #30363d,
+   column labels in 10px mono uppercase #8b949e
+5. Player name cell: name in #e6edf3 500, skill level sub-label
+   in 10px #8b949e. If level concern flag: amber ⚠ chip inline
+6. Status pills: dark versions (same as dashboard)
+7. Progress badge: dark styled, clickable dropdown inline
+8. Last visit: mono 11px #8b949e tabular-nums
+9. Membership: 11px #8b949e
+10. Hover row: background #161b22 transition 0.1s
+11. Pagination: dark styled, centered
+12. Export CSV button: ghost dark button
+13. Send Bulk Outreach button: amber primary button
+14. Remove the "All players" filter chip — redundant with 
+    the level concern filter. Replace with just the misfit 
+    filter integrated into status row as "Level Concern"
+
+--- PAGE 2: PROGRESS (artifacts/dashboard/src/pages/Assessments.tsx) ---
+
+GOAL: This is a coaching tool. A coach opens it to quickly 
+mark player progress. It should feel focused and fast — 
+one player at a time, clear actions, satisfying feedback.
+
+Current problems: uses only half the page, no dark theme,
+"2005 pending" count is cut off in top right.
+
+Changes:
+1. Dark theme throughout
+2. Two-column layout using full page width:
+   Left column (60%): Players needing assessment
+   Right column (40%): Recently assessed players
+3. Left column header: "Needs Assessment" + pending count 
+   badge (amber pill) + search input (dark styled)
+4. Each player card in left column:
+   background #0f1117, border #30363d, borderRadius 8px,
+   padding 14px 16px, marginBottom 8px
+   Player name: 14px 500 #e6edf3
+   Sub-line: skill level (if set) · last visit · membership
+   — all in 11px #8b949e, omit "No skill level" if null
+   Action buttons row:
+   "Move Up a Level" — amber primary button
+   "Still Developing" — ghost dark button  
+   "At Their Level" — ghost dark button
+   On click: button shows brief checkmark (✓) animation,
+   card fades out over 300ms, list updates
+5. Right column header: "Recently Assessed" + count badge
+   Shows last 20 players with a set progression_status,
+   ordered by progression_assessed_at DESC if available,
+   else by updated_at
+   Each row: name + what they were set to (colored pill) + 
+   relative time
+   "Move Up a Level" pill: green
+   "Still Developing" pill: amber  
+   "At Their Level" pill: gray
+6. Topbar right: remove the raw "2005 pending" text — 
+   replace with a styled badge inside the left column header
+
+--- PAGE 3: SESSION RATINGS ---
+(artifacts/dashboard/src/pages/SessionFeedback.tsx)
+
+GOAL: Staff check this page to see if any sessions had 
+level mismatch complaints. It should surface problems 
+clearly and let staff edit the feedback message template.
+
+Current problems: light theme, corrupted template text 
+("sfdffe"), two-panel layout is right but unstyled.
+
+Changes:
+1. Dark theme throughout — both panels
+2. Left panel "Session Health":
+   Panel header: "Session Health" + session count badge + 
+   level filter chip row (not dropdown)
+   Level filter chips: All · Beginner · Adv. Beginner · 
+   Low Intermediate · Intermediate · Adv. Intermediate · 
+   Advanced
+   Each session row: dark styled, ⚠ Review Needed badge 
+   in amber/red when fit% < 60
+   Empty state: "No session ratings yet. Ratings will appear 
+   here after players respond to post-session texts."
+3. Right panel "Message Template":
+   Panel background #0f1117, border #30363d
+   Template name input: dark styled
+   Template body textarea: dark styled, 8 rows
+   Variable chips ({{first_name}} {{level}}): background 
+   #1e2530, border #30363d, color #E8A838, mono font
+   Save button: amber primary
+   Note below save: "This message is sent automatically 
+   30 minutes after a leveled session ends."
+4. Fix the corrupted template body — the textarea should 
+   show the actual template from the DB, not corrupted text.
+   The fetch is already working (GET /api/templates filtered 
+   by session_feedback tag) — just ensure the textarea value 
+   is bound to the fetched template body correctly.
+
+--- PAGE 4: MESSAGES (artifacts/dashboard/src/pages/Messages.tsx) ---
+
+GOAL: Staff come here to see the full history of outreach 
+and replies. It should feel like a clean communication log,
+not a raw database dump.
+
+Current problems: light theme, "Invalid Date" everywhere,
+raw developer-looking table, status pills unstyled.
+
+Changes:
+1. Dark theme throughout
+2. Fix "Invalid Date" bug: the date column shows 
+   "Invalid Date" for all rows. This is because sent_at 
+   or created_at is null or in an unexpected format. Fix:
+   Change date rendering to use a safe formatter:
+   const formatDate = (d: string | null) => {
+     if (!d) return '—';
+     const dt = new Date(d);
+     if (isNaN(dt.getTime())) return '—';
+     return dt.toLocaleDateString('en-US', { 
+       month: 'short', day: 'numeric' 
+     });
+   }
+   Apply to all date cells.
+3. Tab bar (All / Outbound / Replies / Failed):
+   Dark styled tabs — active tab: #e6edf3 with amber 
+   bottom border 2px. Inactive: #8b949e. 
+   Background: #0f1117, border-bottom #30363d
+4. Table header: #0f1117 bg, 10px mono uppercase #8b949e
+5. Player name column: amber color #E8A838, clickable
+6. Message preview: 11px #8b949e italic, max 1 line truncated
+7. Direction pill: 
+   outbound: background rgba(232,168,56,0.1) color #E8A838
+   inbound: background rgba(46,160,67,0.1) color #2ea043
+8. Status pill:
+   sent: background rgba(46,160,67,0.1) color #2ea043
+   queued: background rgba(232,168,56,0.1) color #E8A838
+   failed: background rgba(207,34,46,0.1) color #ff6b6b
+   pending: background #1e2530 color #8b949e
+9. Date column: formatDate() applied, 11px mono #8b949e
+10. Link column: if present show amber "Open →" link, 
+    else show "—" in #8b949e
+11. Row hover: background #161b22 transition 0.1s
+12. Keep all existing tab filtering logic unchanged
+
+--- PAGE 5: SETTINGS (artifacts/dashboard/src/pages/Settings.tsx) ---
+
+GOAL: Owners come here occasionally to configure sync 
+schedule, agent behavior, and message templates. Should 
+feel clean and organized — like a product settings page,
+not a config file.
+
+Current problems: light content area despite dark sidebar,
+section labels are all-caps developer style, template 
+cards look unfinished.
+
+Changes:
+1. Dark theme for content area (#161b22 page bg, 
+   #0f1117 section cards)
+2. Section cards: background #0f1117, border #30363d, 
+   borderRadius 8px, padding 20px, marginBottom 16px
+3. Section labels: 11px mono uppercase #8b949e with 
+   bottom border #1e2530 and paddingBottom 10px marginBottom 
+   16px — keep the label style but make it dark
+4. Club name input: dark styled
+5. Sync schedule: time input + timezone select, dark styled
+   Save button: amber primary
+6. Agent Configuration section:
+   Rename "Agent tone" label to "Outreach tone"
+   Rename "Inactive Threshold Days" to "Days until Inactive"
+   Rename "Drifting Threshold Days" to "Days until Drifting"  
+   Rename "Max Messages Per Thread" to "Max outreach per player"
+   Each config row: label left, value right, 12px
+   Values in #e6edf3, labels in #8b949e
+7. Sync & Import Log section:
+   Rename to "Data Sync Log"
+   Each job row: dark card style, "done" badge in green,
+   "running" badge in amber, "error" badge in red
+   Last run timestamp in mono #8b949e
+8. Message Templates section:
+   Each template card: background #161b22, border #30363d,
+   borderRadius 6px, padding 12px 14px
+   Template name: 13px 500 #e6edf3
+   Tags: small mono chips, background #1e2530, color #8b949e
+   "built-in" badge: background #1e2530, color #8b949e, 
+   border #30363d — subtle, not prominent
+   Edit button (non-built-in): ghost dark button
+   "+ New Template" button: amber primary, top right of section
+9. Info/helper text: 11px #8b949e italic — keep existing 
+   helper text but style it subtly
+
+--- ARCHITECTURE NOTES ---
+- Each page is a separate file — edit all 5 files
+- Do NOT change any API calls, data fetching, or business logic
+- Do NOT change the Sidebar component
+- Keep all existing TypeScript types and imports
+- marginLeft: 240px on all page main containers
+- Filter chips are a new UI pattern replacing dropdowns — 
+  implement as inline div elements with onClick toggling 
+  a selected state, not as <select> elements
+- The chip active state uses CSS transition for smooth toggle
+- After completing all 5 pages, take a screenshot of each 
+  and confirm dark theme is consistent across all of them
