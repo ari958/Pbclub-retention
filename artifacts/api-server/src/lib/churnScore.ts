@@ -9,8 +9,8 @@ function daysSince(iso: string): number {
 }
 
 function scoreToRisk(score: number): ChurnRisk {
-  if (score >= 65) return "high";
-  if (score >= 35) return "medium";
+  if (score >= 70) return "high";
+  if (score >= 40) return "medium";
   return "low";
 }
 
@@ -109,7 +109,8 @@ export async function computeChurnScore(playerId: string): Promise<void> {
     const outCount = outboundRes.count ?? 0;
     const inCount = inboundRes.count ?? 0;
 
-    if (outCount > 0) {
+    // Require at least 3 outbound messages before penalising non-response
+    if (outCount >= 3) {
       const rr = inCount / outCount;
       if (rr === 0)       s4 = 15;
       else if (rr < 0.5)  s4 = 8;
@@ -240,7 +241,8 @@ export async function computeChurnScoreAndReturn(
     ]);
     debugOutCount = outboundRes.count ?? 0;
     debugInCount = inboundRes.count ?? 0;
-    if (debugOutCount > 0) {
+    // Require at least 3 outbound messages before penalising non-response
+    if (debugOutCount >= 3) {
       const rr = debugInCount / debugOutCount;
       if (rr === 0)       s4 = 15;
       else if (rr < 0.5)  s4 = 8;
