@@ -1,0 +1,185 @@
+Generate a user-facing guide for Pulse — a player retention 
+platform for pickleball clubs. This guide is for club owners 
+and coaches who are NOT technical. They know pickleball, they 
+know their players, but they don't know what an API or a 
+database is. Write accordingly.
+
+Output a single well-structured Markdown file saved to:
+/mnt/user-data/outputs/pulse-user-guide.md
+
+Read these files to understand what the product actually does:
+- artifacts/dashboard/src/pages/Dashboard.tsx
+- artifacts/dashboard/src/pages/Players.tsx
+- artifacts/dashboard/src/pages/Assessments.tsx
+- artifacts/dashboard/src/pages/Messages.tsx
+- artifacts/dashboard/src/pages/Settings.tsx
+- artifacts/dashboard/src/pages/SessionFeedback.tsx
+- artifacts/dashboard/src/components/PlayerDrawer.tsx
+
+--- DOCUMENT STRUCTURE ---
+
+# Pulse — Your Club Retention Guide
+
+## Welcome to Pulse
+2-3 paragraphs. What Pulse does in plain English.
+No technical terms. Focus on the outcome:
+"Pulse helps you know which players are at risk of 
+not coming back, reach out to them with personalized 
+messages, and track whether it worked."
+
+## How Pulse Works (The Big Picture)
+Simple explanation of the data flow without 
+technical terms:
+- Pulse connects to your booking platform and learns 
+  who your players are
+- Every night it updates player data automatically
+- It scores players by how likely they are to stop 
+  coming back
+- It generates personalized outreach messages for 
+  at-risk players
+- You review the messages, send the ones you like, 
+  and track responses
+Use a simple numbered flow or visual (ASCII art is fine)
+
+## Your Dashboard
+### What you see when you open Pulse
+Explain each section in plain English:
+- Recommendation tiles: what they mean and what to do
+- The three stat cards: Active Players, High Churn Risk, 
+  Outreach Queue
+- Needs Attention panel: who these players are and why 
+  they appear here
+- Club Health panel: how to read the bar chart
+- Outreach Queue panel: what pending messages are
+- New Player Intros panel: why introductions matter
+
+### What to do every morning (5-minute routine)
+Step by step:
+1. Check the recommendation tiles — act on anything 
+   marked "Act now"
+2. Review the Outreach Queue — send 2-3 messages
+3. Check New Player Intros — plan any introductions 
+   for today's sessions
+4. Note any players in Needs Attention for follow-up
+
+## Your Players
+### Finding a specific player
+### Understanding Player Status
+  - Active: playing regularly
+  - Drifting: hasn't been back in 2+ weeks, needs a nudge
+  - Inactive: hasn't been back in 30+ days, at risk
+  - Never Visited: signed up but never came
+### Understanding Churn Risk
+  Plain English explanation of High/Medium risk badges.
+  "High Churn Risk means Pulse has detected this player 
+  is showing the same patterns as players who stop coming 
+  back. It's worth reaching out soon."
+### Understanding Player Progress
+  Explain Move Up a Level / Still Developing / At Their Level
+### The Player Card (drawer)
+  What each section shows when you click a player
+### Filtering and searching players
+### Sending outreach to a specific player
+
+## Outreach & Messages
+### How messages are generated
+  Plain English: "Pulse uses AI to write a personalized 
+  message for each player based on their history, 
+  upcoming sessions their friends are attending, and 
+  their level."
+### Reviewing a message before sending
+### Editing a message
+### Dismissing a message you don't want to send
+### Understanding the message history
+### What happens after you send
+  (cooldown, tracking, win-back rate)
+
+## Player Progress (Coaching Tool)
+### What assessment means and why it matters
+  "When you mark a player's progress, Pulse uses that 
+  information to recommend the right programs to them 
+  and avoid sending them to sessions where they won't fit."
+### How to assess a player
+### Assigning a coach level
+### What happens after you assess
+
+## Session Ratings
+### What session ratings are
+  Plain English explanation of the post-session text
+### Why they matter (level trust)
+### How to edit the feedback message template
+### Reading the Session Health panel
+  What the ⚠ Review Needed flag means and what to do
+
+## Monthly Recaps & Milestone Messages
+### What monthly recaps are and when they send
+### What milestones are celebrated
+### How to preview a recap before it goes out
+### How to run recaps manually
+
+## Settings
+### Setting your sync schedule
+### Configuring outreach thresholds
+  "Days until Drifting" and "Days until Inactive" — 
+  what these mean and when to change them
+### Managing message templates
+### Reading the Data Sync Log
+  What "done" and "running" mean
+
+## Frequently Asked Questions
+
+Q: Why are so many players showing as Inactive?
+A: Honest answer about new clubs and December/January 
+   players who tried once and drifted.
+
+Q: A player got a message but I didn't send it — why?
+A: Explain the queue — nothing sends without approval.
+
+Q: Can Pulse send messages automatically?
+A: No — every message requires staff review first.
+
+Q: How do I know if a message worked?
+A: Explain win-back rate and the return-after-message 
+   tracking.
+
+Q: What is "Level Trust" and why does it matter?
+A: Plain English explanation of the confidence scoring 
+   without mentioning the algorithm.
+
+Q: A player complained they got the wrong level 
+   recommendation — what do I do?
+A: Assign their coach level in the player card.
+
+Q: How often does Pulse update player data?
+A: Every night automatically. You can also trigger 
+   a manual refresh from the dashboard.
+
+Q: What does "Club Friends" mean?
+A: Explanation of buddy pairs in plain English.
+
+## Tips for Getting the Most Out of Pulse
+5-7 practical tips:
+- Assess players early — the more coach levels set, 
+  the smarter the recommendations
+- Review the queue every morning, not just when 
+  you remember
+- Use the New Player Intros panel before each session
+  to plan quick introductions
+- Edit messages before sending — the AI is good but 
+  you know your players
+- Check Session Ratings weekly once Twilio is live
+- Act on "High Churn Risk" players within 48 hours — 
+  the window closes fast
+
+--- FORMATTING RULES ---
+- Simple language throughout — 8th grade reading level
+- No technical terms without plain English explanation
+- Use "you" throughout — direct, personal tone
+- Short paragraphs, lots of whitespace
+- Bullet points for lists, numbered steps for procedures
+- Headers should be questions or action phrases where 
+  possible ("How to find a player" not "Player Search")
+- Screenshots would go here in a real guide — add 
+  placeholder notes like [Screenshot: Dashboard overview]
+- Warm, encouraging tone — this tool is meant to help 
+  coaches, not replace them
