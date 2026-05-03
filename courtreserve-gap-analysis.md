@@ -85,6 +85,8 @@ Auth role required: **EventCalendar / Read**
 | `IsCanceled` | filter (skip) | |
 | `RatingRestrictions[]` | (bonus) | Min/max skill ratings per event — richer than PodPlay |
 
+**No event description field.** CourtReserve does not expose a description on any event endpoint. **Decision: CourtReserve clubs use event name only** for agent program recommendations and the Programs page. Messages reference the program by name, level, day, and price — no free-text description. This is the accepted behaviour for all CourtReserve onboarding.
+
 **Filter params:** `startDate`, `endDate`, `categoryId`, `tagIds`, `status` (Active/Canceled/All).  
 **No server-side pagination** on this endpoint — it returns all events in the date window. For backfill, paginate by date range (monthly windows).
 
