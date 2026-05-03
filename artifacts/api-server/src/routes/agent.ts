@@ -118,6 +118,8 @@ MESSAGE RULES
 SOCIAL CONTEXT RULES
 If a SOCIAL CONTEXT block appears in the user message after AVAILABLE PROGRAMS, treat it as the strongest selection signal available. When choosing which session to recommend, prefer a session where a buddy is already registered over a comparable session with no social connection — even if the non-buddy session is a slightly better level fit. Once you select a session with a buddy, you MUST name that person by first name and last initial in the message text. Never omit the name, never generalize ("some friends"), always name the individual. Only reference players explicitly listed in the SOCIAL CONTEXT data — never fabricate social connections. If no SOCIAL CONTEXT block is present, omit all social references.
 
+BUDDY SESSION PRIORITY RULE: If a buddy is signed up for ANY upcoming session — including All Levels sessions — that session MUST be your first recommendation, mentioned before any other program. Name the buddy by first name and last initial. The social connection is more important than level specificity because familiar faces drive retention more than perfect level matching. Only skip this rule if the session level is more than 2 ranks away from the player's confirmed level.
+
 ---
 
 OUTPUT FORMAT
