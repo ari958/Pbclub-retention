@@ -489,6 +489,108 @@ function AtRiskPanel({
   );
 }
 
+// ─── Staff Intro Panel ────────────────────────────────────────────────────────
+
+const ET_TIME_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+const ET_DATE_FMT = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York",
+  weekday: "short",
+  month: "short",
+  day: "numeric",
+});
+
+function visitLabel(visitCount: number): string {
+  const n = visitCount + 1;
+  if (n === 1) return "1st visit";
+  if (n === 2) return "2nd visit";
+  if (n === 3) return "3rd visit";
+  return `${n}th visit`;
+}
+
+function StaffIntroPanel({ cards, loading }: { cards: any[]; loading: boolean }) {
+  const totalNew = cards.reduce((sum, c) => sum + (c.new_players?.length ?? 0), 0);
+
+  const grouped = new Map<string, any[]>();
+  for (const card of cards) {
+    const key = ET_DATE_FMT.format(new Date(card.start_time)).toUpperCase().replace(",", "");
+    if (!grouped.has(key)) grouped.set(key, []);
+    grouped.get(key)!.push(card);
+  }
+
+  return (
+    <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
+      <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>Upcoming — New Players</span>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)", background: "var(--bg-surface-2)", padding: "2px 8px", borderRadius: 3, border: "1px solid var(--border)" }}>
+          {loading ? "…" : `${totalNew} new · 7d`}
+        </span>
+      </div>
+      <div style={{ maxHeight: 300, overflowY: "auto" }}>
+        {loading ? (
+          <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            Loading upcoming sessions…
+          </div>
+        ) : cards.length === 0 ? (
+          <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            No new players in the next 7 days
+          </div>
+        ) : (
+          [...grouped.entries()].map(([dateLabel, dayCards]) => (
+            <div key={dateLabel}>
+              <div style={{ padding: "5px 16px", fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "var(--text-tertiary)", letterSpacing: "0.07em", background: "var(--bg-surface-2)", borderBottom: "1px solid var(--border)" }}>
+                {dateLabel}
+              </div>
+              {dayCards.map((card: any, ci: number) => (
+                <div key={card.event_id} style={{ padding: "10px 16px", borderBottom: ci < dayCards.length - 1 || grouped.size > 1 ? "1px solid var(--border)" : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 500, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {card.program_name}
+                    </span>
+                    {card.level && (
+                      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, padding: "1px 6px", borderRadius: 3, background: "rgba(232,168,56,0.10)", color: "var(--accent)", border: "1px solid rgba(232,168,56,0.20)", flexShrink: 0 }}>
+                        {card.level}
+                      </span>
+                    )}
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-tertiary)", flexShrink: 0 }}>
+                      {ET_TIME_FMT.format(new Date(card.start_time))}
+                    </span>
+                  </div>
+                  {(card.new_players ?? []).map((np: any, ni: number) => (
+                    <div key={np.player_id} style={{ marginBottom: ni < card.new_players.length - 1 ? 8 : 0, paddingLeft: 2 }}>
+                      <div style={{ fontWeight: 500, fontSize: 13 }}>
+                        {np.name}
+                        <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--accent)", background: "rgba(232,168,56,0.10)", border: "1px solid rgba(232,168,56,0.20)", borderRadius: 3, padding: "1px 5px", marginLeft: 6, verticalAlign: "middle" }}>
+                          NEW
+                        </span>
+                      </div>
+                      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 2, fontFamily: "var(--font-mono)" }}>
+                        {visitLabel(np.visit_count)}
+                        {(np.buddy_connections ?? []).length > 0 && (
+                          <span style={{ fontStyle: "italic", marginLeft: 6 }}>
+                            · knows {(np.buddy_connections as any[]).slice(0, 2).map((b: any) => b.name.split(" ")[0]).join(" & ")} ({(np.buddy_connections as any[])[0].shared_sessions} sessions)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ─── Needs Assessment Panel ───────────────────────────────────────────────────
+
 function NeedsAssessmentPanel({ players, onUpdate }: { players: Player[]; onUpdate: () => void }) {
   const [loading, setLoading] = useState<string | null>(null);
   const [checkmarks, setCheckmarks] = useState<Set<string>>(new Set());
@@ -750,6 +852,8 @@ export default function Dashboard() {
   const [confirmDialog, setConfirmDialog] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [responseRate, setResponseRate] = useState<number | null>(null);
   const [winbackRate, setWinbackRate] = useState<number | null>(null);
+  const [introCards, setIntroCards] = useState<any[]>([]);
+  const [introCardsLoading, setIntroCardsLoading] = useState(true);
 
   const fetchMessages = useCallback(async () => {
     const res = await supabase
@@ -892,6 +996,23 @@ export default function Dashboard() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const res = await fetch("/api/social-graph/staff-intro-cards");
+        if (res.ok) {
+          const d = await res.json();
+          setIntroCards(d.cards ?? []);
+        }
+      } catch {
+        // non-fatal
+      } finally {
+        setIntroCardsLoading(false);
+      }
+    };
+    load();
+  }, []);
+
   const needsAssessment = players.filter((p) => p.progression_status === null);
   const active = players.filter((p) => getEngagementState(p.last_visit_date) === "active").length;
   const lapsing = players.filter((p) => getEngagementState(p.last_visit_date) === "lapsing").length;
@@ -952,6 +1073,7 @@ export default function Dashboard() {
             </div>
             <div style={{ flex: "0 0 calc(40% - 12px)", minWidth: 0, display: "flex", flexDirection: "column", gap: 12 }}>
               <NeedsAssessmentPanel players={needsAssessment} onUpdate={fetchData} />
+              <StaffIntroPanel cards={introCards} loading={introCardsLoading} />
               <MessageQueuePanel messages={messages} onSent={fetchData} onOpenPlayer={setDrawerPlayerId} />
             </div>
           </div>

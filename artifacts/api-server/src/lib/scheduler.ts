@@ -124,6 +124,19 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
     }
 
+    // Step 4: Buddy pair graph (non-fatal)
+    try {
+      const port = process.env.PORT ?? "8080";
+      const buddyRes = await fetch(
+        `http://localhost:${port}/api/social-graph/compute-buddy-pairs`,
+        { method: "POST", signal: AbortSignal.timeout(5 * 60 * 1000) }
+      );
+      const buddyStats = await buddyRes.json() as any;
+      await appendJobLog(JOB_NIGHTLY, `Step 4 complete — buddy pairs updated: ${buddyStats.pairs_updated ?? 0}`);
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Step 4 buddy pairs error (non-fatal): ${err.message}`);
+    }
+
     // Mark nightly_sync done
     await finishJob(JOB_NIGHTLY, "done");
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");

@@ -115,6 +115,11 @@ MESSAGE RULES
 
 ---
 
+SOCIAL CONTEXT (optional)
+If the player message includes a SOCIAL CONTEXT block after AVAILABLE PROGRAMS, use it to personalize your outreach. You may mention court friends by first name and last initial only when they are confirmed registered for a specific upcoming session. Never fabricate social connections or reference sessions the buddy data does not confirm. If no SOCIAL CONTEXT block is present, omit all social references from your message.
+
+---
+
 OUTPUT FORMAT
 Return only a valid JSON object. No preamble, no explanation outside the JSON.
 
@@ -239,7 +244,73 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     level_confidence: levelConfidenceForAgent,
   };
 
-  const userMessage = `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}\n\nAVAILABLE PROGRAMS:\n${JSON.stringify(available_programs, null, 2)}`;
+  // Social context (non-fatal — skip if social graph is unavailable or too slow)
+  let socialContext: string | null = null;
+  try {
+    const port = process.env.PORT ?? "8080";
+    const [buddiesRes, upcomingRes] = await Promise.allSettled([
+      fetch(`http://localhost:${port}/api/social-graph/player/${player_id}/buddies`, {
+        signal: AbortSignal.timeout(8_000),
+      }),
+      fetch(`http://localhost:${port}/api/social-graph/upcoming-with-buddies/${player_id}`, {
+        signal: AbortSignal.timeout(45_000),
+      }),
+    ]);
+
+    const buddies: any[] =
+      buddiesRes.status === "fulfilled" && buddiesRes.value.ok
+        ? ((await buddiesRes.value.json() as any).buddies ?? [])
+        : [];
+    const upcoming: any[] =
+      upcomingRes.status === "fulfilled" && upcomingRes.value.ok
+        ? ((await upcomingRes.value.json() as any).upcoming ?? [])
+        : [];
+
+    if (buddies.length > 0 || upcoming.length > 0) {
+      const lines: string[] = ["SOCIAL CONTEXT:"];
+      if (buddies.length > 0) {
+        const buddyList = buddies.slice(0, 5).map((b: any) => {
+          const parts = (b.name as string).split(" ");
+          const short = parts.length >= 2 ? `${parts[0]} ${parts[1][0]}.` : b.name;
+          return `${short} (${b.shared_sessions} sessions together)`;
+        }).join(", ");
+        lines.push(`Players this player knows from past sessions (3+ shared courts): ${buddyList}`);
+      }
+      if (upcoming.length > 0) {
+        lines.push("Upcoming sessions where their court buddies are already signed up:");
+        for (const ev of upcoming.slice(0, 3) as any[]) {
+          const dateStr = new Intl.DateTimeFormat("en-US", {
+            timeZone: "America/New_York",
+            weekday: "short",
+            month: "short",
+            day: "numeric",
+          }).format(new Date(ev.start_time));
+          const level = ev.level ? ` · ${ev.level}` : "";
+          const buddyNames = (ev.buddies_signed_up as any[]).map((b: any) => {
+            const parts = (b.name as string).split(" ");
+            return parts.length >= 2 ? `${parts[0]} ${parts[1][0]}.` : b.name;
+          });
+          const nameStr =
+            buddyNames.length === 1
+              ? `${buddyNames[0]} is`
+              : `${buddyNames.join(" and ")} are`;
+          lines.push(`${dateStr}${level} · ${nameStr} registered for ${ev.program_name}`);
+        }
+      }
+      lines.push(
+        "Use this information to personalize your outreach. If a buddy is signed up for a relevant upcoming session, mention them by first name and last initial only. Only mention players who are confirmed registered — never guess."
+      );
+      socialContext = lines.join("\n");
+    }
+  } catch (err) {
+    req.log.info({ err }, "Social context fetch skipped (non-fatal)");
+  }
+
+  const userMessage = [
+    `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}`,
+    `AVAILABLE PROGRAMS:\n${JSON.stringify(available_programs, null, 2)}`,
+    socialContext,
+  ].filter(Boolean).join("\n\n");
 
   let agentResponse: any;
   try {

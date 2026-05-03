@@ -10,6 +10,7 @@ import adminRouter from "./admin";
 import templatesRouter from "./templates";
 import eventsRouter from "./events";
 import feedbackRouter from "./feedback";
+import socialGraphRouter from "./socialGraph";
 
 const router: IRouter = Router();
 
@@ -24,5 +25,6 @@ router.use(adminRouter);
 router.use(templatesRouter);
 router.use(eventsRouter);
 router.use(feedbackRouter);
+router.use(socialGraphRouter);
 
 export default router;

@@ -1,0 +1,265 @@
+We are building a social graph system for PB Club, a pickleball 
+facility. The goal is to programmatically build community by 
+tracking which players have shared court time together and using 
+those relationships to:
+
+1. Help the retention agent personalize outreach — instead of 
+   generic "come back" messages, the agent can say "Sarah K. and 
+   Mike T. are signed up for Thursday's session"
+2. Give staff a 7-day ahead view of upcoming sessions so they can 
+   make intentional introductions — "Alex is coming tonight for 
+   only his 2nd visit and Jamie, who he's played with twice before, 
+   is also in tonight's session"
+3. Eventually power opt-in buddy notifications (not in this build)
+
+The system has three components:
+- Buddy pairs — players who have shared 3+ sessions together
+- Agent context — buddy data fed into the retention agent prompt
+- Staff intro panel — a dashboard view for coaches to plan 
+  connection moments
+
+--- STEP 1: RESEARCH (do this before writing any code) ---
+
+Find the PodPlay API endpoints for upcoming events and their 
+registrations. Check in this order:
+
+1. Read artifacts/api-server/src/syncEventAttendance.js and 
+   artifacts/api-server/src/fetchAvailablePrograms.js — understand 
+   what PodPlay endpoints are already being called
+
+2. Test upcoming events endpoint:
+   curl -s -H "x-api-key: $PODPLAY_API_KEY" \
+   "https://pbclub.podplay.app/apis/v2/events?upcoming=true&ipp=5" \
+   | node -e "const c=[];process.stdin.on('data',d=>c.push(d)); \
+   process.stdin.on('end',()=>{const j=JSON.parse( \
+   Buffer.concat(c).toString()); \
+   console.log(JSON.stringify(j.items?.[0],null,2));})"
+
+3. Test the attendees sub-endpoint using the first event id 
+   returned above:
+   curl -s -H "x-api-key: $PODPLAY_API_KEY" \
+   "https://pbclub.podplay.app/apis/v2/events/{event_id}/attendees" \
+   | node -e "const c=[];process.stdin.on('data',d=>c.push(d)); \
+   process.stdin.on('end',()=>{const j=JSON.parse( \
+   Buffer.concat(c).toString()); \
+   console.log(JSON.stringify(j,null,2));})"
+
+4. Check if there is a registered vs checked-in distinction in 
+   the attendees response — we need REGISTERED (future), not just 
+   checked-in (past)
+
+Report findings before writing any code:
+- What endpoint returns upcoming events with future start times
+- What fields are on each event (startTime, endTime, tags, level)
+- Whether attendees endpoint exists and what it returns
+- Registered vs checked-in distinction if any
+- Pagination and rate limit details
+
+--- STEP 2: SQL MIGRATION ---
+
+Run this in Supabase after confirming the API research:
+
+CREATE TABLE IF NOT EXISTS buddy_pairs (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_a uuid REFERENCES players(id) ON DELETE CASCADE,
+  player_b uuid REFERENCES players(id) ON DELETE CASCADE,
+  shared_sessions integer DEFAULT 0,
+  last_shared_at timestamptz,
+  opt_in_notifications boolean DEFAULT false,
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(player_a, player_b),
+  CHECK (player_a < player_b)
+);
+ALTER TABLE buddy_pairs ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE ON buddy_pairs TO service_role;
+GRANT SELECT ON buddy_pairs TO anon;
+
+INSERT INTO jobs (id) VALUES ('compute_buddy_pairs') 
+ON CONFLICT (id) DO NOTHING;
+
+--- STEP 3: BACKEND — socialGraph.ts ---
+
+Create artifacts/api-server/src/routes/socialGraph.ts
+
+Use the endpoints confirmed in Step 1 for all PodPlay calls.
+Import supabase from src/lib/supabaseClient.ts — never inline.
+Import extractSkillLevel from src/lib/skillLevel.ts for level 
+parsing from event tags.
+
+ROUTE A: POST /api/social-graph/compute-buddy-pairs
+This is the historical computation — who has played together 
+3+ times based on past attendance records in Supabase.
+
+1. Pull all attendances from last 90 days from Supabase:
+   SELECT player_id, event_id, attended_at FROM attendances
+   WHERE attended_at >= now() - interval '90 days'
+   AND player_id IS NOT NULL
+2. Group by event_id → build map of event_id → player_id[]
+3. For every pair in the same event, enforce player_a < player_b 
+   (sort UUIDs alphabetically), increment shared_sessions counter 
+   in a JS Map keyed "playerA:playerB", track most recent 
+   attended_at as last_shared_at
+4. For pairs with shared_sessions >= 3, upsert into buddy_pairs 
+   in batches of 100
+5. Return { pairs_updated: N, pairs_below_threshold: M }
+
+ROUTE B: GET /api/social-graph/player/:id/buddies
+1. Query buddy_pairs WHERE player_a = id OR player_b = id
+   ORDER BY shared_sessions DESC LIMIT 10
+2. Resolve the other player's name from players table
+3. Return { buddies: [{ player_id, name, shared_sessions, 
+   last_shared_at, opt_in_notifications }] }
+
+ROUTE C: GET /api/social-graph/upcoming-with-buddies/:id
+This is the forward-looking query — for a given player, find 
+upcoming sessions where their buddies are already registered.
+Use the PodPlay upcoming events + attendees endpoints confirmed 
+in Step 1.
+
+1. Get this player's buddies from buddy_pairs (all, not just 
+   opt-in — we're showing context to staff and agent, not 
+   texting anyone yet)
+2. Get upcoming events for the next 7 days from PodPlay
+3. For each upcoming event, call the attendees endpoint
+4. Cross-reference attendee list with buddy player external_ids
+   (need to join players table to get external_id for each buddy)
+5. Return events where at least one buddy is registered:
+   {
+     upcoming: [{
+       event_id, program_name, level, start_time,
+       buddies_signed_up: [{ player_id, name, shared_sessions }]
+     }]
+   }
+Rate limit: 250ms delay between PodPlay attendee calls
+
+ROUTE D: GET /api/social-graph/staff-intro-cards
+7-day rolling window of upcoming sessions with new player flags 
+and buddy connection data. Used by the staff dashboard panel.
+
+1. Get upcoming events for next 7 days from PodPlay
+2. For each event get the registered attendee list
+3. For each attendee, look up their player record in Supabase 
+   by external_id to get visit_count (total attendance count)
+4. Flag players with visit_count <= 3 as new
+5. For new players, query buddy_pairs to find any buddy 
+   connections who are also registered for this same event
+6. Group by date, return:
+   {
+     cards: [{
+       event_id, program_name, level, start_time,
+       new_players: [{
+         player_id, name, visit_count,
+         buddy_connections: [{ player_id, name, shared_sessions }]
+       }]
+     }]
+   }
+   Only include events that have at least one new player.
+   Sort by start_time ascending.
+   Rate limit: 250ms between attendee calls.
+
+ROUTE E: POST /api/social-graph/test/compute-now
+Calls compute-buddy-pairs and returns result synchronously.
+No body required. Dev/test only.
+
+Register in artifacts/api-server/src/routes/index.ts:
+import socialGraphRouter from "./socialGraph";
+router.use(socialGraphRouter);
+
+--- STEP 4: NIGHTLY CHAIN — Step 4 ---
+
+In artifacts/api-server/src/lib/scheduler.ts, add Step 4 
+after the confidence recompute and before finishJob(JOB_NIGHTLY):
+
+// Step 4: Buddy pair graph update
+try {
+  await appendJobLog(JOB_NIGHTLY, "Step 4: updating buddy pair graph");
+  const res = await fetch(
+    "http://localhost:3000/api/social-graph/compute-buddy-pairs", 
+    {
+      method: "POST",
+      signal: AbortSignal.timeout(5 * 60 * 1000),
+    }
+  );
+  const result = await res.json();
+  await appendJobLog(JOB_NIGHTLY,
+    `Step 4 complete — pairs updated: ${result.pairs_updated}`);
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY,
+    `Buddy pair update error (non-fatal): ${err.message}`);
+}
+
+--- STEP 5: AGENT CONTEXT ---
+
+In whichever file assembles the agent's system prompt context 
+(check assembleProfile.js or the agent route), add a new 
+context block after the level confidence section.
+
+Call GET /api/social-graph/upcoming-with-buddies/:id using the 
+player's internal Supabase id before building the prompt.
+
+Add this to the agent system prompt if upcoming buddies exist:
+
+"SOCIAL CONTEXT:
+Players {name} knows from past sessions (3+ shared courts):
+{buddy_list formatted as "Sarah K. (8 sessions together)"}
+
+Upcoming sessions where their court buddies are already signed up:
+{upcoming list formatted as "Thu May 7 · Intermediate · Sarah K. 
+and Mike T. are registered"}
+
+Use this information to personalize your outreach. If a buddy is 
+signed up for a relevant upcoming session, mention them by first 
+name and last initial. Only mention players who are confirmed 
+registered, never guess."
+
+If no buddies or no upcoming sessions with buddies → omit the 
+social context block entirely. Do not mention the social graph 
+to the player if there is no data.
+
+--- STEP 6: FRONTEND — Staff Intro Panel ---
+
+In artifacts/dashboard/src/pages/Dashboard.tsx add a 
+StaffIntroPanel component.
+
+Fetch on load: GET /api/social-graph/staff-intro-cards
+Store in state: const [introCards, setIntroCards] = useState<any[]>([])
+Add to fetchData() alongside existing fetches.
+
+StaffIntroPanel component — follow exact same styling as 
+NeedsAssessmentPanel:
+
+Header: "Upcoming Sessions" with a mono badge showing total 
+new players across all cards in the next 7 days.
+
+Group cards by date. For each date group show a date divider 
+in mono style: "MON MAY 4" etc.
+
+For each event card:
+- Program name + level badge (var(--accent) background at 10% 
+  opacity, var(--accent) text) + time (e.g. "7:00 PM") in mono
+- For each new player in that event:
+  - "🆕 {name}" fontWeight 500, fontSize 13
+  - Sub-label: "1st visit" / "2nd visit" / "3rd visit" in 
+    fontSize 11, var(--text-tertiary)
+  - If buddy_connections exist:
+    "→ knows {name1} & {name2} ({N} sessions)" in fontSize 11, 
+    var(--text-tertiary), fontStyle italic
+  - If no buddy connections: show nothing
+
+Empty state: "No new players in the next 7 days ✓"
+maxHeight: 320, overflowY: auto
+
+Place between NeedsAssessmentPanel and MessageQueuePanel in 
+the right column.
+
+--- ARCHITECTURE NOTES ---
+- player_a < player_b must always be enforced — sort UUIDs 
+  before any insert or query
+- Paginate all Supabase players queries (1000 row limit)
+- 250ms rate limit between all PodPlay attendee API calls
+- extractSkillLevel(event.tags) for level — never parse from name
+- All TS files import supabase from src/lib/supabaseClient.ts
+- The staff intro cards may be slow on first load due to PodPlay 
+  attendee calls — add a loading state to the panel
+- Never expose opt_in_notifications logic in this build — that 
+  field exists on the table but is not used yet
