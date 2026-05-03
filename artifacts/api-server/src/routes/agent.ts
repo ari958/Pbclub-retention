@@ -115,13 +115,13 @@ MESSAGE RULES
 
 ---
 
-SOCIAL CONTEXT (optional)
-If the player message includes a SOCIAL CONTEXT block after AVAILABLE PROGRAMS, use it to personalize your outreach. You may mention court friends by first name and last initial only when they are confirmed registered for a specific upcoming session. Never fabricate social connections or reference sessions the buddy data does not confirm. If no SOCIAL CONTEXT block is present, omit all social references from your message.
+SOCIAL CONTEXT RULES
+If a SOCIAL CONTEXT block appears in the user message after AVAILABLE PROGRAMS, treat it as the strongest selection signal available. When choosing which session to recommend, prefer a session where a buddy is already registered over a comparable session with no social connection — even if the non-buddy session is a slightly better level fit. Once you select a session with a buddy, you MUST name that person by first name and last initial in the message text. Never omit the name, never generalize ("some friends"), always name the individual. Only reference players explicitly listed in the SOCIAL CONTEXT data — never fabricate social connections. If no SOCIAL CONTEXT block is present, omit all social references.
 
 ---
 
 OUTPUT FORMAT
-Return only a valid JSON object. No preamble, no explanation outside the JSON.
+Return only a valid JSON object. Begin your response immediately with { — do not include any preamble, reasoning, thinking, or analysis text before the JSON. End your response with } and nothing after it.
 
 {
   "engagement_state": "active" | "lapsing" | "dormant",
@@ -248,23 +248,26 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   let socialContext: string | null = null;
   try {
     const port = process.env.PORT ?? "8080";
-    const [buddiesRes, upcomingRes] = await Promise.allSettled([
+    // Chain .then(r => r.json()) inline so the response body is consumed immediately
+    // when each fetch resolves — before Promise.allSettled can wait on the slower request
+    // and the AbortSignal on the faster one fires.
+    const [buddiesResult, upcomingResult] = await Promise.allSettled([
       fetch(`http://localhost:${port}/api/social-graph/player/${player_id}/buddies`, {
         signal: AbortSignal.timeout(8_000),
-      }),
+      }).then((r) => r.ok ? (r.json() as Promise<{ buddies: any[] }>) : Promise.reject(new Error(`buddies ${r.status}`))),
       fetch(`http://localhost:${port}/api/social-graph/upcoming-with-buddies/${player_id}`, {
-        signal: AbortSignal.timeout(45_000),
-      }),
+        signal: AbortSignal.timeout(15_000),
+      }).then((r) => r.ok ? (r.json() as Promise<{ upcoming: any[] }>) : Promise.reject(new Error(`upcoming ${r.status}`))),
     ]);
 
     const buddies: any[] =
-      buddiesRes.status === "fulfilled" && buddiesRes.value.ok
-        ? ((await buddiesRes.value.json() as any).buddies ?? [])
-        : [];
+      buddiesResult.status === "fulfilled" ? (buddiesResult.value.buddies ?? []) : [];
     const upcoming: any[] =
-      upcomingRes.status === "fulfilled" && upcomingRes.value.ok
-        ? ((await upcomingRes.value.json() as any).upcoming ?? [])
-        : [];
+      upcomingResult.status === "fulfilled" ? (upcomingResult.value.upcoming ?? []) : [];
+
+    if (upcomingResult.status === "rejected") {
+      req.log.warn({ err: (upcomingResult.reason as Error)?.message }, "[agent] upcoming-with-buddies fetch failed");
+    }
 
     if (buddies.length > 0 || upcoming.length > 0) {
       const lines: string[] = ["SOCIAL CONTEXT:"];
@@ -278,7 +281,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       }
       if (upcoming.length > 0) {
         lines.push("Upcoming sessions where their court buddies are already signed up:");
-        for (const ev of upcoming.slice(0, 3) as any[]) {
+        for (const ev of upcoming.slice(0, 5) as any[]) {
           const dateStr = new Intl.DateTimeFormat("en-US", {
             timeZone: "America/New_York",
             weekday: "short",
@@ -316,7 +319,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   try {
     const completion = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: SYSTEM_PROMPT,
       messages: [{ role: "user", content: userMessage }],
     });
@@ -325,6 +328,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     const start = text.indexOf("{");
     const end = text.lastIndexOf("}");
     if (start === -1 || end === -1 || end < start) {
+      req.log.error({ rawText: text.slice(0, 500) }, "[agent] Claude returned no JSON");
       throw new Error("No JSON object found in Claude response");
     }
     const raw = text.slice(start, end + 1);

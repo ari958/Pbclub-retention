@@ -260,28 +260,38 @@ router.get("/social-graph/upcoming-with-buddies/:id", async (req, res) => {
       }
     }
 
-    const events = await fetchUpcomingEvents(7);
+    const allEvents = await fetchUpcomingEvents(7);
+    const events = allEvents.slice(0, 10); // hard cap — keeps total time ~4s
     const upcoming: object[] = [];
 
-    for (const event of events) {
-      await sleep(250);
-      const externalIds = await fetchEventSignupsRaw(event.id);
-      const buddiesHere = externalIds
-        .map((eid) => buddyByExternal.get(eid))
-        .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
-
-      if (buddiesHere.length > 0) {
-        upcoming.push({
-          event_id: event.id,
-          program_name: event.name,
-          level: extractSkillLevel(event.tags),
-          start_time: event.startTime,
-          buddies_signed_up: buddiesHere.map((b) => ({
-            player_id: b.id,
-            name: b.name,
-            shared_sessions: b.shared_sessions,
-          })),
-        });
+    // Parallel batches of 3 with 250ms between batches (rate-limit PodPlay)
+    for (let i = 0; i < events.length; i += 3) {
+      if (i > 0) await sleep(250);
+      const batch = events.slice(i, i + 3);
+      const results = await Promise.all(
+        batch.map((event) =>
+          fetchEventSignupsRaw(event.id)
+            .then((externalIds) => ({ event, externalIds }))
+            .catch(() => ({ event, externalIds: [] as string[] }))
+        )
+      );
+      for (const { event, externalIds } of results) {
+        const buddiesHere = externalIds
+          .map((eid) => buddyByExternal.get(eid))
+          .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
+        if (buddiesHere.length > 0) {
+          upcoming.push({
+            event_id: event.id,
+            program_name: event.name,
+            level: extractSkillLevel(event.tags),
+            start_time: event.startTime,
+            buddies_signed_up: buddiesHere.map((b) => ({
+              player_id: b.id,
+              name: b.name,
+              shared_sessions: b.shared_sessions,
+            })),
+          });
+        }
       }
     }
 
