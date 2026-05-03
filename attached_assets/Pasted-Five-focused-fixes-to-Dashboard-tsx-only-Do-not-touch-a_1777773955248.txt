@@ -1,0 +1,50 @@
+Five focused fixes to Dashboard.tsx only. Do not touch any 
+other files.
+
+FIX 1 — Club Health bar: remove Never Visited from the 
+stacked bar entirely. The bar should only show 3 segments: 
+Active (green), Drifting (orange), Inactive (red). The bar 
+represents players who have visited at least once. Never 
+Visited is a separate acquisition metric, not a health metric.
+Keep Never Visited as a KPI row below the legend — it's 
+already there, just remove it from the bar.
+
+FIX 2 — Outreach Queue deduplication: the queue shows 
+multiple messages for the same player (Amanda Ng appears 3 
+times). Fix the display by deduplicating on player name — 
+show only the most recent pending message per player. Use 
+Array.reduce() or a Map to keep only the first message per 
+player_id before slicing to 3. The underlying messages array 
+is unchanged — this is display-only deduplication.
+
+FIX 3 — Message body truncation: the message body in the 
+Outreach Queue rows is showing full text including URLs. 
+Add these styles to the message body div:
+  overflow: hidden
+  display: -webkit-box
+  WebkitLineClamp: 2
+  WebkitBoxOrient: vertical
+  textOverflow: ellipsis
+This should already be in the spec but was not applied.
+
+FIX 4 — Needs Attention player data: the rows show 
+"No skill level · 4m ago" for all players. Check that the 
+players query in fetchData() includes skill_level and 
+last_visit_date fields in the select string. If they are 
+missing, add them. The relativeTime() and toTitleCase() 
+helpers are already imported — make sure they are being 
+called correctly on p.skill_level and p.last_visit_date 
+in the Needs Attention rows.
+
+FIX 5 — Needs Attention sort: players should be sorted 
+with Drifting (lapsing) first, then Inactive (dormant), 
+within each group sorted by last_visit_date ascending 
+(longest away first). Currently all showing as Drifting 
+which suggests the getEngagementState() filter may not 
+be working correctly — verify the filter logic and the 
+STATE values being compared match the getEngagementState() 
+return values exactly ('lapsing' and 'dormant', not 
+'Drifting' and 'Inactive' — the display labels differ 
+from the internal values).
+
+After all fixes, take a screenshot and confirm.

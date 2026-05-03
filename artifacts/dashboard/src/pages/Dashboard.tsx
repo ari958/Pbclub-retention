@@ -445,7 +445,15 @@ export default function Dashboard() {
       return da - db;
     });
 
-  const queueToShow = messages.slice(0, 3);
+  const queueDeduped = messages
+    .reduce<MessageQueueItem[]>((acc, m) => {
+      const pid = m.conversations?.player_id ?? m.conversations?.players?.id ?? null;
+      if (!pid || !acc.some((x) => (x.conversations?.player_id ?? x.conversations?.players?.id) === pid)) {
+        acc.push(m);
+      }
+      return acc;
+    }, []);
+  const queueToShow = queueDeduped.slice(0, 3);
 
   const allNewPlayers: { player: any; card: any }[] = [];
   for (const card of introCards) {
@@ -654,7 +662,6 @@ export default function Dashboard() {
                     { count: active, color: C.green },
                     { count: lapsing, color: C.orange },
                     { count: dormant, color: C.red },
-                    { count: neverVisited, color: C.border },
                   ].filter((s) => s.count > 0).map((seg, i) => (
                     <div
                       key={i}
@@ -749,7 +756,7 @@ export default function Dashboard() {
                               style={{ width: "100%", boxSizing: "border-box", padding: "6px 8px", fontSize: 11, fontFamily: "var(--font-sans)", lineHeight: 1.5, border: `1px solid ${C.border}`, borderRadius: 4, background: "#1e2530", color: C.textPrimary, resize: "vertical", outline: "none", marginBottom: 6 }}
                             />
                           ) : (
-                            <div style={{ fontSize: 11, color: C.textSecondary, fontStyle: "italic", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" } as React.CSSProperties}>
+                            <div style={{ fontSize: 11, color: C.textSecondary, fontStyle: "italic", lineHeight: 1.4, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", textOverflow: "ellipsis" } as React.CSSProperties}>
                               {m.body}
                             </div>
                           )}
