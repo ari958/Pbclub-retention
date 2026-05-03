@@ -145,6 +145,7 @@ router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
       });
     }
 
+    const upsertErrors: string[] = [];
     for (let i = 0; i < upserts.length; i += 100) {
       const batch = upserts.slice(i, i + 100);
       const { error } = await supabase
@@ -152,12 +153,19 @@ router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
         .upsert(batch, { onConflict: "player_a,player_b" });
       if (error) {
         logger.error({ err: error.message }, "[social-graph] buddy_pairs upsert error");
+        upsertErrors.push(error.message);
       } else {
         pairsUpdated += batch.length;
       }
     }
 
-    res.json({ pairs_updated: pairsUpdated, pairs_below_threshold: pairsBelowThreshold });
+    const response: Record<string, unknown> = {
+      pairs_updated: pairsUpdated,
+      pairs_above_threshold: upserts.length,
+      pairs_below_threshold: pairsBelowThreshold,
+    };
+    if (upsertErrors.length > 0) response.upsert_errors = upsertErrors;
+    res.json(response);
   } catch (err: any) {
     logger.error({ err: err.message }, "[social-graph] compute-buddy-pairs error");
     res.status(500).json({ error: err.message });
