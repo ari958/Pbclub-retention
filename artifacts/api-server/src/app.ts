@@ -32,6 +32,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (_req, res) => res.redirect("/dashboard/"));
+app.get("/onboarding", (_req, res) => res.redirect("/dashboard/onboarding"));
 
 app.use("/api", router);
 
