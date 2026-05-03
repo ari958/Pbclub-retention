@@ -1,0 +1,22 @@
+Play By Point does have API/developer capabilities. Here's what they offer:
+Their approach is webhook-based rather than a traditional REST API. Webhooks send structured JSON payloads to an endpoint URL of your choosing whenever a subscribed event happens in real time — useful for triggering external workflows, syncing data with CRMs or BI tools, and automating payment reconciliation. Playbypoint
+Events they support:
+Reservations, memberships (created, renewed, cancelled), payments, and check-ins. Every payload includes an event_version field for backwards compatibility, and they support Basic Auth or Bearer token authentication with HMAC-SHA256 signature verification. Playbypoint
+The catch on setup: You send them your endpoint URL, auth credentials, and which facilities to scope it to — and their team handles the setup manually, then notifies you when it's live. So it's not self-serve like CourtReserve's API. Playbypoint
+The developer docs live here:
+👉 https://help.playbypoint.com/en/collections/15306442-api-developer-tools
+👉 https://help.playbypoint.com/en/articles/12204677-guide-to-real-time-notifications-with-playbypoint-webhooks
+Bottom line vs. CourtReserve: CourtReserve has a more mature, self-serve REST API with Swagger docs and full CRUD access. Play By Point is more limited — webhooks only, manual setup required, and the docs are thinner.
+Are you comparing the two platforms for PB Club, or trying to build something that connects to whichever one you're already on?You said: show me the docsshow me the docs2:07 PMClaude responded: Their help center is blocking direct fetches, but I was able to pull the full webhook docs from search.Searched the webSearched the webTheir help center is blocking direct fetches, but I was able to pull the full webhook docs from search. Here's everything they've published:
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.25s;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+VvisualizeVvisualize show_widgetThat's everything publicly documented. You can expand each event to see the full payload shape.
+The big limitation worth noting: this is purely push-based (webhooks only). There's no way to query PBP on demand — you can only receive events as they happen. CourtReserve's REST API is considerably more capable if you need to pull historical data or build reports.
+What are you trying to build?You said: so they don't have an api that can pull players and events, sign up etc?so they don't have an api that can pull players and events, sign up etc?2:09 PMClaude responded: Based on what's publicly documented — no.Based on what's publicly documented — no. Play By Point's only developer-facing capability is webhooks, which are purely push-based. There's no public REST API for pulling member lists, querying events, or triggering signups programmatically.
+That said, a few caveats:
+They might have an undocumented or partner-only API. Companies at their stage often build internal APIs that power their own app but don't expose them publicly. Worth asking your PBP rep directly — "do you have a REST API for reading member and event data?"
+Their app almost certainly calls one. If you open PBP in a browser and watch the network requests (DevTools → Network tab), you'd likely see JSON API calls that their frontend makes. Those endpoints technically exist, they're just not documented for outside use — and using them without permission would be against their 
