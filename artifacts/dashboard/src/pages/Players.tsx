@@ -24,6 +24,13 @@ const STATE_ROW_BORDER: Record<EngagementState, string> = {
 
 const AMBER_HOVER = "rgba(232,168,56,0.06)";
 
+const STATE_DISPLAY: Record<EngagementState, string> = {
+  active: "Active",
+  lapsing: "Drifting",
+  dormant: "Inactive",
+  "never-visited": "Never Visited",
+};
+
 function StatePill({ state }: { state: EngagementState }) {
   return (
     <span
@@ -49,10 +56,16 @@ function StatePill({ state }: { state: EngagementState }) {
           flexShrink: 0,
         }}
       />
-      {state}
+      {STATE_DISPLAY[state]}
     </span>
   );
 }
+
+const PROG_DISPLAY: Record<string, string> = {
+  "ready-to-advance": "Move Up a Level",
+  "developing": "Still Developing",
+  "at-ceiling": "At Their Level",
+};
 
 function ProgBadge({ status }: { status: ProgressionStatus }) {
   const isUnset = status === null;
@@ -70,7 +83,7 @@ function ProgBadge({ status }: { status: ProgressionStatus }) {
         whiteSpace: "nowrap",
       }}
     >
-      {toTitleCase(status ?? "unset")}
+      {status === null ? "Needs Attention" : (PROG_DISPLAY[status] ?? toTitleCase(status))}
     </span>
   );
 }
@@ -323,11 +336,11 @@ export default function Players() {
 
   const filterSummary = useMemo(() => {
     const parts: string[] = [`${displayed.length} recipients`];
-    if (engFilter) parts.push(engFilter === "never-visited" ? "Never Visited" : toTitleCase(engFilter));
+    if (engFilter) parts.push(STATE_DISPLAY[engFilter as EngagementState] ?? toTitleCase(engFilter));
     if (memberFilter === "member") parts.push("Member");
     if (memberFilter === "non-member") parts.push("Non-member");
-    if (progFilter === "null") parts.push("Unset progression");
-    else if (progFilter) parts.push(toTitleCase(progFilter));
+    if (progFilter === "null") parts.push("Needs Attention");
+    else if (progFilter) parts.push(PROG_DISPLAY[progFilter] ?? toTitleCase(progFilter));
     if (search) parts.push(`"${search}"`);
     return parts.join(" · ");
   }, [displayed.length, engFilter, memberFilter, progFilter, search]);
@@ -337,7 +350,7 @@ export default function Players() {
       <Sidebar clubName={clubName} />
       <div
         style={{
-          marginLeft: 220,
+          marginLeft: 240,
           flex: 1,
           display: "flex",
           flexDirection: "column",
@@ -401,16 +414,16 @@ export default function Players() {
               <select value={engFilter} onChange={(e) => setEngFilter(e.target.value)} style={selectStyle}>
                 <option value="">All states</option>
                 <option value="active">Active</option>
-                <option value="lapsing">Lapsing</option>
-                <option value="dormant">Dormant</option>
+                <option value="lapsing">Drifting</option>
+                <option value="dormant">Inactive</option>
                 <option value="never-visited">Never Visited</option>
               </select>
               <select value={progFilter} onChange={(e) => setProgFilter(e.target.value)} style={selectStyle}>
                 <option value="">All progressions</option>
-                <option value="null">Unset</option>
-                <option value="ready-to-advance">Ready to Advance</option>
-                <option value="developing">Developing</option>
-                <option value="at-ceiling">At Ceiling</option>
+                <option value="null">Needs Attention</option>
+                <option value="ready-to-advance">Move Up a Level</option>
+                <option value="developing">Still Developing</option>
+                <option value="at-ceiling">At Their Level</option>
               </select>
               <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} style={selectStyle}>
                 <option value="">All members</option>
@@ -459,7 +472,7 @@ export default function Players() {
               >
                 {displayed.length === 0
                   ? "No players selected"
-                  : `Send bulk message (${displayed.length})`}
+                  : `Send Bulk Outreach (${displayed.length})`}
               </button>
             </div>
           </div>
@@ -486,8 +499,8 @@ export default function Players() {
                 <thead>
                   <tr style={{ background: "var(--bg-surface-2)" }}>
                     <SortTh label="PLAYER" col="name" minWidth={200} {...thProps} />
-                    <SortTh label="STATE" col="state" minWidth={130} {...thProps} />
-                    <SortTh label="PROGRESSION" col="progression" minWidth={150} {...thProps} />
+                    <SortTh label="PLAYER STATUS" col="state" minWidth={130} {...thProps} />
+                    <SortTh label="PLAYER PROGRESS" col="progression" minWidth={150} {...thProps} />
                     <SortTh label="SKILL LEVEL" col="skill" minWidth={120} {...thProps} />
                     <SortTh label="LAST VISIT" col="lastVisit" minWidth={110} {...thProps} />
                     <SortTh label="MEMBERSHIP" col="membership" minWidth={110} {...thProps} />

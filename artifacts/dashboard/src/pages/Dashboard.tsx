@@ -28,6 +28,19 @@ function getCooldownLabel(lastOutboundAt: string | null): string | null {
 
 // ─── Shared UI atoms ──────────────────────────────────────────────────────────
 
+const STATE_DISPLAY: Record<EngagementState, string> = {
+  active: "Active",
+  lapsing: "Drifting",
+  dormant: "Inactive",
+  "never-visited": "Never Visited",
+};
+
+const PROG_DISPLAY: Record<string, string> = {
+  "ready-to-advance": "Move Up a Level",
+  "developing": "Still Developing",
+  "at-ceiling": "At Their Level",
+};
+
 function StatePill({ state }: { state: EngagementState }) {
   return (
     <span
@@ -52,7 +65,7 @@ function StatePill({ state }: { state: EngagementState }) {
           flexShrink: 0,
         }}
       />
-      {state}
+      {STATE_DISPLAY[state]}
     </span>
   );
 }
@@ -73,7 +86,7 @@ function ProgressionBadge({ status }: { status: ProgressionStatus }) {
         whiteSpace: "nowrap",
       }}
     >
-      {toTitleCase(status ?? "unset")}
+      {status === null ? "Needs Attention" : (PROG_DISPLAY[status] ?? toTitleCase(status))}
     </span>
   );
 }
@@ -128,10 +141,10 @@ function ActionBtn({
 // ─── Inline progression dropdown ──────────────────────────────────────────────
 
 const PROG_OPTIONS: { label: string; value: ProgressionStatus }[] = [
-  { label: "Ready to Advance", value: "ready-to-advance" },
-  { label: "Developing", value: "developing" },
-  { label: "At Ceiling", value: "at-ceiling" },
-  { label: "Unset", value: null },
+  { label: "Move Up a Level", value: "ready-to-advance" },
+  { label: "Still Developing", value: "developing" },
+  { label: "At Their Level", value: "at-ceiling" },
+  { label: "Needs Attention", value: null },
 ];
 
 function ProgressionDropdown({
@@ -326,6 +339,7 @@ function AtRiskPanel({
   onProgressionChange: () => void;
 }) {
   const [running, setRunning] = useState<string | null>(null);
+  const [succeeded, setSucceeded] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
   const [engFilter, setEngFilter] = useState<EngagementState | null>(filterState);
   const [progFilter, setProgFilter] = useState("");
@@ -337,7 +351,15 @@ function AtRiskPanel({
 
   const handleRun = async (playerId: string) => {
     setRunning(playerId);
-    try { await onRunAgent(playerId); } finally { setRunning(null); }
+    try {
+      await onRunAgent(playerId);
+      setSucceeded((prev) => new Set([...prev, playerId]));
+      setTimeout(() => {
+        setSucceeded((prev) => { const next = new Set(prev); next.delete(playerId); return next; });
+      }, 2000);
+    } finally {
+      setRunning(null);
+    }
   };
 
   const handleEngChange = (val: string) => {
@@ -406,16 +428,16 @@ function AtRiskPanel({
         <select value={engFilter ?? ""} onChange={(e) => handleEngChange(e.target.value)} style={filterSelectStyle}>
           <option value="">All states</option>
           <option value="active">Active</option>
-          <option value="lapsing">Lapsing</option>
-          <option value="dormant">Dormant</option>
+          <option value="lapsing">Drifting</option>
+          <option value="dormant">Inactive</option>
           <option value="never-visited">Never Visited</option>
         </select>
         <select value={progFilter} onChange={(e) => setProgFilter(e.target.value)} style={filterSelectStyle}>
           <option value="">All progressions</option>
-          <option value="null">Unset</option>
-          <option value="developing">Developing</option>
-          <option value="ready-to-advance">Ready to Advance</option>
-          <option value="at-ceiling">At Ceiling</option>
+          <option value="null">Needs Attention</option>
+          <option value="developing">Still Developing</option>
+          <option value="ready-to-advance">Move Up a Level</option>
+          <option value="at-ceiling">At Their Level</option>
         </select>
         <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} style={filterSelectStyle}>
           <option value="">All members</option>
@@ -433,8 +455,8 @@ function AtRiskPanel({
           <thead>
             <tr style={{ background: "var(--bg-surface-2)" }}>
               <SortTh label="PLAYER" col="name" {...thProps} />
-              <SortTh label="STATE" col="state" {...thProps} />
-              <SortTh label="PROGRESSION" col="progression" {...thProps} />
+              <SortTh label="PLAYER STATUS" col="state" {...thProps} />
+              <SortTh label="PLAYER PROGRESS" col="progression" {...thProps} />
               <SortTh label="LAST VISIT" col="lastVisit" {...thProps} />
               <th style={{ padding: "8px 16px", borderBottom: "1px solid var(--border)" }} />
             </tr>
@@ -475,8 +497,19 @@ function AtRiskPanel({
                     <td style={{ padding: "12px 16px", fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text-secondary)", whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
                       {relativeTime(p.last_visit_date)}
                     </td>
-                    <td style={{ padding: "12px 16px", textAlign: "right" }}>
-                      <ActionBtn label={isRunning ? "Running…" : "Run Agent"} variant="default" disabled={isRunning} onClick={() => handleRun(p.id)} />
+                    <td style={{ padding: "10px 16px", textAlign: "right", verticalAlign: "middle", minWidth: 140 }} onClick={(e) => e.stopPropagation()}>
+                      {succeeded.has(p.id) ? (
+                        <span style={{ fontSize: 12, color: "var(--state-active)", fontWeight: 500 }}>✓ Added to Queue</span>
+                      ) : isRunning ? (
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
+                          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>Sending… (~20s)</span>
+                          <div style={{ width: 112, height: 2, background: "var(--border)", borderRadius: 1, overflow: "hidden" }}>
+                            <div style={{ height: "100%", background: "var(--accent)", borderRadius: 1, animation: "progressBar 20s linear forwards" }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <ActionBtn label="Send Outreach" variant="default" onClick={() => handleRun(p.id)} />
+                      )}
                     </td>
                   </tr>
                 );
@@ -526,7 +559,7 @@ function StaffIntroPanel({ cards, loading }: { cards: any[]; loading: boolean })
   return (
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
       <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>Upcoming — New Players</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>New Player Intros</span>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)", background: "var(--bg-surface-2)", padding: "2px 8px", borderRadius: 3, border: "1px solid var(--border)" }}>
           {loading ? "…" : `${totalNew} new · 7d`}
         </span>
@@ -609,7 +642,7 @@ function NeedsAssessmentPanel({ players, onUpdate }: { players: Player[]; onUpda
   return (
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
       <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>Needs Assessment</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>Needs Attention</span>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--state-lapsing)", background: "rgba(212,129,58,0.08)", padding: "2px 8px", borderRadius: 3, border: "1px solid rgba(212,129,58,0.2)" }}>
           {players.length} pending
         </span>
@@ -633,9 +666,9 @@ function NeedsAssessmentPanel({ players, onUpdate }: { players: Player[]; onUpda
                   <span style={{ fontSize: 14, color: "var(--state-active)", fontWeight: 600 }}>✓</span>
                 ) : (
                   <>
-                    <ActionBtn label="Ready" variant="primary" disabled={loading === p.id + "ready-to-advance"} onClick={() => updateProgression(p.id, "ready-to-advance")} />
-                    <ActionBtn label="Developing" disabled={loading === p.id + "developing"} onClick={() => updateProgression(p.id, "developing")} />
-                    <ActionBtn label="Ceiling" disabled={loading === p.id + "at-ceiling"} onClick={() => updateProgression(p.id, "at-ceiling")} />
+                    <ActionBtn label="Move Up" variant="primary" disabled={loading === p.id + "ready-to-advance"} onClick={() => updateProgression(p.id, "ready-to-advance")} />
+                    <ActionBtn label="Still Developing" disabled={loading === p.id + "developing"} onClick={() => updateProgression(p.id, "developing")} />
+                    <ActionBtn label="At Their Level" disabled={loading === p.id + "at-ceiling"} onClick={() => updateProgression(p.id, "at-ceiling")} />
                   </>
                 )}
               </div>
@@ -732,7 +765,7 @@ function MessageQueuePanel({
   return (
     <section style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
       <div style={{ padding: "14px 20px 12px", borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontWeight: 600, fontSize: 13 }}>Message Queue</span>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>Outreach Queue</span>
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)", background: "var(--bg-surface-2)", padding: "2px 8px", borderRadius: 3, border: "1px solid var(--border)" }}>
           {messages.length} pending
         </span>
@@ -740,7 +773,7 @@ function MessageQueuePanel({
       <div style={{ maxHeight: 380, overflowY: "auto" }}>
         {messages.length === 0 ? (
           <div style={{ padding: "28px 20px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
-            No messages queued. Run the agent to generate personalized outreach.
+            No messages queued. Use Send Outreach to All to generate personalized messages.
           </div>
         ) : (
           messages.map((m, i) => {
@@ -804,7 +837,7 @@ function MessageQueuePanel({
                       onClick={() => sendMessage(m.id)}
                     />
                     <ActionBtn label="Edit" disabled={busy} onClick={() => startEdit(m.id, m.body)} />
-                    <ActionBtn label={isSkipping ? "Skipping…" : "Skip"} variant="danger" disabled={busy} onClick={() => skipMessage(m.id)} />
+                    <ActionBtn label={isSkipping ? "Dismissing…" : "Dismiss"} variant="danger" disabled={busy} onClick={() => skipMessage(m.id)} />
                   </div>
                 )}
               </div>
@@ -933,7 +966,7 @@ export default function Dashboard() {
 
       let generated = 0;
       for (let i = 0; i < targets.length; i++) {
-        setBatchStatus(`Running ${i + 1} of ${targets.length}…`);
+        setBatchStatus(`Generating ${i + 1} of ${targets.length}…`);
         const res = await fetch("/api/agent/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1023,25 +1056,24 @@ export default function Dashboard() {
 
   const statCards = [
     { key: "active" as EngagementState, label: "ACTIVE PLAYERS", value: active, color: "var(--state-active)" },
-    { key: "lapsing" as EngagementState, label: "LAPSING", value: lapsing, color: "var(--state-lapsing)" },
-    { key: "dormant" as EngagementState, label: "DORMANT", value: dormant, color: "var(--state-dormant)" },
-    { key: "never-visited" as EngagementState, label: "NEVER VISITED", value: neverVisited, color: "var(--text-tertiary)" },
+    { key: "lapsing" as EngagementState, label: "DRIFTING", value: lapsing, color: "var(--state-lapsing)" },
+    { key: "dormant" as EngagementState, label: "INACTIVE", value: dormant, color: "var(--state-dormant)" },
   ];
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={clubName} messageCount={messages.length} />
-      <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px", borderBottom: "1px solid var(--border)", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 5 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Dashboard</span>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             {batchStatus && <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--text-tertiary)" }}>{batchStatus}</span>}
-            <ActionBtn label={syncRunning ? "Syncing…" : "Sync All"} disabled={syncRunning} onClick={() => setConfirmDialog({ message: "Manual sync may affect booking performance for players currently using PodPlay. Best run during off-hours. Continue?", onConfirm: () => { setConfirmDialog(null); syncAll(); } })} />
-            <ActionBtn label={batchRunning ? "Running…" : "Run Batch Agent"} variant="primary" disabled={batchRunning} onClick={() => setConfirmDialog({ message: "Running the agent for all players makes multiple API calls. For best performance, schedule this during off-hours. Continue?", onConfirm: () => { setConfirmDialog(null); runBatchAgent(); } })} />
+            <ActionBtn label={syncRunning ? "Refreshing…" : "Refresh Data"} disabled={syncRunning} onClick={() => setConfirmDialog({ message: "This will pull the latest attendance from PodPlay. Best run during off-hours to avoid affecting active users. Continue?", onConfirm: () => { setConfirmDialog(null); syncAll(); } })} />
+            <ActionBtn label={batchRunning ? "Generating…" : "Send Outreach to All"} variant="primary" disabled={batchRunning} onClick={() => { const targetCount = players.filter((p) => ["lapsing", "dormant"].includes(getEngagementState(p.last_visit_date))).slice(0, 50).length; const estMin = Math.max(1, Math.round(targetCount * 20 / 60)); setConfirmDialog({ message: `This will generate outreach for ${targetCount} drifting and inactive players (~${estMin} min). Best run during off-hours. Continue?`, onConfirm: () => { setConfirmDialog(null); runBatchAgent(); } }); }} />
           </div>
         </header>
         <main style={{ flex: 1, overflowY: "auto", padding: "24px 28px", background: "var(--bg-surface-2)" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 12, marginBottom: 20 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
             {statCards.map((s) => (
               <div key={s.key} onClick={() => handleCardClick(s.key)} style={{ background: "var(--bg-surface)", border: "1px solid var(--border)", borderRadius: 8, padding: "16px 20px 14px", cursor: "pointer", userSelect: "none", transition: "box-shadow 0.15s", position: "relative", overflow: "hidden" }}
                 onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.boxShadow = "0 4px 16px rgba(0,0,0,0.10)")}

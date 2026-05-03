@@ -30,8 +30,8 @@ const KNOWN_LABELS: Record<string, string> = {
   signup_link_base: "Signup link base URL",
   follow_up_days: "Follow-up window (days)",
   enabled: "Agent enabled",
-  dormant_threshold_days: "Dormant Threshold Days",
-  lapsing_threshold_days: "Lapsing Threshold Days",
+  dormant_threshold_days: "Inactive Threshold Days",
+  lapsing_threshold_days: "Drifting Threshold Days",
   max_messages_per_thread: "Max Messages Per Thread",
 };
 
@@ -339,7 +339,7 @@ export default function Settings() {
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={club?.name ?? ""} />
-      <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", padding: "0 28px", borderBottom: "1px solid var(--border)", background: "var(--bg-surface)", position: "sticky", top: 0, zIndex: 5 }}>
           <span style={{ fontWeight: 600, fontSize: 14 }}>Settings</span>
         </header>

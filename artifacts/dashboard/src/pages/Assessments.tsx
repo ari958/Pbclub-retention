@@ -104,7 +104,7 @@ export default function Assessments() {
       <Sidebar clubName={clubName} />
       <div
         style={{
-          marginLeft: 220,
+          marginLeft: 240,
           flex: 1,
           display: "flex",
           flexDirection: "column",
@@ -126,7 +126,7 @@ export default function Assessments() {
             zIndex: 5,
           }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Assessments</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Progress</span>
           <span
             style={{
               fontFamily: "var(--font-mono)",
@@ -254,7 +254,7 @@ export default function Assessments() {
                     ) : (
                       <>
                         <ActionBtn
-                          label="Ready to advance"
+                          label="Move Up a Level"
                           variant="primary"
                           disabled={loadingKey === p.id + "ready-to-advance"}
                           onClick={() =>
@@ -262,12 +262,12 @@ export default function Assessments() {
                           }
                         />
                         <ActionBtn
-                          label="Developing"
+                          label="Still Developing"
                           disabled={loadingKey === p.id + "developing"}
                           onClick={() => updateProgression(p.id, "developing")}
                         />
                         <ActionBtn
-                          label="At ceiling"
+                          label="At Their Level"
                           disabled={loadingKey === p.id + "at-ceiling"}
                           onClick={() => updateProgression(p.id, "at-ceiling")}
                         />

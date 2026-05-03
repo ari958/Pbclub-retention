@@ -1,0 +1,309 @@
+We are rebuilding the entire frontend UI/UX of Pulse — a player 
+retention platform for pickleball clubs. The current UI works 
+technically but feels like a developer tool. We need it to feel 
+like a premium "wizard tool" — clean, intelligent, action-oriented. 
+Think a mix of Gainsight's data density with Linear's visual 
+cleanliness. Coaches and club owners are the users, not engineers.
+
+THE PRODUCT GOAL:
+Pulse helps club staff answer three questions every day:
+1. Who needs attention and why?
+2. What outreach is ready to send?
+3. How is the club performing?
+
+Every screen should make those questions easy to answer in under 
+10 seconds. No jargon, no spinners with no feedback, no buttons 
+that say "Run Agent."
+
+TERMINOLOGY CHANGES — apply these globally across ALL files:
+- "Run Agent" → "Send Outreach"
+- "Run Batch Agent" → "Send Outreach to All"
+- "Engagement State" → "Player Status"
+- "Dormant" → "Inactive"
+- "Lapsing" → "Drifting"
+- "Never Visited" → "Never Visited" (keep as-is)
+- "Progression Status" → "Player Progress"
+- "Ready to Advance" → "Move Up a Level"
+- "At Ceiling" → "At Their Level"
+- "Developing" → "Still Developing"
+- "Needs Assessment" → "Needs Attention"
+- "Sync All" → "Refresh Data"
+- "Skip" (message action) → "Dismiss"
+- "Session Feedback" → "Session Ratings"
+- "Buddy Pairs" → "Club Friends"
+- "Staff Intro Cards" → "New Player Intros"
+- "Message Queue" → "Outreach Queue"
+- "Confidence Score" → "Level Trust"
+- "Assessments" (nav) → "Progress"
+- "Session Feedback" (nav) → "Session Ratings"
+
+DESIGN SYSTEM — keep existing CSS variables, extend them:
+
+Add to :root in index.css:
+  /* Pulse design tokens */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 16px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.12), 0 4px 8px rgba(0,0,0,0.06);
+  --transition: 0.15s ease;
+  --accent-hover: #d4962e;
+
+GLOBAL UI PRINCIPLES — apply to every page:
+
+1. LOADING STATES: Never use a plain spinner. Every async action 
+   gets one of:
+   - A progress bar under the button that fills over estimated time
+   - A shimmer skeleton for data loading
+   - A step indicator for multi-step operations ("Step 1 of 3 — 
+     Fetching players...")
+   Buttons show estimated time: "Send Outreach (~30s)"
+   Once complete: brief success state before returning to normal
+
+2. EMPTY STATES: Every empty list/table gets an illustrated empty 
+   state with a clear action. Not just "No data."
+
+3. MICRO-INTERACTIONS: 
+   - Buttons scale slightly on hover (transform: scale(1.01))
+   - Cards lift on hover (box-shadow transition)
+   - Success actions show a brief green checkmark before resetting
+   - Destructive actions (Dismiss) require a single confirmation 
+     inline, not a modal
+
+4. TYPOGRAPHY HIERARCHY:
+   - Page titles: 20px, fontWeight 600
+   - Section headers: 13px, fontWeight 600, letterSpacing 0.04em, 
+     color var(--text-secondary), UPPERCASE
+   - Body: 13px, var(--text-primary)
+   - Metadata/labels: 11px, var(--font-mono), var(--text-tertiary)
+   - Numbers/stats: 32px, fontWeight 700, tabular-nums
+
+5. CARD PATTERN: All panels use this base:
+   background: var(--bg-surface)
+   border: 1px solid var(--border)
+   borderRadius: var(--radius-md)
+   boxShadow: var(--shadow-sm)
+   No raw sections with just a border — everything is a card.
+
+--- SIDEBAR REDESIGN ---
+
+File: artifacts/dashboard/src/components/Sidebar.tsx
+
+Keep the same data/logic. Redesign the visual:
+
+- Width: 240px (was 220px)
+- Background: var(--bg-primary) — dark sidebar, light main content
+- Logo area: "Pulse" in 22px, fontWeight 700, var(--accent), 
+  with a small animated pulse dot (●) before it that breathes 
+  using a CSS keyframe opacity animation
+- Club name: 12px, var(--text-tertiary), truncated if long
+- Nav items get icons — use simple Unicode/emoji icons that are 
+  professional:
+  ○ Dashboard → ◈ (or use a simple SVG home icon inline)
+  ○ Players → ◎ 
+  ○ Progress → ↑
+  ○ Session Ratings → ★
+  ○ Messages → ✉
+  ○ Settings → ⚙
+  Actually — use clean SVG icons inline, not emoji. Keep them 
+  16x16, strokeWidth 1.5, color inherited.
+- Active state: white text, accent left border (3px), subtle 
+  amber background
+- Inactive: var(--text-tertiary), no background
+- Badge: pill shape, accent background for pending, green for 
+  unread replies
+- Bottom: sync status with pulsing green dot
+
+--- DASHBOARD PAGE REDESIGN ---
+
+File: artifacts/dashboard/src/pages/Dashboard.tsx
+
+This is the most important page. Goal: answer "what needs my 
+attention today" in under 10 seconds.
+
+LAYOUT: Two columns
+- Left (65%): stat strip + players table
+- Right (35%): action panels stacked vertically
+
+TOP STAT STRIP (full width, above columns):
+Replace the current 7-card grid with 5 cleaner stat cards in a 
+horizontal strip. Each card:
+- borderRadius: var(--radius-md)
+- padding: 20px 24px
+- Large number (32px, bold) + label (11px mono uppercase) + 
+  trend indicator
+
+Cards (left to right):
+1. ACTIVE PLAYERS — count, color var(--state-active)
+   Sub-label: "playing regularly"
+2. DRIFTING — lapsing count, color var(--state-lapsing)  
+   Sub-label: "need a nudge" — clicking filters the table
+3. INACTIVE — dormant count, color var(--state-dormant)
+   Sub-label: "haven't been back" — clicking filters table
+4. RESPONSE RATE — percentage, color var(--accent)
+   Sub-label: "last 30 days"
+   Mini sparkline bar (5 fake segments that animate in) — 
+   or just a simple visual indicator
+5. WIN-BACK RATE — percentage, color var(--state-active)
+   Sub-label: "returned after outreach"
+
+Each stat card is clickable and subtly highlights when active 
+(accent bottom border animates in, slight shadow lift).
+
+LEFT COLUMN — PLAYERS TABLE:
+Header: "Players" (left) + filter chips (right) — not dropdowns.
+Filter chips for status: All · Active · Drifting · Inactive · 
+Never Visited
+Filter chips for progress: All · Needs Attention · Move Up · 
+Still Developing
+
+Table columns: Player | Status | Progress | Last Visit | Action
+- Player cell: name (13px 500) + skill level sub-label (11px 
+  tertiary). If player has "level concern" flag: small amber 
+  ⚠ chip inline
+- Status cell: pill badge using new terminology and colors
+- Progress cell: clickable badge (dropdown inline, same as now)
+- Last Visit: relative time in mono
+- Action cell: single button "Send Outreach" — on click shows 
+  a progress indicator inline in the row, not a page-level 
+  spinner. Button shows "Sending... (~20s)" with a thin 
+  progress bar under it. On complete: "✓ Added to Queue" in 
+  green for 2 seconds, then resets.
+
+"Send Outreach to All" button in header — shows a modal 
+confirmation with count and estimated time ("This will generate 
+outreach for 23 drifting and inactive players. Takes about 4 
+minutes.") with a real-time progress counter during run 
+("14 of 23 complete").
+
+RIGHT COLUMN — stacked panels:
+
+Panel 1: NEEDS ATTENTION
+- Header: "Needs Attention" + count badge
+- Shows players with null progression_status
+- Each row: name + skill level + last visit + three action 
+  buttons: "Move Up" / "Still Developing" / "At Their Level"
+- On click: button shows brief spinner then ✓, row fades out
+
+Panel 2: NEW PLAYER INTROS
+- Header: "New Player Intros" + "Next 7 days" chip
+- The StaffIntroPanel — redesigned
+- Group by date with clean date dividers
+- New player rows: 🆕 name + visit ordinal + buddy connection 
+  in italic tertiary
+- Loading: skeleton rows
+
+Panel 3: OUTREACH QUEUE  
+- Header: "Outreach Queue" + count badge
+- Each message row:
+  - Player name (clickable, opens drawer) + routing tag chip
+  - Message preview (2 lines, truncated)
+  - Cooldown badge if applicable
+  - Actions: "Send" | "Edit" | "Dismiss"
+  - "Send" button: shows inline progress bar under it 
+    (~15s estimated), then "✓ Sent" 
+  - "Dismiss" button: turns red on hover, single click shows 
+    inline "Dismiss this message?" with Yes/No — no modal
+
+--- PLAYERS PAGE REDESIGN ---
+
+File: artifacts/dashboard/src/pages/Players.tsx
+
+Header area:
+- Page title "Players" (left)
+- Right side: "Export CSV" (ghost button) + "Send Bulk Outreach" 
+  (accent button with player count)
+
+Filter bar: replace dropdowns with filter chips that toggle.
+Chips: All · Active · Drifting · Inactive · Never Visited · 
+Level Concern
+Second row: All Progress · Needs Attention · Move Up a Level · 
+Still Developing · At Their Level
+Member toggle: All · Members · Non-members
+
+Table: same columns as now but with the new terminology and 
+the level concern badge on player name cell.
+
+Pagination: cleaner — "← Previous  Page 2 of 14  Next →" 
+centered, with page jump input.
+
+--- PROGRESS PAGE REDESIGN ---
+
+File: artifacts/dashboard/src/pages/Assessments.tsx
+(rename the page title to "Progress" — keep the filename)
+
+This page should feel like a coaching tool. Two panels:
+
+Left: Players who need a progress assessment (null status)
+- Card per player: name + skill level + last visit + 3 action 
+  buttons with clear labels
+- "Move Up a Level" (green), "Still Developing" (default), 
+  "At Their Level" (default)
+- Checkmark animation on save, card slides out
+
+Right: Players recently assessed
+- Shows last 20 players with a set progression status
+- Name + what they were set to + when + by whom (if tracked)
+
+--- SESSION RATINGS PAGE ---
+
+File: artifacts/dashboard/src/pages/SessionFeedback.tsx
+(keep filename, rename all display text)
+
+Left panel: "Session Health" — keep existing logic, update 
+all text from "session_feedback" language to "Session Ratings" 
+language. ⚠ "Review Needed" badge stays but in cleaner style.
+
+Right panel: "Message Template" — keep existing logic, 
+rename labels.
+
+--- MESSAGES PAGE ---
+
+File: artifacts/dashboard/src/pages/Messages.tsx
+Keep existing logic. Rename "Replies" tab content to use 
+plain language. Ensure all buttons use new terminology.
+
+--- SETTINGS PAGE ---
+
+File: artifacts/dashboard/src/pages/Settings.tsx
+Keep existing logic. Clean up any developer-facing language.
+Rename sections to plain English.
+
+--- SHARED COMPONENTS ---
+
+ActionBtn component (used everywhere):
+Redesign to have three clear variants:
+- primary: accent background, white text, slight shadow
+- default: white background, border, text-primary  
+- danger: appears default until hover — then red tint
+- All variants: scale(1.02) on hover, transition 0.15s
+- Disabled state: 40% opacity, not-allowed cursor
+- Loading state prop: shows thin animated progress bar 
+  under the button + "..." appended to label
+
+ProgressIndicator component (new — create this):
+A reusable component that shows operation progress.
+Props: { steps: string[], currentStep: number, estimatedSeconds: number }
+Shows: current step label + progress bar + "~Xs remaining" 
+countdown that ticks down in real time.
+Use this for: batch agent runs, sync operations, any 
+multi-step async work.
+
+--- ARCHITECTURE NOTES ---
+- Do NOT change any API calls, route logic, or data fetching — 
+  only visual/UX layer changes
+- Do NOT change file names except where noted
+- Keep all existing TypeScript types
+- Apply new terminology in display text only — keep variable 
+  names and API field names unchanged internally
+- The sidebar width change from 220 to 240px means updating 
+  marginLeft: 220 → marginLeft: 240 in every page file
+- Keep ErrorBoundary in App.tsx unchanged
+- Keep all existing Supabase queries unchanged
+- Routes in App.tsx: add a redirect from /assessments to 
+  /progress, OR just rename the nav label and keep the path 
+  — keeping the path /assessments is fine
+- After completing all changes, take a screenshot of the 
+  Dashboard page and the Players page to confirm the redesign 
+  looks correct

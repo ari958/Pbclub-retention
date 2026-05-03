@@ -2,6 +2,62 @@ import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
+// ─── SVG Icons ────────────────────────────────────────────────────────────────
+
+function IconDashboard() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 6.5L8 2L14 6.5V13C14 13.6 13.6 14 13 14H10.5V10H5.5V14H3C2.4 14 2 13.6 2 13V6.5Z" />
+    </svg>
+  );
+}
+
+function IconPlayers() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="6" cy="5" r="2.5" />
+      <path d="M1 13c0-2.5 2.2-4 5-4s5 1.5 5 4" />
+      <circle cx="12" cy="5.5" r="2" />
+      <path d="M11.5 10c1.6.3 2.5 1.2 2.5 2.5" />
+    </svg>
+  );
+}
+
+function IconProgress() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="1.5,11.5 5.5,7 8.5,9.5 14.5,3" />
+      <polyline points="11,3 14.5,3 14.5,6.5" />
+    </svg>
+  );
+}
+
+function IconStar() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="8,1.5 9.9,6 14.8,6.4 11.2,9.5 12.3,14.3 8,11.8 3.7,14.3 4.8,9.5 1.2,6.4 6.1,6" />
+    </svg>
+  );
+}
+
+function IconMessages() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="3.5" width="13" height="9" rx="1.5" />
+      <polyline points="1.5,3.5 8,9 14.5,3.5" />
+    </svg>
+  );
+}
+
+function IconSettings() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1.5V3M8 13V14.5M3 3L4.5 4.5M11.5 11.5L13 13M1.5 8H3M13 8H14.5M3 13L4.5 11.5M11.5 4.5L13 3" />
+    </svg>
+  );
+}
+
 interface SidebarProps {
   clubName: string;
   lastSynced?: string | null;
@@ -12,7 +68,6 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
   const location = useLocation();
   const [unreadReplies, setUnreadReplies] = useState(0);
 
-  // Poll for unread inbound replies every 30 seconds
   useEffect(() => {
     const fetchUnread = async () => {
       const { count } = await supabase
@@ -22,13 +77,11 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
         .is("read_at", null);
       setUnreadReplies(count ?? 0);
     };
-
     fetchUnread();
     const interval = setInterval(fetchUnread, 30000);
     return () => clearInterval(interval);
   }, []);
 
-  // Mark replies as read when navigating to /messages
   useEffect(() => {
     if (location.pathname === "/messages" && unreadReplies > 0) {
       const markRead = async () => {
@@ -39,35 +92,33 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
           .is("read_at", null);
         setUnreadReplies(0);
       };
-      // Small delay so the badge is visible briefly before clearing
       const timer = setTimeout(markRead, 1500);
       return () => clearTimeout(timer);
     }
   }, [location.pathname, unreadReplies]);
 
-  // Total Messages badge: pending queue + unread replies
   const messagesBadge = messageCount + unreadReplies;
 
   const navItems = [
-    { label: "Dashboard", path: "/" },
-    { label: "Players", path: "/players" },
-    { label: "Assessments", path: "/assessments" },
-    { label: "Session Feedback", path: "/feedback" },
+    { label: "Dashboard", path: "/", icon: <IconDashboard /> },
+    { label: "Players", path: "/players", icon: <IconPlayers /> },
+    { label: "Progress", path: "/assessments", icon: <IconProgress /> },
+    { label: "Session Ratings", path: "/feedback", icon: <IconStar /> },
     {
       label: "Messages",
       path: "/messages",
+      icon: <IconMessages />,
       badge: messagesBadge > 0 ? messagesBadge : undefined,
-      // Show reply indicator separately when there are unread replies
       replyAlert: unreadReplies > 0,
     },
-    { label: "Settings", path: "/settings" },
+    { label: "Settings", path: "/settings", icon: <IconSettings /> },
   ];
 
   return (
     <aside
       style={{
-        width: 220,
-        minWidth: 220,
+        width: 240,
+        minWidth: 240,
         height: "100vh",
         position: "fixed",
         top: 0,
@@ -80,23 +131,39 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
       }}
     >
       <div style={{ padding: "20px 20px 16px" }}>
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 18,
-            fontWeight: 500,
-            color: "var(--accent)",
-            letterSpacing: "-0.02em",
-          }}
-        >
-          Pulse
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: "var(--accent)",
+              flexShrink: 0,
+              animation: "pulseBreath 2.4s ease-in-out infinite",
+            }}
+          />
+          <span
+            style={{
+              fontFamily: "var(--font-sans)",
+              fontSize: 22,
+              fontWeight: 700,
+              color: "var(--accent)",
+              letterSpacing: "-0.02em",
+              lineHeight: 1,
+            }}
+          >
+            Pulse
+          </span>
         </div>
         <div
           style={{
             fontSize: 12,
             color: "var(--text-tertiary)",
-            marginTop: 4,
+            marginTop: 7,
             fontWeight: 400,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
           }}
         >
           {clubName || "—"}
@@ -120,7 +187,7 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "8px 20px",
+                padding: "9px 20px",
                 fontSize: 13,
                 fontWeight: isActive ? 500 : 400,
                 color: isActive ? "#fff" : "var(--text-tertiary)",
@@ -134,9 +201,11 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
                 textDecoration: "none",
               }}
             >
-              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ opacity: isActive ? 1 : 0.65, display: "flex", flexShrink: 0 }}>
+                  {item.icon}
+                </span>
                 {item.label}
-                {/* Green dot for unread replies */}
                 {"replyAlert" in item && item.replyAlert && (
                   <span
                     style={{
@@ -156,9 +225,10 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
                     fontSize: 10,
                     fontWeight: 600,
                     fontFamily: "var(--font-mono)",
-                    background: "replyAlert" in item && item.replyAlert
-                      ? "var(--state-active)"
-                      : "var(--accent)",
+                    background:
+                      "replyAlert" in item && item.replyAlert
+                        ? "var(--state-active)"
+                        : "var(--accent)",
                     color: "#fff",
                     borderRadius: 10,
                     padding: "1px 6px",

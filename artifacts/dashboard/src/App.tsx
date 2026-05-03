@@ -38,7 +38,7 @@ class ErrorBoundary extends Component<
       return (
         <div
           style={{
-            marginLeft: 220,
+            marginLeft: 240,
             padding: "48px 40px",
             fontFamily: "var(--font-sans)",
             display: "flex",

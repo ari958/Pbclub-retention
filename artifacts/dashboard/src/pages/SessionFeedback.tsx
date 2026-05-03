@@ -196,7 +196,7 @@ export default function SessionFeedback() {
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
       <Sidebar clubName={clubName} />
-      <div style={{ marginLeft: 220, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{
             height: 52,
@@ -211,7 +211,7 @@ export default function SessionFeedback() {
             zIndex: 5,
           }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Session Feedback</span>
+          <span style={{ fontWeight: 600, fontSize: 14 }}>Session Ratings</span>
         </header>
 
         <main
@@ -399,7 +399,7 @@ export default function SessionFeedback() {
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              <span style={{ fontWeight: 600, fontSize: 13 }}>Feedback Message Template</span>
+              <span style={{ fontWeight: 600, fontSize: 13 }}>Rating Message Template</span>
             </div>
 
             <div style={{ padding: "20px" }}>
