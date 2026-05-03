@@ -67,15 +67,15 @@ function ChurnBadge({ risk }: { risk: string | null }) {
   if (!risk || risk === "low") return null;
   const styles: Record<string, { background: string; color: string; border: string; label: string }> = {
     high: {
-      background: "rgba(207,34,46,0.15)",
+      background: "rgba(207,34,46,0.12)",
       color: "#ff6b6b",
-      border: "1px solid rgba(207,34,46,0.25)",
+      border: "1px solid rgba(207,34,46,0.3)",
       label: "High Churn Risk",
     },
     medium: {
       background: "rgba(212,129,58,0.12)",
-      color: "#d4813a",
-      border: "1px solid rgba(212,129,58,0.25)",
+      color: "#f0a050",
+      border: "1px solid rgba(212,129,58,0.3)",
       label: "Medium Risk",
     },
   };

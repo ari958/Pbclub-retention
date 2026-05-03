@@ -870,11 +870,6 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                   >
                     {player.churn_risk === "high" ? "HIGH RISK" : "MEDIUM RISK"}
                   </span>
-                  {player.churn_score != null && (
-                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
-                      score: {player.churn_score}/100
-                    </span>
-                  )}
                 </div>
                 <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
                   {player.churn_risk === "high"
