@@ -1,15 +1,15 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, useEffect, useState } from "react";
 import Dashboard from "./pages/Dashboard";
 import Players from "./pages/Players";
 import Assessments from "./pages/Assessments";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
 import SessionFeedback from "./pages/SessionFeedback";
+import Onboarding from "./pages/Onboarding";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
-// Catches runtime errors in any page so a crash in one doesn't blank the whole app.
 
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -122,63 +122,120 @@ function NotFound() {
   );
 }
 
+// ─── Onboarding guard ─────────────────────────────────────────────────────────
+// Checks onboarding status on first load. If the club has not completed
+// onboarding it redirects to /onboarding before rendering any dashboard page.
+
+function OnboardingGuard({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    // Never block the onboarding page itself
+    if (location.pathname === "/onboarding") {
+      setReady(true);
+      return;
+    }
+
+    fetch("/api/onboarding/status")
+      .then((r) => r.json())
+      .then((data: { onboarded?: boolean }) => {
+        if (data.onboarded === false) {
+          navigate("/onboarding", { replace: true });
+        }
+      })
+      .catch(() => {
+        // On any network error fall through and show the dashboard
+      })
+      .finally(() => setReady(true));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!ready) {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0d1117",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "#6e7681",
+        }}
+      >
+        Loading…
+      </div>
+    );
+  }
+
+  return <>{children}</>;
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
-        <Routes>
-          <Route
-            path="/"
-            element={
-              <ErrorBoundary pageName="Dashboard">
-                <Dashboard />
-              </ErrorBoundary>
-            }
-          />
-          <Route
-            path="/players"
-            element={
-              <ErrorBoundary pageName="Players">
-                <Players />
-              </ErrorBoundary>
-            }
-          />
-          <Route
-            path="/assessments"
-            element={
-              <ErrorBoundary pageName="Assessments">
-                <Assessments />
-              </ErrorBoundary>
-            }
-          />
-          <Route
-            path="/messages"
-            element={
-              <ErrorBoundary pageName="Messages">
-                <Messages />
-              </ErrorBoundary>
-            }
-          />
-          <Route
-            path="/settings"
-            element={
-              <ErrorBoundary pageName="Settings">
-                <Settings />
-              </ErrorBoundary>
-            }
-          />
-          <Route
-            path="/feedback"
-            element={
-              <ErrorBoundary pageName="Session Feedback">
-                <SessionFeedback />
-              </ErrorBoundary>
-            }
-          />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
+        <OnboardingGuard>
+          <Routes>
+            {/* Standalone onboarding flow — no sidebar */}
+            <Route path="/onboarding" element={<Onboarding />} />
+
+            {/* Dashboard routes */}
+            <Route
+              path="/"
+              element={
+                <ErrorBoundary pageName="Dashboard">
+                  <Dashboard />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/players"
+              element={
+                <ErrorBoundary pageName="Players">
+                  <Players />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/assessments"
+              element={
+                <ErrorBoundary pageName="Assessments">
+                  <Assessments />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/messages"
+              element={
+                <ErrorBoundary pageName="Messages">
+                  <Messages />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/settings"
+              element={
+                <ErrorBoundary pageName="Settings">
+                  <Settings />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/feedback"
+              element={
+                <ErrorBoundary pageName="Session Feedback">
+                  <SessionFeedback />
+                </ErrorBoundary>
+              }
+            />
+            <Route path="*" element={<NotFound />} />
+          </Routes>
+        </OnboardingGuard>
       </ToastProvider>
     </BrowserRouter>
   );

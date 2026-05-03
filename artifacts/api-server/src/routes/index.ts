@@ -12,6 +12,7 @@ import eventsRouter from "./events";
 import feedbackRouter from "./feedback";
 import socialGraphRouter from "./socialGraph";
 import recapRouter from "./recap";
+import onboardingRouter from "./onboarding";
 
 const router: IRouter = Router();
 
@@ -28,5 +29,6 @@ router.use(eventsRouter);
 router.use(feedbackRouter);
 router.use(socialGraphRouter);
 router.use(recapRouter);
+router.use(onboardingRouter);
 
 export default router;

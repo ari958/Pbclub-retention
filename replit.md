@@ -36,7 +36,7 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 
 ### API Server — `artifacts/api-server/src/`
 - `app.ts` — Express app, mounts all routes under `/api`
-- `routes/index.ts` — barrel: agent, sync, players, messages, recap, socialGraph, feedback, templates, events, import, admin, programs, health
+- `routes/index.ts` — barrel: agent, sync, players, messages, recap, socialGraph, feedback, templates, events, import, admin, programs, health, onboarding
 - `lib/supabaseClient.ts` — singleton Supabase client (service_role)
 - `lib/jobStore.ts` — `startJob / finishJob / appendJobLog / getJob / isCancelled`
 - `lib/scheduler.ts` — nightly chain (Steps 1–7), feedback poller (30 min)
@@ -63,6 +63,28 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 - `components/PlayerDrawer.tsx` — Player detail drawer with churn risk section
 - `lib/types.ts` — `Player` interface (includes `churn_risk`, `churn_score`)
 
+## Onboarding Flow
+
+New club owners are routed through a 3-step wizard (`/onboarding`) before accessing the dashboard.
+
+- **Guard**: `App.tsx → OnboardingGuard` calls `GET /api/onboarding/status` on load. If `onboarded=false`, redirects to `/onboarding`.
+- **Step 1** — Club basics: name, timezone, nightly sync time.
+- **Step 2** — Platform selection (PodPlay or CourtReserve) + API credentials + live validation via `POST /api/onboarding/validate`. For CourtReserve, also selects skill rating category from the fetched category list.
+- **Step 3** — Confirms settings, saves via `POST /api/onboarding/complete`, then triggers initial player import and polls progress.
+- **Migration pending fallback**: if `onboarded` column is missing (migration not yet applied), the status endpoint returns `onboarded=true` so existing clubs are never disrupted.
+
+### Pending migration
+Run `supabase/migrations/20260503_onboarding.sql` in the Supabase SQL editor once per environment:
+```sql
+ALTER TABLE clubs
+  ADD COLUMN IF NOT EXISTS platform              text    NOT NULL DEFAULT 'podplay',
+  ADD COLUMN IF NOT EXISTS platform_api_key      text,
+  ADD COLUMN IF NOT EXISTS platform_org_id       text,
+  ADD COLUMN IF NOT EXISTS cr_rating_category_id text,
+  ADD COLUMN IF NOT EXISTS onboarded             boolean NOT NULL DEFAULT false;
+UPDATE clubs SET onboarded = true, platform = 'podplay' WHERE onboarded = false;
+```
+
 ## Supabase Tables (key)
 
 | Table | Purpose |
@@ -75,6 +97,20 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 | `jobs` | Job tracking rows (id = job name) |
 | `player_milestones` | `UNIQUE(player_id, milestone_type)` — milestone trigger history |
 | `monthly_recaps` | `UNIQUE(player_id, recap_month)` — recap dedup (format: "2026-04") |
+
+### `clubs` table columns (after migration)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | uuid | PK |
+| `name` | text | Club display name |
+| `timezone` | text | IANA timezone string |
+| `scheduled_sync_time` | text | `"HH:MM"` — nightly sync trigger |
+| `agent_config` | jsonb | Agent settings (tone, limits, etc.) |
+| `platform` | text | `'podplay'` or `'courtreserve'` |
+| `platform_api_key` | text | API key for the platform |
+| `platform_org_id` | text | CourtReserve org integer ID (stored as text) |
+| `cr_rating_category_id` | text | CourtReserve custom rating category ID |
+| `onboarded` | boolean | `false` → show onboarding wizard |
 
 ## Recap & Milestone System
 
