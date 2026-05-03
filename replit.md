@@ -99,6 +99,11 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 - S5: Social isolation via buddy_pairs (0–10 pts)
 - Thresholds: HIGH ≥70 / MEDIUM 40–69 / LOW 0–39
 
+## Developer Documentation
+
+Full technical reference is maintained at `pulse-technical-docs.md` in the project root.
+Update it whenever you make significant changes: new tables, new API routes, new engines, schema changes, or ops procedure changes.
+
 ## Notes
 - Never use `console.log` in server code — use `req.log` (routes) or `logger` (lib)
 - All player queries on buddy_pairs must select `player_a` (no `id` column)
