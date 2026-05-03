@@ -15,14 +15,23 @@ import type { Player, EngagementState, ProgressionStatus } from "@/lib/types";
 
 const PAGE_SIZE = 50;
 
-const STATE_ROW_BORDER: Record<EngagementState, string> = {
-  dormant: "var(--state-dormant)",
-  lapsing: "var(--state-lapsing)",
-  active: "var(--state-active)",
-  "never-visited": "var(--text-tertiary)",
-};
-
-const AMBER_HOVER = "rgba(232,168,56,0.06)";
+const D = {
+  bg: "#161b22",
+  card: "#0f1117",
+  border: "#30363d",
+  inner: "#1e2530",
+  text: "#e6edf3",
+  muted: "#8b949e",
+  faint: "#6e7681",
+  accent: "#E8A838",
+  accentBg: "rgba(232,168,56,0.10)",
+  green: "#2ea043",
+  greenBg: "rgba(46,160,67,0.10)",
+  orange: "#d4813a",
+  orangeBg: "rgba(212,129,58,0.10)",
+  red: "#cf222e",
+  redBg: "rgba(207,34,46,0.08)",
+} as const;
 
 const STATE_DISPLAY: Record<EngagementState, string> = {
   active: "Active",
@@ -31,62 +40,11 @@ const STATE_DISPLAY: Record<EngagementState, string> = {
   "never-visited": "Never Visited",
 };
 
-function StatePill({ state }: { state: EngagementState }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "3px 8px",
-        borderRadius: 4,
-        background: STATE_BG[state],
-        fontSize: 12,
-        fontWeight: 500,
-        color: STATE_COLORS[state],
-        whiteSpace: "nowrap",
-      }}
-    >
-      <span
-        style={{
-          width: 6,
-          height: 6,
-          borderRadius: "50%",
-          background: STATE_COLORS[state],
-          flexShrink: 0,
-        }}
-      />
-      {STATE_DISPLAY[state]}
-    </span>
-  );
-}
-
 const PROG_DISPLAY: Record<string, string> = {
   "ready-to-advance": "Move Up a Level",
-  "developing": "Still Developing",
+  developing: "Still Developing",
   "at-ceiling": "At Their Level",
 };
-
-function ProgBadge({ status }: { status: ProgressionStatus }) {
-  const isUnset = status === null;
-  return (
-    <span
-      style={{
-        fontFamily: "var(--font-mono)",
-        fontSize: 11,
-        padding: "2px 6px",
-        borderRadius: 3,
-        background: isUnset ? "var(--accent-light)" : "var(--bg-surface-2)",
-        color: isUnset ? "var(--accent)" : "var(--text-secondary)",
-        border: `1px solid ${isUnset ? "rgba(232,168,56,0.25)" : "var(--border)"}`,
-        fontWeight: 500,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {status === null ? "Needs Attention" : (PROG_DISPLAY[status] ?? toTitleCase(status))}
-    </span>
-  );
-}
 
 type SortCol = "name" | "state" | "progression" | "lastVisit" | "skill" | "membership";
 type SortDir = "asc" | "desc";
@@ -105,17 +63,85 @@ const PROG_SORT_ORDER: Record<string, number> = {
   "at-ceiling": 3,
 };
 
-const selectStyle: React.CSSProperties = {
-  padding: "6px 10px",
-  borderRadius: 5,
-  border: "1px solid var(--border)",
-  background: "var(--bg-surface)",
-  color: "var(--text-primary)",
-  fontFamily: "var(--font-sans)",
-  fontSize: 12,
-  cursor: "pointer",
-  outline: "none",
-};
+function StatePill({ state }: { state: EngagementState }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "3px 8px",
+        borderRadius: 4,
+        background: STATE_BG[state],
+        fontSize: 12,
+        fontWeight: 500,
+        color: STATE_COLORS[state],
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: "50%", background: STATE_COLORS[state], flexShrink: 0 }} />
+      {STATE_DISPLAY[state]}
+    </span>
+  );
+}
+
+function ProgBadge({ status }: { status: ProgressionStatus }) {
+  const isUnset = status === null;
+  return (
+    <span
+      style={{
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        padding: "2px 6px",
+        borderRadius: 3,
+        background: isUnset ? D.accentBg : D.inner,
+        color: isUnset ? D.accent : D.muted,
+        border: `1px solid ${isUnset ? "rgba(232,168,56,0.25)" : D.border}`,
+        fontWeight: 500,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {status === null ? "Needs Attention" : (PROG_DISPLAY[status] ?? toTitleCase(status))}
+    </span>
+  );
+}
+
+function Chip({
+  label,
+  active,
+  onClick,
+  dot,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+  dot?: string;
+}) {
+  return (
+    <span
+      onClick={onClick}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "4px 10px",
+        borderRadius: 16,
+        fontSize: 11,
+        fontWeight: 500,
+        cursor: "pointer",
+        border: `1px solid ${active ? D.accent : D.border}`,
+        background: active ? D.accentBg : D.inner,
+        color: active ? D.accent : D.muted,
+        transition: "all 0.1s",
+        userSelect: "none",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {dot && <span style={{ width: 6, height: 6, borderRadius: "50%", background: dot, flexShrink: 0 }} />}
+      {label}
+    </span>
+  );
+}
 
 function SortTh({
   label,
@@ -142,20 +168,21 @@ function SortTh({
         fontFamily: "var(--font-mono)",
         fontSize: 10,
         fontWeight: 500,
-        color: active ? "var(--accent)" : "var(--text-tertiary)",
-        borderBottom: "1px solid var(--border)",
+        color: active ? D.accent : D.faint,
+        borderBottom: `1px solid ${D.border}`,
         letterSpacing: "0.05em",
         whiteSpace: "nowrap",
         cursor: "pointer",
         userSelect: "none",
         minWidth: minWidth ?? undefined,
+        background: D.inner,
       }}
     >
       {label}{" "}
       {active ? (
-        <span style={{ color: "var(--accent)" }}>{sortDir === "asc" ? "↑" : "↓"}</span>
+        <span style={{ color: D.accent }}>{sortDir === "asc" ? "↑" : "↓"}</span>
       ) : (
-        <span style={{ color: "var(--border)", fontSize: 9 }}>↕</span>
+        <span style={{ color: D.border, fontSize: 9 }}>↕</span>
       )}
     </th>
   );
@@ -165,13 +192,10 @@ function SkeletonRows({ cols }: { cols: number }) {
   return (
     <>
       {Array.from({ length: 8 }).map((_, i) => (
-        <tr key={i} className="skeleton-row" style={{ borderBottom: "1px solid var(--border)" }}>
+        <tr key={i} className="skeleton-row" style={{ borderBottom: `1px solid ${D.border}` }}>
           {Array.from({ length: cols }).map((__, j) => (
             <td key={j} style={{ padding: "12px 16px" }}>
-              <div
-                className="skeleton-bar"
-                style={{ width: j === 0 ? 140 : j === cols - 1 ? 60 : 90, height: 11 }}
-              />
+              <div className="skeleton-bar" style={{ width: j === 0 ? 140 : j === cols - 1 ? 60 : 90, height: 11 }} />
             </td>
           ))}
         </tr>
@@ -219,7 +243,6 @@ export default function Players() {
     setPlayers(allPlayers);
     setLoading(false);
 
-    // Misfit query: players with 2+ self-reported level mismatches
     const { data: misfitRows } = await supabase
       .from("session_feedback")
       .select("player_id")
@@ -235,9 +258,7 @@ export default function Players() {
     setMisfitPlayerIds(ids);
   };
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useEffect(() => { fetchData(); }, []);
 
   const handleSort = (col: SortCol) => {
     if (sortCol === col) {
@@ -249,7 +270,6 @@ export default function Players() {
     setPage(1);
   };
 
-  // Reset page when filters change
   useEffect(() => { setPage(1); }, [search, engFilter, progFilter, memberFilter, misfitFilter]);
 
   const hasFilters = search || engFilter || progFilter || memberFilter || misfitFilter;
@@ -265,7 +285,6 @@ export default function Players() {
 
   const displayed = useMemo(() => {
     let list = [...players];
-
     if (search) list = list.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
     if (engFilter) list = list.filter((p) => getEngagementState(p.last_visit_date) === engFilter);
     if (progFilter) {
@@ -345,18 +364,23 @@ export default function Players() {
     return parts.join(" · ");
   }, [displayed.length, engFilter, memberFilter, progFilter, search]);
 
+  const btnStyle = (variant: "default" | "accent" = "default"): React.CSSProperties => ({
+    padding: "6px 14px",
+    borderRadius: 5,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+    border: `1px solid ${variant === "accent" ? D.accent : D.border}`,
+    background: variant === "accent" ? D.accent : D.inner,
+    color: variant === "accent" ? "#fff" : D.muted,
+    fontFamily: "var(--font-sans)",
+    whiteSpace: "nowrap" as const,
+  });
+
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)" }}>
+    <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
       <Sidebar clubName={clubName} />
-      <div
-        style={{
-          marginLeft: 240,
-          flex: 1,
-          display: "flex",
-          flexDirection: "column",
-          minHeight: 0,
-        }}
-      >
+      <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{
             height: 52,
@@ -365,176 +389,115 @@ export default function Players() {
             alignItems: "center",
             justifyContent: "space-between",
             padding: "0 28px",
-            borderBottom: "1px solid var(--border)",
-            background: "var(--bg-surface)",
+            borderBottom: `1px solid ${D.border}`,
+            background: D.card,
             position: "sticky",
             top: 0,
             zIndex: 5,
           }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14 }}>Players</span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: "var(--text-tertiary)",
-            }}
-          >
+          <span style={{ fontWeight: 600, fontSize: 14, color: D.text }}>Players</span>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: D.faint }}>
             {loading ? "…" : `Showing ${displayed.length} of ${players.length}`}
           </span>
         </header>
 
-        <main
-          style={{
-            flex: 1,
-            overflowY: "auto",
-            padding: "20px 28px",
-            background: "var(--bg-surface-2)",
-          }}
-        >
-          {/* Toolbar */}
-          <div
-            style={{
-              display: "flex",
-              gap: 10,
-              marginBottom: 16,
-              alignItems: "center",
-              flexWrap: "wrap",
-              justifyContent: "space-between",
-            }}
-          >
+        <main style={{ flex: 1, overflowY: "auto", padding: "20px 28px", background: D.bg }}>
+          {/* ── Toolbar ── */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 16 }}>
+            {/* Top row: search + actions */}
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <input
-                type="text"
-                placeholder="Search by name…"
+                placeholder="Search players…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                style={{ ...selectStyle, width: 200 }}
+                style={{
+                  flex: "1 1 200px",
+                  maxWidth: 280,
+                  padding: "7px 12px",
+                  borderRadius: 5,
+                  border: `1px solid ${D.border}`,
+                  background: D.card,
+                  color: D.text,
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 12,
+                  outline: "none",
+                }}
               />
-              <select value={engFilter} onChange={(e) => setEngFilter(e.target.value)} style={selectStyle}>
-                <option value="">All states</option>
-                <option value="active">Active</option>
-                <option value="lapsing">Drifting</option>
-                <option value="dormant">Inactive</option>
-                <option value="never-visited">Never Visited</option>
-              </select>
-              <select value={progFilter} onChange={(e) => setProgFilter(e.target.value)} style={selectStyle}>
-                <option value="">All progressions</option>
-                <option value="null">Needs Attention</option>
-                <option value="ready-to-advance">Move Up a Level</option>
-                <option value="developing">Still Developing</option>
-                <option value="at-ceiling">At Their Level</option>
-              </select>
-              <select value={memberFilter} onChange={(e) => setMemberFilter(e.target.value)} style={selectStyle}>
-                <option value="">All members</option>
-                <option value="member">Member</option>
-                <option value="non-member">Non-member</option>
-              </select>
-              <select value={misfitFilter} onChange={(e) => setMisfitFilter(e.target.value)} style={selectStyle}>
-                <option value="">All players</option>
-                <option value="misfit">Level concern only</option>
-              </select>
               {hasFilters && (
-                <button
-                  onClick={clearFilters}
-                  style={{ ...selectStyle, color: "var(--text-tertiary)" }}
-                >
+                <button onClick={clearFilters} style={{ ...btnStyle(), color: D.accent, borderColor: "rgba(232,168,56,0.3)" }}>
                   Clear filters
                 </button>
               )}
+              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                <button onClick={exportCSV} style={btnStyle()}>Export CSV</button>
+                <button onClick={() => setBulkModalOpen(true)} style={btnStyle("accent")}>
+                  Message All ({displayed.length})
+                </button>
+              </div>
             </div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <button
-                onClick={exportCSV}
-                disabled={loading || displayed.length === 0}
-                style={{
-                  ...selectStyle,
-                  background: "var(--bg-surface)",
-                  fontWeight: 500,
-                  opacity: loading || displayed.length === 0 ? 0.5 : 1,
-                  cursor: loading || displayed.length === 0 ? "not-allowed" : "pointer",
-                }}
-              >
-                Export CSV
-              </button>
-              <button
-                onClick={() => setBulkModalOpen(true)}
-                disabled={loading || displayed.length === 0}
-                style={{
-                  ...selectStyle,
-                  background: displayed.length > 0 && !loading ? "var(--accent)" : "var(--border)",
-                  color: displayed.length > 0 && !loading ? "#fff" : "var(--text-tertiary)",
-                  fontWeight: 500,
-                  border: "none",
-                  cursor: displayed.length > 0 && !loading ? "pointer" : "not-allowed",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {displayed.length === 0
-                  ? "No players selected"
-                  : `Send Bulk Outreach (${displayed.length})`}
-              </button>
+
+            {/* Status chips */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: D.faint, letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 2 }}>Status</span>
+              <Chip label="All" active={!engFilter && !misfitFilter} onClick={() => { setEngFilter(""); setMisfitFilter(""); }} />
+              <Chip label="Active" active={engFilter === "active"} dot={STATE_COLORS.active} onClick={() => { setEngFilter("active"); setMisfitFilter(""); }} />
+              <Chip label="Drifting" active={engFilter === "lapsing"} dot={STATE_COLORS.lapsing} onClick={() => { setEngFilter("lapsing"); setMisfitFilter(""); }} />
+              <Chip label="Inactive" active={engFilter === "dormant"} dot={STATE_COLORS.dormant} onClick={() => { setEngFilter("dormant"); setMisfitFilter(""); }} />
+              <Chip label="Never Visited" active={engFilter === "never-visited"} onClick={() => { setEngFilter("never-visited"); setMisfitFilter(""); }} />
+              <Chip label="Level Concern" active={misfitFilter === "misfit"} onClick={() => { setMisfitFilter("misfit"); setEngFilter(""); }} />
+            </div>
+
+            {/* Progress chips */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: D.faint, letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 2 }}>Progress</span>
+              <Chip label="All" active={!progFilter} onClick={() => setProgFilter("")} />
+              <Chip label="Needs Attention" active={progFilter === "null"} onClick={() => setProgFilter("null")} />
+              <Chip label="Move Up a Level" active={progFilter === "ready-to-advance"} onClick={() => setProgFilter("ready-to-advance")} />
+              <Chip label="Still Developing" active={progFilter === "developing"} onClick={() => setProgFilter("developing")} />
+              <Chip label="At Their Level" active={progFilter === "at-ceiling"} onClick={() => setProgFilter("at-ceiling")} />
+            </div>
+
+            {/* Member chips */}
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: D.faint, letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 2 }}>Member</span>
+              <Chip label="All" active={!memberFilter} onClick={() => setMemberFilter("")} />
+              <Chip label="Members" active={memberFilter === "member"} onClick={() => setMemberFilter("member")} />
+              <Chip label="Non-members" active={memberFilter === "non-member"} onClick={() => setMemberFilter("non-member")} />
             </div>
           </div>
 
-          {/* Table */}
+          {/* ── Table ── */}
           <div
             style={{
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border)",
+              background: D.card,
+              border: `1px solid ${D.border}`,
               borderRadius: 8,
               overflow: "hidden",
             }}
           >
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", tableLayout: "fixed" }}>
-                <colgroup>
-                  <col style={{ minWidth: 200 }} />
-                  <col style={{ minWidth: 130 }} />
-                  <col style={{ minWidth: 150 }} />
-                  <col style={{ minWidth: 120 }} />
-                  <col style={{ minWidth: 110 }} />
-                  <col style={{ minWidth: 110 }} />
-                </colgroup>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
                 <thead>
-                  <tr style={{ background: "var(--bg-surface-2)" }}>
-                    <SortTh label="PLAYER" col="name" minWidth={200} {...thProps} />
-                    <SortTh label="PLAYER STATUS" col="state" minWidth={130} {...thProps} />
-                    <SortTh label="PLAYER PROGRESS" col="progression" minWidth={150} {...thProps} />
-                    <SortTh label="SKILL LEVEL" col="skill" minWidth={120} {...thProps} />
-                    <SortTh label="LAST VISIT" col="lastVisit" minWidth={110} {...thProps} />
-                    <SortTh label="MEMBERSHIP" col="membership" minWidth={110} {...thProps} />
+                  <tr>
+                    <SortTh label="PLAYER" col="name" minWidth={160} {...thProps} />
+                    <SortTh label="STATUS" col="state" minWidth={110} {...thProps} />
+                    <SortTh label="PROGRESS" col="progression" minWidth={150} {...thProps} />
+                    <SortTh label="SKILL" col="skill" minWidth={80} {...thProps} />
+                    <SortTh label="LAST VISIT" col="lastVisit" minWidth={100} {...thProps} />
+                    <SortTh label="MEMBER" col="membership" minWidth={80} {...thProps} />
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
                     <SkeletonRows cols={6} />
-                  ) : displayed.length === 0 ? (
+                  ) : paginated.length === 0 ? (
                     <tr>
                       <td
                         colSpan={6}
-                        style={{ padding: "36px 16px", textAlign: "center", color: "var(--text-tertiary)", fontSize: 13 }}
+                        style={{ padding: "40px 16px", textAlign: "center", color: D.faint, fontSize: 13 }}
                       >
-                        {hasFilters ? (
-                          <span>
-                            No players match these filters{" "}
-                            <button
-                              onClick={clearFilters}
-                              style={{
-                                color: "var(--accent)",
-                                background: "none",
-                                border: "none",
-                                cursor: "pointer",
-                                fontSize: 13,
-                                textDecoration: "underline",
-                              }}
-                            >
-                              Clear filters
-                            </button>
-                          </span>
-                        ) : (
-                          "No players yet"
-                        )}
+                        {hasFilters ? "No players match these filters." : "No players found."}
                       </td>
                     </tr>
                   ) : (
@@ -545,52 +508,27 @@ export default function Players() {
                           key={p.id}
                           onClick={() => setDrawerPlayerId(p.id)}
                           style={{
-                            borderBottom:
-                              i < paginated.length - 1 ? "1px solid var(--border)" : "none",
+                            borderBottom: i < paginated.length - 1 ? `1px solid ${D.border}` : "none",
                             cursor: "pointer",
+                            borderLeft: `3px solid ${STATE_COLORS[state]}`,
                             transition: "background 0.1s",
                           }}
-                          onMouseEnter={(e) =>
-                            ((e.currentTarget as HTMLElement).style.background = AMBER_HOVER)
-                          }
-                          onMouseLeave={(e) =>
-                            ((e.currentTarget as HTMLElement).style.background = "transparent")
-                          }
+                          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = D.inner; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                         >
                           <td
                             style={{
                               padding: "12px 16px",
-                              borderLeft: `3px solid ${STATE_ROW_BORDER[state]}`,
+                              fontWeight: 500,
+                              fontSize: 13,
+                              color: D.text,
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                              maxWidth: 200,
                             }}
                           >
-                            <div
-                              style={{
-                                fontWeight: 500,
-                                fontSize: 13,
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                whiteSpace: "nowrap",
-                              }}
-                            >
-                              {p.name}
-                            </div>
-                            {misfitPlayerIds.has(p.id) && (
-                              <span
-                                style={{
-                                  fontSize: 10,
-                                  fontFamily: "var(--font-mono)",
-                                  padding: "1px 5px",
-                                  borderRadius: 3,
-                                  background: "rgba(212,129,58,0.10)",
-                                  color: "var(--state-lapsing)",
-                                  border: "1px solid rgba(212,129,58,0.25)",
-                                  marginTop: 2,
-                                  display: "inline-block",
-                                }}
-                              >
-                                ⚠ level concern
-                              </span>
-                            )}
+                            {p.name}
                           </td>
                           <td style={{ padding: "12px 16px" }}>
                             <StatePill state={state} />
@@ -602,20 +540,19 @@ export default function Players() {
                             style={{
                               padding: "12px 16px",
                               fontSize: 12,
-                              color: "var(--text-secondary)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
+                              color: D.muted,
+                              fontFamily: "var(--font-mono)",
                               whiteSpace: "nowrap",
                             }}
                           >
-                            {p.skill_level ? toTitleCase(p.skill_level) : "—"}
+                            {p.skill_level ?? "—"}
                           </td>
                           <td
                             style={{
                               padding: "12px 16px",
-                              fontFamily: "var(--font-mono)",
                               fontSize: 12,
-                              color: "var(--text-secondary)",
+                              color: D.muted,
+                              fontFamily: "var(--font-mono)",
                               whiteSpace: "nowrap",
                               fontVariantNumeric: "tabular-nums",
                             }}
@@ -626,7 +563,7 @@ export default function Players() {
                             style={{
                               padding: "12px 16px",
                               fontSize: 12,
-                              color: "var(--text-secondary)",
+                              color: D.muted,
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -642,7 +579,6 @@ export default function Players() {
               </table>
             </div>
 
-            {/* Pagination */}
             {!loading && displayed.length > PAGE_SIZE && (
               <div
                 style={{
@@ -650,38 +586,43 @@ export default function Players() {
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "10px 16px",
-                  borderTop: "1px solid var(--border)",
-                  background: "var(--bg-surface-2)",
+                  borderTop: `1px solid ${D.border}`,
+                  background: D.inner,
                 }}
               >
                 <button
                   onClick={() => setPage((p) => Math.max(1, p - 1))}
                   disabled={page === 1}
                   style={{
-                    ...selectStyle,
-                    opacity: page === 1 ? 0.4 : 1,
+                    padding: "5px 12px",
+                    borderRadius: 5,
+                    border: `1px solid ${D.border}`,
+                    background: D.card,
+                    color: D.muted,
+                    fontFamily: "var(--font-sans)",
+                    fontSize: 12,
                     cursor: page === 1 ? "not-allowed" : "pointer",
+                    opacity: page === 1 ? 0.4 : 1,
                   }}
                 >
                   ← Previous
                 </button>
-                <span
-                  style={{
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 11,
-                    color: "var(--text-tertiary)",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: D.faint, fontVariantNumeric: "tabular-nums" }}>
                   Page {page} of {totalPages} · {displayed.length} players
                 </span>
                 <button
                   onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                   disabled={page === totalPages}
                   style={{
-                    ...selectStyle,
-                    opacity: page === totalPages ? 0.4 : 1,
+                    padding: "5px 12px",
+                    borderRadius: 5,
+                    border: `1px solid ${D.border}`,
+                    background: D.card,
+                    color: D.muted,
+                    fontFamily: "var(--font-sans)",
+                    fontSize: 12,
                     cursor: page === totalPages ? "not-allowed" : "pointer",
+                    opacity: page === totalPages ? 0.4 : 1,
                   }}
                 >
                   Next →
