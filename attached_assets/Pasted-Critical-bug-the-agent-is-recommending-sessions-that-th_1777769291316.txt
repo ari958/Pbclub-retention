@@ -1,0 +1,62 @@
+Critical bug: the agent is recommending sessions that the player 
+is already signed up for. Alfonso is already registered for the 
+Sunday May 3 All You Can Play AND the Monday May 4 session where 
+Carlota and Kavita are signed up. We cannot push programs on 
+players they've already booked.
+
+Two fixes needed:
+
+FIX 1 — Filter already-registered events before agent sees them
+
+In agent.ts, before assembling the system prompt, fetch the 
+player's existing upcoming registrations from PodPlay:
+GET /events?upcoming=true&ipp=100 filtered by this player's 
+external_id in the signups
+
+Or use: fetch all upcoming events and call 
+GET /events/{eventId}/signups for each, checking if 
+owner.id === player.external_id
+
+Store the set of event_ids the player is already registered for.
+
+Then filter TWO things:
+1. Remove already-registered events from the available programs 
+   list before passing to the agent
+2. Remove already-registered events from the upcoming-with-buddies 
+   response before passing to the agent
+
+FIX 2 — Change how existing buddy sessions are handled
+
+If after filtering, the player has NO upcoming sessions with 
+buddies → social context shows buddy names only, no session 
+reference: "Carlota D. and Niru A. are regulars you've played 
+with before."
+
+If the player IS already registered for sessions with buddies 
+→ add a new context block called ALREADY BOOKED WITH BUDDIES:
+"Alfonso is already registered for:
+- Sunday May 3: All You Can Play with Carlota D. and Niru A.
+- Monday May 4: Rob Approved Low Intermediate with Carlota D. 
+  and Kavita S.
+DO NOT recommend these sessions. Instead acknowledge their 
+upcoming court time and recommend something different — 
+a complementary session on a different day, or a next step 
+in their progression."
+
+The agent should then produce something like:
+"Looks like you've already got a great week lined up — you're 
+playing with Carlota and Niru on Sunday and back with Carlota 
+and Kavita on Monday. If you want to add one more session, the 
+Advanced Beginner 60&60 on Wednesday has a couple spots left."
+
+FIX 3 — Add a test route for this
+POST /api/social-graph/test/player-registrations/:id
+Returns the player's upcoming registered event_ids so we can 
+verify the filter is working before running the agent.
+
+Use player id 8933b7b6-0a70-4ee7-a32a-3fd9d046e076 (Alfonso) 
+and player external_id — look it up from the players table.
+Test after fixing by running the agent for Alfonso again.
+The message should NOT mention May 3 or May 4 as recommendations,
+and SHOULD acknowledge he already has sessions booked with his 
+court friends.

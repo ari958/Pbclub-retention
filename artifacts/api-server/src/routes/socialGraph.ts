@@ -54,6 +54,38 @@ async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
   return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
 }
 
+// ─── fetchPlayerRegistrations ─────────────────────────────────────────────────
+// Returns upcoming events (from the supplied list) that the player is already
+// registered for, identified by their PodPlay external_id.
+
+async function fetchPlayerRegistrations(
+  externalId: string,
+  events: any[]
+): Promise<{ event_id: string; event_name: string; start_time: string }[]> {
+  const registered: { event_id: string; event_name: string; start_time: string }[] = [];
+  for (let i = 0; i < events.length; i += 3) {
+    if (i > 0) await sleep(250);
+    const batch = events.slice(i, i + 3);
+    const results = await Promise.all(
+      batch.map((event) =>
+        fetchEventSignupsRaw(event.id)
+          .then((ids) => ({ event, inEvent: ids.includes(externalId) }))
+          .catch(() => ({ event, inEvent: false }))
+      )
+    );
+    for (const { event, inEvent } of results) {
+      if (inEvent) {
+        registered.push({
+          event_id: event.id,
+          event_name: event.name,
+          start_time: event.startTime,
+        });
+      }
+    }
+  }
+  return registered;
+}
+
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
 type PlayerRow = { id: string; external_id: string; name: string };
@@ -396,6 +428,46 @@ router.get("/social-graph/staff-intro-cards", async (req, res) => {
     res.json({ cards });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] staff-intro-cards error");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Route F: GET /api/social-graph/player/:id/registrations ─────────────────
+
+router.get("/social-graph/player/:id/registrations", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const { data: player, error } = await supabase
+      .from("players")
+      .select("external_id")
+      .eq("id", id)
+      .single();
+    if (error || !player?.external_id) {
+      res.json({ registrations: [] });
+      return;
+    }
+    const events = (await fetchUpcomingEvents(7)).slice(0, 10);
+    const registrations = await fetchPlayerRegistrations(player.external_id, events);
+    res.json({ registrations });
+  } catch (err: any) {
+    req.log.error({ err: err.message }, "[social-graph] player-registrations error");
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Route G: POST /api/social-graph/test/player-registrations/:id ───────────
+
+router.post("/social-graph/test/player-registrations/:id", async (req, res) => {
+  const port = process.env.PORT ?? "8080";
+  const { id } = req.params;
+  try {
+    const result = await fetch(
+      `http://localhost:${port}/api/social-graph/player/${id}/registrations`,
+      { signal: AbortSignal.timeout(30_000) }
+    );
+    const data = await result.json();
+    res.json(data);
+  } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
