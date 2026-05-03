@@ -18,3 +18,15 @@ id = "lZ3A3ex1B3DOOgAbDVpve"
 uri = "file://pulse-user-guide.md"
 type = "text"
 title = "Pulse — User Guide (for club owners & coaches)"
+
+[[outputs]]
+id = "ho7MTrZAwy3l24z_Z-pb2"
+uri = "file://pulse-user-guide.pdf"
+type = "pdf"
+title = "Pulse — User Guide (PDF, 447 KB)"
+
+[[outputs]]
+id = "yhTzj0Na2wRtOrrboK1Oy"
+uri = "file://pulse-technical-docs.pdf"
+type = "pdf"
+title = "Pulse — Technical Developer Docs (PDF, 36 KB)"
