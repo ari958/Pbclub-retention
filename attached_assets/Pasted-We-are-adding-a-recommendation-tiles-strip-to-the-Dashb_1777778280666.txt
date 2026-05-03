@@ -1,0 +1,329 @@
+We are adding a recommendation tiles strip to the Dashboard 
+in Pulse. The goal is to make the dashboard feel like Google 
+Ads or a smart command center — it tells you exactly what 
+to do and takes you there in one click. No more hunting 
+through pages to find what needs attention.
+
+The tiles sit ABOVE the existing stat strip, below the 
+briefing banner. They show 4 tiles at a time. Users can 
+scroll through more with arrow buttons. Tiles can be 
+dismissed and resurface after 48 hours (persisted in 
+localStorage).
+
+--- FILE TO EDIT ---
+artifacts/dashboard/src/pages/Dashboard.tsx only.
+Do not touch any other files.
+
+--- PART 1: RECOMMENDATION ENGINE ---
+
+Add a function generateRecommendations() that takes the 
+existing state variables and returns an array of 
+recommendation objects. Call this with useMemo so it 
+recomputes when players or messages change.
+
+Each recommendation object:
+{
+  id: string          // stable unique key for localStorage
+  urgency: 'critical' | 'high' | 'medium' | 'info' | 'good'
+  icon: string        // which icon to render (see icons below)
+  title: string       // short action headline
+  body: string        // one sentence of context
+  action: string      // link text e.g. "Start with top 10 →"
+  navigate: string    // route to navigate to on click
+  navigateState?: any // optional state to pass to navigate()
+}
+
+Generate these recommendations in priority order:
+
+REC 1 — High churn risk (id: 'churn-high')
+Condition: highRiskPlayers.length > 0
+urgency: 'critical'
+icon: 'alert'
+title: `${highRiskPlayers.length} players at high churn risk`
+body: `Non-members who haven't been back in 60+ days. 
+  Every week you wait, more are gone for good.`
+action: 'Start with top 10 →'
+navigate: '/players'
+navigateState: { filter: 'high-churn' }
+
+REC 2 — Messages queued (id: 'messages-queued')  
+Condition: messages.length > 0
+urgency: 'high'
+icon: 'message'
+title: `${messages.length} messages ready to send`
+body: Build dynamically: get first 3 player names from 
+  messages array via conversations.players.name, format as 
+  "Personalized outreach is queued for {name1}, {name2}, 
+  and {N} others. Review and send." (or just "{name1} and 
+  {name2}" if only 2, or just "{name1}" if only 1)
+action: 'Review outreach queue →'
+navigate: '/messages'
+
+REC 3 — Unassessed players (id: 'unassessed-players')
+Condition: needsAssessment.length > 50
+  (needsAssessment = players with progression_status === null
+   and last_visit_date IS NOT NULL)
+urgency: 'medium'
+icon: 'progress'
+title: `${needsAssessment.length} players need assessment`
+body: 'No progress status set. Assessing players helps 
+  the agent recommend the right programs and level up 
+  your coaching data.'
+action: 'Go to Progress →'
+navigate: '/assessments'
+
+REC 4 — New players this week (id: 'new-players-week')
+Condition: introCards.length > 0
+  Use the existing introCards state (from StaffIntroPanel)
+  Count total new players across all intro cards
+urgency: 'good'
+icon: 'star'
+title: `${newPlayerCount} new players this week`
+body: `First-timers joining sessions this week. Introduce 
+  them to familiar faces before they drift.`
+action: 'See new player intros →'
+navigate: '/feedback'
+
+REC 5 — Individual high risk player (id: 'urgent-player')
+Condition: highRiskDrifting.length > 0
+  Pick the most urgent: highest churn_score among lapsing
+  players (not dormant — drifting ones are still reachable)
+urgency: 'critical'
+icon: 'person'
+title: `${firstName} ${lastInitial}. needs a nudge today`
+body: `${name} is at high churn risk and hasn't been back 
+  in ${timeAway}. A personal message could bring them back.`
+action: 'Send outreach →'
+navigate: '/players'
+navigateState: { openPlayer: mostUrgentPlayerId }
+
+REC 6 — Session ratings not collecting (id: 'no-ratings')
+Condition: always show (session ratings aren't live yet 
+  because Twilio is pending — this is a setup nudge)
+  Actually: show only if there are 0 rows in session_feedback
+  Use a simple check: if responseRate === null or 0
+urgency: 'info'
+icon: 'star'
+title: 'Session ratings not set up yet'
+body: 'Post-session feedback texts will help you track 
+  level fit and improve session quality automatically.'
+action: 'Set up Session Ratings →'
+navigate: '/feedback'
+
+REC 7 — Win-back rate (id: 'winback-zero')
+Condition: winbackRate === null or winbackRate === 0
+urgency: 'info'
+icon: 'refresh'
+title: 'No win-backs recorded yet'
+body: 'Send outreach to inactive players to start building 
+  your win-back rate. Even 1-2 returning players per week 
+  makes a difference.'
+action: 'View inactive players →'
+navigate: '/players'
+navigateState: { filter: 'inactive' }
+
+Sort final array: critical first, then high, medium, good, 
+info. Within same urgency, keep the order above.
+
+--- PART 2: DISMISSAL LOGIC ---
+
+On mount, load dismissed recommendations from localStorage:
+const DISMISS_KEY = 'pulse_dismissed_recs'
+
+Type:
+{ [recId: string]: number }  // recId → timestamp dismissed
+
+function isDismissed(id: string): boolean {
+  const dismissed = JSON.parse(
+    localStorage.getItem(DISMISS_KEY) || '{}'
+  );
+  const ts = dismissed[id];
+  if (!ts) return false;
+  // Resurface after 48 hours
+  return Date.now() - ts < 48 * 60 * 60 * 1000;
+}
+
+function dismissRec(id: string): void {
+  const dismissed = JSON.parse(
+    localStorage.getItem(DISMISS_KEY) || '{}'
+  );
+  dismissed[id] = Date.now();
+  localStorage.setItem(DISMISS_KEY, JSON.stringify(dismissed));
+}
+
+Add state: const [dismissedIds, setDismissedIds] = useState
+  Record<string, number>>({})
+
+Load on mount:
+useEffect(() => {
+  const stored = localStorage.getItem('pulse_dismissed_recs');
+  if (stored) setDismissedIds(JSON.parse(stored));
+}, []);
+
+Filter recommendations: const visibleRecs = recommendations
+  .filter(r => !isDismissed(r.id));
+
+On dismiss click:
+1. Call dismissRec(rec.id)
+2. Update dismissedIds state to trigger re-render
+3. Animate tile out (opacity 0, width 0 over 200ms)
+
+--- PART 3: TILE CAROUSEL ---
+
+Add state: const [tileOffset, setTileOffset] = useState(0)
+
+Show 4 tiles at a time: 
+const visibleTiles = visibleRecs.slice(tileOffset, 
+  tileOffset + 4)
+
+Navigation: left/right arrow buttons appear when there 
+are more than 4 visible recommendations.
+
+Left arrow: disabled when tileOffset === 0
+Right arrow: disabled when tileOffset + 4 >= visibleRecs.length
+
+Arrow button style:
+width: 28px, height: 28px, borderRadius: '50%'
+background: #1e2530, border: '1px solid #30363d'
+color: #8b949e
+Disabled: opacity 0.3, cursor 'not-allowed'
+Active hover: background #30363d, color #e6edf3
+
+Navigation dots below tiles:
+One dot per visible recommendation (max 7 dots total)
+Active dot: background #E8A838, width 12px
+Inactive dot: background #30363d, width 5px
+All dots: height 5px, borderRadius 3px, transition width 0.2s
+
+--- PART 4: TILE COMPONENT ---
+
+Render each tile as a card:
+
+Container:
+background: #0f1117
+border: 1px solid #30363d  
+borderRadius: 10px
+padding: 14px 16px
+flex: 0 0 calc(25% - 8px)
+cursor: pointer
+transition: border-color 0.15s, opacity 0.2s, transform 0.15s
+On hover: borderColor #E8A838, transform scale(1.01)
+onClick: navigate(rec.navigate, 
+  { state: rec.navigateState })
+
+Top row (icon + urgency badge + dismiss button):
+display flex, justifyContent space-between, 
+alignItems flex-start
+
+Icon container: 32px circle, colored by urgency:
+critical: background rgba(207,34,46,0.1), 
+  icon stroke #ff6b6b
+high: background rgba(232,168,56,0.1), 
+  icon stroke #E8A838
+medium: background rgba(56,139,253,0.1), 
+  icon stroke #79c0ff
+good: background rgba(46,160,67,0.1), 
+  icon stroke #2ea043
+info: background rgba(139,148,158,0.1), 
+  icon stroke #8b949e
+
+Urgency badge (next to icon):
+fontSize 9px, fontWeight 600, fontFamily mono
+padding 1px 6px, borderRadius 4px
+critical: bg rgba(207,34,46,0.12) color #ff6b6b — "Act now"
+high: bg rgba(232,168,56,0.12) color #E8A838 — "This week"
+medium: bg rgba(56,139,253,0.12) color #79c0ff — "Coaching"
+good: bg rgba(46,160,67,0.12) color #2ea043 — "Good news"
+info: bg rgba(139,148,158,0.1) color #8b949e — "Setup"
+
+Dismiss button (top right):
+width 20px, height 20px, borderRadius 50%
+background #1e2530, border 1px solid #30363d
+Shows × in #8b949e, fontSize 12px
+opacity 0 normally, opacity 1 on parent tile hover
+onClick: (e) => { e.stopPropagation(); dismiss tile; }
+
+Title: 13px fontWeight 600 color #e6edf3, marginTop 8px,
+lineHeight 1.3
+
+Body: 11px color #8b949e, lineHeight 1.5, marginTop 4px
+
+Action link: 11px fontWeight 600 color #E8A838, 
+marginTop 8px, display flex alignItems center gap 4px
+
+--- PART 5: ICONS ---
+
+Inline SVG icons, 16x16, strokeWidth 1.5, fill none:
+
+'alert': triangle with ! inside
+  <svg viewBox="0 0 16 16"><path d="M8 2L14 13H2L8 2z"/>
+  <path d="M8 6v3M8 11v.5"/></svg>
+
+'message': speech bubble
+  <svg viewBox="0 0 16 16"><path d="M2 2h12a1 1 0 011 1v8 
+  a1 1 0 01-1 1H5l-3 3V3a1 1 0 011-1z"/></svg>
+
+'progress': upward arrow
+  <svg viewBox="0 0 16 16"><path d="M8 14V2M3 7l5-5 5 5"/>
+  </svg>
+
+'star': person/player icon
+  <svg viewBox="0 0 16 16"><circle cx="8" cy="5" r="3"/>
+  <path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>
+
+'person': same as star (person icon)
+
+'refresh': circular arrows
+  <svg viewBox="0 0 16 16"><path d="M2 8a6 6 0 016-6 
+  6 6 0 014.2 1.8L14 2v4h-4l1.4-1.4A4 4 0 104 10"/>
+  </svg>
+
+--- PART 6: SECTION HEADER ---
+
+Above the tiles row:
+display flex, justifyContent space-between, 
+alignItems center, marginBottom 10px
+
+Left: "Recommendations" in 10px mono uppercase #8b949e 
+  letterSpacing 0.06em
+
+Right: if visibleRecs.length > 4:
+  "View all {visibleRecs.length} →" in 10px #E8A838 
+  — clicking resets tileOffset to 0 and shows all 
+  (or just scrolls to show all)
+
+--- PART 7: PLACEMENT IN LAYOUT ---
+
+Current layout order in the content area:
+1. Briefing banner (already exists, keep)
+2. Stat strip (keep)  
+3. Bento grid (keep)
+
+New layout order:
+1. Briefing banner (keep)
+2. RECOMMENDATION TILES (new — insert here)
+3. Stat strip (keep)
+4. Bento grid (keep)
+
+The recommendation tiles section:
+padding: 0 24px 0px (no bottom padding — stat strip 
+has its own top padding)
+marginBottom: 16px
+
+--- ARCHITECTURE NOTES ---
+- useNavigate is already imported — use it for navigation
+- introCards state already exists from StaffIntroPanel 
+  data fetch — use it directly for REC 4
+- highRiskPlayers, highRiskDrifting, mostUrgent are 
+  already computed in the dashboard from the churn 
+  scoring work — reuse them
+- needsAssessment already exists as a derived variable
+- localStorage is safe to use here — this is per-staff 
+  UI state, not business data
+- The tile carousel must not use overflow: hidden on 
+  the container if it clips dismiss buttons — use 
+  overflow: visible with a clip container
+- Do not add any new API calls — all data is already 
+  in existing state
+- After completing, take a screenshot of the dashboard 
+  showing the recommendation tiles above the stat strip

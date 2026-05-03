@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/Toast";
@@ -147,6 +147,106 @@ function visitLabel(visitCount: number): string {
   return `${n}th visit`;
 }
 
+// ─── Recommendation types & components ───────────────────────────────────────
+
+type RecUrgency = "critical" | "high" | "medium" | "info" | "good";
+
+interface Recommendation {
+  id: string;
+  urgency: RecUrgency;
+  icon: string;
+  title: string;
+  body: string;
+  action: string;
+  navigate: string;
+  navigateState?: any;
+}
+
+function RecIcon({ name, stroke }: { name: string; stroke: string }) {
+  const p = { width: 16, height: 16, viewBox: "0 0 16 16", fill: "none", stroke, strokeWidth: 1.5, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
+  if (name === "alert") return <svg {...p}><path d="M8 2L14 13H2L8 2z"/><path d="M8 6v3M8 11v.5"/></svg>;
+  if (name === "message") return <svg {...p}><path d="M2 2h12a1 1 0 011 1v8a1 1 0 01-1 1H5l-3 3V3a1 1 0 011-1z"/></svg>;
+  if (name === "progress") return <svg {...p}><path d="M8 14V2M3 7l5-5 5 5"/></svg>;
+  if (name === "refresh") return <svg {...p}><path d="M2 8a6 6 0 016-6 6 6 0 014.2 1.8L14 2v4h-4l1.4-1.4A4 4 0 104 10"/></svg>;
+  return <svg {...p}><circle cx="8" cy="5" r="3"/><path d="M2 14c0-3.3 2.7-6 6-6s6 2.7 6 6"/></svg>;
+}
+
+const URGENCY_CFG: Record<RecUrgency, { iconBg: string; iconStroke: string; badgeBg: string; badgeColor: string; badgeLabel: string }> = {
+  critical: { iconBg: "rgba(207,34,46,0.1)",   iconStroke: "#ff6b6b", badgeBg: "rgba(207,34,46,0.12)",   badgeColor: "#ff6b6b", badgeLabel: "Act now"   },
+  high:     { iconBg: "rgba(232,168,56,0.1)",  iconStroke: "#E8A838", badgeBg: "rgba(232,168,56,0.12)",  badgeColor: "#E8A838", badgeLabel: "This week" },
+  medium:   { iconBg: "rgba(56,139,253,0.1)",  iconStroke: "#79c0ff", badgeBg: "rgba(56,139,253,0.12)",  badgeColor: "#79c0ff", badgeLabel: "Coaching"  },
+  good:     { iconBg: "rgba(46,160,67,0.1)",   iconStroke: "#2ea043", badgeBg: "rgba(46,160,67,0.12)",   badgeColor: "#2ea043", badgeLabel: "Good news" },
+  info:     { iconBg: "rgba(139,148,158,0.1)", iconStroke: "#8b949e", badgeBg: "rgba(139,148,158,0.1)",  badgeColor: "#8b949e", badgeLabel: "Setup"     },
+};
+
+function RecTile({
+  rec,
+  dismissing,
+  onDismiss,
+  onNavigate,
+}: {
+  rec: Recommendation;
+  dismissing: boolean;
+  onDismiss: (id: string) => void;
+  onNavigate: (path: string, state?: any) => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+  const s = URGENCY_CFG[rec.urgency];
+  return (
+    <div
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onClick={() => onNavigate(rec.navigate, rec.navigateState)}
+      style={{
+        background: "#0f1117",
+        border: `1px solid ${hovered ? "#E8A838" : "#30363d"}`,
+        borderRadius: 10,
+        padding: "14px 16px",
+        flex: "0 0 calc(25% - 8px)",
+        cursor: "pointer",
+        transition: "border-color 0.15s, opacity 0.2s, transform 0.15s",
+        opacity: dismissing ? 0 : 1,
+        transform: hovered && !dismissing ? "scale(1.01)" : "scale(1)",
+        userSelect: "none",
+        minWidth: 0,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 32, height: 32, borderRadius: "50%", background: s.iconBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <RecIcon name={rec.icon} stroke={s.iconStroke} />
+          </div>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 600, background: s.badgeBg, color: s.badgeColor, padding: "1px 6px", borderRadius: 4 }}>
+            {s.badgeLabel}
+          </span>
+        </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); onDismiss(rec.id); }}
+          style={{
+            width: 20, height: 20, borderRadius: "50%",
+            background: "#1e2530", border: "1px solid #30363d",
+            color: "#8b949e", fontSize: 14, lineHeight: 1,
+            display: "flex", alignItems: "center", justifyContent: "center",
+            cursor: "pointer", padding: 0, flexShrink: 0,
+            opacity: hovered ? 1 : 0, transition: "opacity 0.15s",
+          }}
+        >
+          ×
+        </button>
+      </div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: "#e6edf3", marginTop: 8, lineHeight: 1.3 }}>
+        {rec.title}
+      </div>
+      <div style={{ fontSize: 11, color: "#8b949e", lineHeight: 1.5, marginTop: 4 }}>
+        {rec.body}
+      </div>
+      <div style={{ fontSize: 11, fontWeight: 600, color: "#E8A838", marginTop: 8 }}>
+        {rec.action}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Dashboard ───────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -169,6 +269,9 @@ export default function Dashboard() {
   const [sentThisMonth, setSentThisMonth] = useState(0);
   const [introCards, setIntroCards] = useState<any[]>([]);
   const [introCardsLoading, setIntroCardsLoading] = useState(true);
+  const [dismissedIds, setDismissedIds] = useState<Record<string, number>>({});
+  const [dismissingIds, setDismissingIds] = useState<Set<string>>(new Set());
+  const [tileOffset, setTileOffset] = useState(0);
 
   // ─── Needs Attention panel state ─────────────────────────────────────────────
   const [atRiskRunning, setAtRiskRunning] = useState<string | null>(null);
@@ -348,6 +451,13 @@ export default function Dashboard() {
     load();
   }, []);
 
+  useEffect(() => {
+    const stored = localStorage.getItem("pulse_dismissed_recs");
+    if (stored) {
+      try { setDismissedIds(JSON.parse(stored)); } catch {}
+    }
+  }, []);
+
   // ─── Outreach queue actions ───────────────────────────────────────────────────
 
   const handleRunAgent = async (playerId: string) => {
@@ -429,6 +539,9 @@ export default function Dashboard() {
   const lapsing = players.filter((p) => getEngagementState(p.last_visit_date) === "lapsing").length;
   const dormant = players.filter((p) => getEngagementState(p.last_visit_date) === "dormant").length;
   const neverVisited = players.filter((p) => p.last_visit_date === null).length;
+  const needsAssessment = players.filter(
+    (p) => !p.progression_status && p.last_visit_date !== null
+  );
   const needsAttentionCount = lapsing + dormant;
   const total = players.length || 1;
 
@@ -448,6 +561,168 @@ export default function Dashboard() {
     const bDate = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
     return aDate - bDate;
   })[0] ?? null;
+
+  // ─── Recommendation engine ────────────────────────────────────────────────────
+
+  const recommendations = useMemo((): Recommendation[] => {
+    const recs: Recommendation[] = [];
+
+    // REC 1 — High churn risk
+    if (highRiskPlayers.length > 0) {
+      recs.push({
+        id: "churn-high",
+        urgency: "critical",
+        icon: "alert",
+        title: `${highRiskPlayers.length} players at high churn risk`,
+        body: "Non-members who haven't been back in 60+ days. Every week you wait, more are gone for good.",
+        action: "Start with top 10 →",
+        navigate: "/players",
+        navigateState: { filter: "high-churn" },
+      });
+    }
+
+    // REC 2 — Messages queued
+    if (messages.length > 0) {
+      const names = messages
+        .slice(0, 3)
+        .map((m) => m.conversations?.players?.name)
+        .filter(Boolean) as string[];
+      let body = "";
+      if (names.length === 1) {
+        body = `Personalized outreach is queued for ${names[0]}. Review and send.`;
+      } else if (names.length === 2) {
+        body = `Personalized outreach is queued for ${names[0]} and ${names[1]}. Review and send.`;
+      } else {
+        const rem = messages.length - 2;
+        body = `Personalized outreach is queued for ${names[0]}, ${names[1]}, and ${rem} other${rem !== 1 ? "s" : ""}. Review and send.`;
+      }
+      recs.push({
+        id: "messages-queued",
+        urgency: "high",
+        icon: "message",
+        title: `${messages.length} message${messages.length !== 1 ? "s" : ""} ready to send`,
+        body,
+        action: "Review outreach queue →",
+        navigate: "/messages",
+      });
+    }
+
+    // REC 3 — Unassessed players
+    if (needsAssessment.length > 50) {
+      recs.push({
+        id: "unassessed-players",
+        urgency: "medium",
+        icon: "progress",
+        title: `${needsAssessment.length} players need assessment`,
+        body: "No progress status set. Assessing players helps the agent recommend the right programs and level up your coaching data.",
+        action: "Go to Progress →",
+        navigate: "/assessments",
+      });
+    }
+
+    // REC 4 — New players this week
+    const newPlayerCount = introCards.reduce((sum, card) => sum + (card.new_players?.length ?? 0), 0);
+    if (introCards.length > 0 && newPlayerCount > 0) {
+      recs.push({
+        id: "new-players-week",
+        urgency: "good",
+        icon: "star",
+        title: `${newPlayerCount} new player${newPlayerCount !== 1 ? "s" : ""} this week`,
+        body: "First-timers joining sessions this week. Introduce them to familiar faces before they drift.",
+        action: "See new player intros →",
+        navigate: "/feedback",
+      });
+    }
+
+    // REC 5 — Individual urgent lapsing high-risk player
+    const urgentLapsing = [...highRiskDrifting]
+      .filter((p) => getEngagementState(p.last_visit_date) === "lapsing")
+      .sort((a, b) => {
+        const aDate = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
+        const bDate = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
+        return aDate - bDate;
+      })[0] ?? null;
+
+    if (urgentLapsing) {
+      const parts = urgentLapsing.name.trim().split(" ");
+      const firstName = parts[0];
+      const lastInitial = parts.length > 1 ? parts[parts.length - 1][0] + "." : "";
+      const displayName = lastInitial ? `${firstName} ${lastInitial}` : firstName;
+      const daysAway = urgentLapsing.last_visit_date
+        ? Math.floor((Date.now() - new Date(urgentLapsing.last_visit_date).getTime()) / 86400000)
+        : 0;
+      const timeAway =
+        daysAway < 30 ? "a few weeks"
+        : daysAway < 60 ? "over a month"
+        : daysAway < 120 ? "a couple of months"
+        : "several months";
+      recs.push({
+        id: "urgent-player",
+        urgency: "critical",
+        icon: "person",
+        title: `${displayName} needs a nudge today`,
+        body: `${firstName} is at high churn risk and hasn't been back in ${timeAway}. A personal message could bring them back.`,
+        action: "Send outreach →",
+        navigate: "/players",
+        navigateState: { openPlayer: urgentLapsing.id },
+      });
+    }
+
+    // REC 6 — Session ratings not set up
+    if (responseRate === null || responseRate === 0) {
+      recs.push({
+        id: "no-ratings",
+        urgency: "info",
+        icon: "star",
+        title: "Session ratings not set up yet",
+        body: "Post-session feedback texts will help you track level fit and improve session quality automatically.",
+        action: "Set up Session Ratings →",
+        navigate: "/feedback",
+      });
+    }
+
+    // REC 7 — Win-back rate
+    if (winbackRate === null || winbackRate === 0) {
+      recs.push({
+        id: "winback-zero",
+        urgency: "info",
+        icon: "refresh",
+        title: "No win-backs recorded yet",
+        body: "Send outreach to inactive players to start building your win-back rate. Even 1–2 returning players per week makes a difference.",
+        action: "View inactive players →",
+        navigate: "/players",
+        navigateState: { filter: "inactive" },
+      });
+    }
+
+    const urgencyOrder: Record<RecUrgency, number> = { critical: 0, high: 1, medium: 2, good: 3, info: 4 };
+    recs.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
+    return recs;
+  }, [players, messages, introCards, responseRate, winbackRate, highRiskPlayers, highRiskDrifting, needsAssessment]);
+
+  const DISMISS_TTL = 48 * 60 * 60 * 1000;
+  const visibleRecs = recommendations.filter((r) => {
+    const ts = dismissedIds[r.id];
+    return !ts || Date.now() - ts >= DISMISS_TTL;
+  });
+  const clampedOffset = Math.min(tileOffset, Math.max(0, visibleRecs.length - 4));
+  const visibleTiles = visibleRecs.slice(clampedOffset, clampedOffset + 4);
+
+  const dismissRec = useCallback((id: string) => {
+    setDismissingIds((prev) => new Set([...prev, id]));
+    setTimeout(() => {
+      setDismissedIds((prev) => {
+        const updated = { ...prev, [id]: Date.now() };
+        localStorage.setItem("pulse_dismissed_recs", JSON.stringify(updated));
+        return updated;
+      });
+      setDismissingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }, 200);
+  }, []);
 
   const CHURN_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
@@ -652,6 +927,66 @@ export default function Dashboard() {
               {buildBriefing()}
             </p>
           </div>
+
+          {/* ── Recommendation Tiles ── */}
+          {!loading && visibleRecs.length > 0 && (
+            <div style={{ padding: "16px 24px 0" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: "#8b949e", letterSpacing: "0.06em", textTransform: "uppercase" }}>
+                  Recommendations
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  {visibleRecs.length > 4 && (
+                    <span
+                      style={{ fontSize: 10, color: "#E8A838", cursor: "pointer", fontWeight: 500 }}
+                      onClick={() => setTileOffset(0)}
+                    >
+                      View all {visibleRecs.length} →
+                    </span>
+                  )}
+                  {visibleRecs.length > 4 && (
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <button
+                        onClick={() => setTileOffset((o) => Math.max(0, o - 4))}
+                        disabled={clampedOffset === 0}
+                        style={{ width: 28, height: 28, borderRadius: "50%", background: "#1e2530", border: "1px solid #30363d", color: "#8b949e", display: "flex", alignItems: "center", justifyContent: "center", cursor: clampedOffset === 0 ? "not-allowed" : "pointer", opacity: clampedOffset === 0 ? 0.3 : 1, fontSize: 14, padding: 0 }}
+                      >‹</button>
+                      <button
+                        onClick={() => setTileOffset((o) => Math.min(o + 4, Math.max(0, visibleRecs.length - 4)))}
+                        disabled={clampedOffset + 4 >= visibleRecs.length}
+                        style={{ width: 28, height: 28, borderRadius: "50%", background: "#1e2530", border: "1px solid #30363d", color: "#8b949e", display: "flex", alignItems: "center", justifyContent: "center", cursor: clampedOffset + 4 >= visibleRecs.length ? "not-allowed" : "pointer", opacity: clampedOffset + 4 >= visibleRecs.length ? 0.3 : 1, fontSize: 14, padding: 0 }}
+                      >›</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, overflow: "visible" }}>
+                {visibleTiles.map((rec) => (
+                  <RecTile
+                    key={rec.id}
+                    rec={rec}
+                    dismissing={dismissingIds.has(rec.id)}
+                    onDismiss={dismissRec}
+                    onNavigate={(path, state) => navigate(path, { state })}
+                  />
+                ))}
+              </div>
+              {visibleRecs.length > 4 && (
+                <div style={{ display: "flex", justifyContent: "center", gap: 4, marginTop: 10 }}>
+                  {Array.from({ length: Math.min(7, visibleRecs.length) }, (_, i) => {
+                    const isActive = i >= clampedOffset && i < clampedOffset + 4;
+                    return (
+                      <div
+                        key={i}
+                        onClick={() => setTileOffset(Math.min(i, Math.max(0, visibleRecs.length - 4)))}
+                        style={{ height: 5, width: isActive ? 12 : 5, borderRadius: 3, background: isActive ? "#E8A838" : "#30363d", cursor: "pointer", transition: "width 0.2s, background 0.2s" }}
+                      />
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── Stat Strip ── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, padding: "16px 24px 0" }}>
