@@ -129,9 +129,30 @@ export async function computeChurnScore(playerId: string): Promise<void> {
     .eq("id", playerId);
 }
 
+export interface ChurnDebug {
+  churn_score: number;
+  churn_risk: ChurnRisk;
+  breakdown: {
+    s1_recency: number;
+    s2_frequency_drop: number;
+    s3_social_isolation: number;
+    s4_outreach_nonresponse: number;
+    s5_membership: number;
+    last_visit_days_ago: number | null;
+    baseline_sessions: number;
+    recent_sessions: number;
+    baseline_weekly: number;
+    recent_weekly: number;
+    buddy_count: number;
+    outbound_messages: number;
+    inbound_messages: number;
+    membership_status: string | null;
+  };
+}
+
 export async function computeChurnScoreAndReturn(
   playerId: string
-): Promise<{ churn_score: number; churn_risk: ChurnRisk } | null> {
+): Promise<ChurnDebug | null> {
   const { data: player, error: playerErr } = await supabase
     .from("players")
     .select("last_visit_date, membership_status")
@@ -162,22 +183,27 @@ export async function computeChurnScoreAndReturn(
   }
 
   let s2 = 12;
+  let debugBaselineSessions = 0;
+  let debugRecentSessions = 0;
+  let debugBaselineWeekly = 0;
+  let debugRecentWeekly = 0;
+
   if (allAttendances.length > 0) {
     const firstAt = new Date(allAttendances[0].attended_at).getTime();
     const cutoff60 = firstAt + 60 * MS_PER_DAY;
     const cutoff30 = Date.now() - 30 * MS_PER_DAY;
-    const baselineSessions = allAttendances.filter(
+    debugBaselineSessions = allAttendances.filter(
       (a) => new Date(a.attended_at).getTime() <= cutoff60
     ).length;
-    const recentSessions = allAttendances.filter(
+    debugRecentSessions = allAttendances.filter(
       (a) => new Date(a.attended_at).getTime() >= cutoff30
     ).length;
-    const baselineWeekly = baselineSessions / 8.57;
-    const recentWeekly = recentSessions / 4.33;
-    if (baselineWeekly === 0) {
+    debugBaselineWeekly = debugBaselineSessions / 8.57;
+    debugRecentWeekly = debugRecentSessions / 4.33;
+    if (debugBaselineWeekly === 0) {
       s2 = 12;
     } else {
-      const drop = (baselineWeekly - recentWeekly) / baselineWeekly;
+      const drop = (debugBaselineWeekly - debugRecentWeekly) / debugBaselineWeekly;
       s2 = Math.round(25 * Math.max(0, Math.min(1, drop)));
     }
   }
@@ -192,6 +218,8 @@ export async function computeChurnScoreAndReturn(
   else if (bc >= 1) s3 = 10;
 
   let s4 = 0;
+  let debugOutCount = 0;
+  let debugInCount = 0;
   const { data: convData } = await supabase
     .from("conversations")
     .select("id")
@@ -210,10 +238,10 @@ export async function computeChurnScoreAndReturn(
         .in("conversation_id", convIds)
         .eq("direction", "inbound"),
     ]);
-    const outCount = outboundRes.count ?? 0;
-    const inCount = inboundRes.count ?? 0;
-    if (outCount > 0) {
-      const rr = inCount / outCount;
+    debugOutCount = outboundRes.count ?? 0;
+    debugInCount = inboundRes.count ?? 0;
+    if (debugOutCount > 0) {
+      const rr = debugInCount / debugOutCount;
       if (rr === 0)       s4 = 15;
       else if (rr < 0.5)  s4 = 8;
       else                s4 = 0;
@@ -229,5 +257,24 @@ export async function computeChurnScoreAndReturn(
     .update({ churn_score: totalScore, churn_risk: risk })
     .eq("id", playerId);
 
-  return { churn_score: totalScore, churn_risk: risk };
+  return {
+    churn_score: totalScore,
+    churn_risk: risk,
+    breakdown: {
+      s1_recency: s1,
+      s2_frequency_drop: s2,
+      s3_social_isolation: s3,
+      s4_outreach_nonresponse: s4,
+      s5_membership: s5,
+      last_visit_days_ago: Math.round(days),
+      baseline_sessions: debugBaselineSessions,
+      recent_sessions: debugRecentSessions,
+      baseline_weekly: Math.round(debugBaselineWeekly * 100) / 100,
+      recent_weekly: Math.round(debugRecentWeekly * 100) / 100,
+      buddy_count: bc,
+      outbound_messages: debugOutCount,
+      inbound_messages: debugInCount,
+      membership_status: player.membership_status,
+    },
+  };
 }
