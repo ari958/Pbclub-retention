@@ -483,7 +483,15 @@ export default function Dashboard() {
     const weeksAway = first?.last_visit_date
       ? Math.floor((Date.now() - new Date(first.last_visit_date).getTime()) / (7 * 24 * 3600000))
       : null;
-    const timeLabel = weeksAway !== null && weeksAway > 0 ? `${weeksAway}+ week${weeksAway !== 1 ? "s" : ""}` : "a while";
+    const timeLabel = weeksAway === null || weeksAway <= 0
+      ? "a while"
+      : weeksAway < 4
+        ? "a few weeks"
+        : weeksAway < 8
+          ? "over a month"
+          : weeksAway < 16
+            ? "a couple of months"
+            : "several months";
 
     return (
       <>
@@ -619,7 +627,7 @@ export default function Dashboard() {
                             {p.name}
                           </div>
                           <div style={{ fontSize: 10, color: C.textSecondary, fontFamily: "var(--font-mono)" }}>
-                            {p.skill_level ? toTitleCase(p.skill_level) : "No skill level"} · {relativeTime(p.last_visit_date)}
+                            {p.skill_level ? `${toTitleCase(p.skill_level)} · ` : ""}{relativeTime(p.last_visit_date)}
                           </div>
                         </div>
                         <StatePillDark state={state} />
