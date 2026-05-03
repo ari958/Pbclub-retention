@@ -1,0 +1,358 @@
+We are rebuilding the Dashboard page of Pulse — a player retention 
+platform for pickleball clubs. Pulse helps club owners and coaches 
+answer one question every time they open the app: "What needs my 
+attention today?" The current dashboard is a spreadsheet — a full 
+player table that overwhelms the user immediately. We are replacing 
+it with a true command center: visual, scannable, action-oriented.
+
+The target users are club owners and coaches — not engineers. They 
+open this on a laptop between lessons or before a shift. They need 
+to understand the health of their club and take action in under 
+10 seconds. Every element on this page must earn its place by 
+answering a question they actually have.
+
+DESIGN DIRECTION:
+- Full dark theme — #0f1117 sidebar, #161b22 main background, 
+  #0f1117 cards/panels, #30363d borders
+- Bento-style grid layout — panels of different sizes arranged 
+  in a grid, not a list of equal-height rows
+- AI briefing banner just below the topbar — the smartest, most 
+  human part of the UI
+- Amber (#E8A838) as the primary accent — active state, buttons, 
+  highlights, links
+- No player table anywhere on this page — that lives on /players
+- Every panel has a "View All →" link that navigates to the 
+  correct detail page
+
+--- WHAT TO BUILD ---
+
+FILE: artifacts/dashboard/src/pages/Dashboard.tsx
+Complete rewrite of this file only. Do not touch any other files.
+Keep all existing data fetching, Supabase queries, state, and 
+API calls exactly as they are. Only change the visual layer.
+
+--- LAYOUT STRUCTURE ---
+
+The page has four zones stacked vertically:
+1. Topbar (already exists — keep as-is, just update colors)
+2. AI Briefing Banner (new)
+3. Stat Strip — 3 cards in a row (simplified from current 7)
+4. Bento Grid — 2 rows × 3 columns of panels
+
+TOPBAR:
+- background: #0f1117
+- border-bottom: 1px solid #30363d
+- Title: "Dashboard" in #fff, 14px, fontWeight 600
+- Right side: "Refresh Data" ghost button + "Send Outreach to All" 
+  amber button
+- Ghost button: background #1e2530, border 1px solid #30363d, 
+  color #8b949e
+- Amber button: background #E8A838, color #0f1117, fontWeight 600
+
+AI BRIEFING BANNER:
+Position: full width strip below topbar, above everything else.
+Background: #0f1117
+Border-bottom: 1px solid #30363d
+Padding: 12px 24px
+Layout: icon (left) + text (right)
+
+Icon: 28px circle, background rgba(232,168,56,0.15), border 1px 
+solid rgba(232,168,56,0.25), centered "✦" character in #E8A838
+
+Text: 12px, color #8b949e, lineHeight 1.6
+Highlight key numbers in #E8A838 fontWeight 600
+Highlight player names in #e6edf3 (not amber — just white-ish)
+
+The briefing text is generated dynamically from real data:
+- Count of pending messages in the queue
+- Count of lapsing players
+- Name of the most urgent player (longest time since last visit 
+  among lapsing/dormant) + how many others
+
+Example output:
+"You have [12 messages ready to send] and [50 players drifting] 
+this week. [Carlota Digon] and 4 others haven't been back in 
+3+ weeks — worth a nudge today."
+
+Build this as a pure computed string from existing state:
+- messages.length → pending queue count
+- players filtered to lapsing/dormant → drifting count  
+- Sort lapsing/dormant by last_visit_date ascending → most urgent
+- "X and Y others" phrasing when count > 1, just "X" when count = 1
+- If no lapsing players: "Everything looks good — no players 
+  need attention right now."
+- If no pending messages: omit that sentence
+
+STAT STRIP:
+3 cards in a row (not 5, not 7 — just 3 that matter most)
+Each card: background #0f1117, border 1px solid #30363d, 
+borderRadius 8px, padding 14px 18px, cursor pointer
+
+Card 1: ACTIVE PLAYERS
+Value: active count, color #2ea043, fontSize 28px fontWeight 700
+Sub: "playing regularly" in 10px #8b949e mono
+Click: navigates to /players with active filter
+
+Card 2: NEED ATTENTION  
+Value: lapsing + dormant count, color #cf222e, fontSize 28px 700
+Sub: "drifting or inactive" in 10px #8b949e mono
+Click: navigates to /players with lapsing filter
+
+Card 3: OUTREACH QUEUE
+Value: messages.length (pending queue), color #E8A838, 
+fontSize 28px fontWeight 700
+Sub: "messages ready to send" in 10px #8b949e mono
+Click: navigates to /messages
+
+On hover: border-color transitions to #E8A838 over 0.15s
+
+BENTO GRID:
+display: grid
+grid-template-columns: 1fr 1fr 1fr
+grid-template-rows: auto auto
+gap: 10px
+padding: 0 24px 24px
+
+Row 1 (top):
+- Cell 1-2 (spans 2 columns): NEEDS ATTENTION panel
+- Cell 3 (1 column): CLUB HEALTH panel
+
+Row 2 (bottom):
+- Cell 1-2 (spans 2 columns): OUTREACH QUEUE panel  
+- Cell 3 (1 column): NEW PLAYER INTROS panel
+
+All panels:
+background: #0f1117
+border: 1px solid #30363d
+borderRadius: 8px
+overflow: hidden
+
+Panel header pattern (same for all):
+padding: 10px 14px
+border-bottom: 1px solid #1e2530
+display: flex, alignItems: center, justifyContent: space-between
+
+Panel title: 12px, fontWeight 600, color #e6edf3
+View All link: 10px, color #E8A838, fontWeight 500, cursor pointer
+Badge: 9px mono, background #1e2530, border 1px solid #30363d, 
+padding 1px 6px, borderRadius 8px, color #8b949e
+Urgent badge: same but background rgba(207,34,46,0.12), 
+border rgba(207,34,46,0.25), color #ff6b6b
+
+--- PANEL DETAILS ---
+
+NEEDS ATTENTION PANEL (spans 2 columns, row 1):
+Header: "Needs Attention" + urgent badge showing count of 
+lapsing+dormant players + "View All →" linking to /players
+
+Show top 4 players sorted by: lapsing first, then by 
+last_visit_date ascending (longest away first).
+
+Each player row:
+padding: 9px 14px
+border-bottom: 1px solid #1e2530
+display: flex, alignItems: center, gap: 8px
+
+Left: player name (12px 500 #e6edf3) + sub-line (10px #8b949e: 
+skill level · relative time since last visit)
+Middle: status pill — Drifting (orange) or Inactive (red)
+Right: "Send Outreach" button
+
+Pill styles:
+Drifting: background rgba(212,129,58,0.15), color #d4813a, 
+fontSize 9px, padding 1px 6px, borderRadius 8px
+Inactive: background rgba(207,34,46,0.15), color #ff6b6b,
+fontSize 9px, padding 1px 6px, borderRadius 8px
+
+"Send Outreach" button per row:
+fontSize 10px, padding 3px 10px, borderRadius 4px
+background #E8A838, color #0f1117, fontWeight 600, border none
+On click: existing onRunAgent(player.id) logic
+Loading state: button shows "Sending..." + thin amber progress 
+bar animates under the button (width 0→100% over 20 seconds 
+using CSS animation), color #E8A838, height 2px
+On complete: button briefly shows "✓ Added" in green (#2ea043) 
+for 1.5 seconds then resets
+
+Footer row: "View all X players →" in amber, centered, 
+10px, padding 8px, border-top 1px solid #1e2530
+
+CLUB HEALTH PANEL (1 column, row 1):
+Header: "Club Health" + "View Players →" link to /players
+
+Body: horizontal stacked bar + legend
+
+Stacked bar:
+height: 24px, borderRadius: 5px, overflow: hidden
+display: flex, gap: 1px, marginBottom: 10px
+Each segment: flex proportional to count, min-width: 4px
+Active segment: background #2ea043, shows count if segment 
+wide enough (fontSize 10px color #fff fontWeight 600)
+Drifting: background #d4813a
+Inactive: background #cf222e
+Never Visited: background #30363d
+
+Legend below bar: flex row, gap 10px, flexWrap wrap
+Each item: dot (8px circle) + label + count
+fontSize 10px, color #8b949e
+
+Below legend, 4 KPI mini-rows:
+Each: label (10px #8b949e) + value (10px fontWeight 600 color)
+- Response Rate: responseRate% in #E8A838 (or "—" if null)
+- Win-Back Rate: winbackRate% in #2ea043 (or "—" if null)
+- Sent This Month: count of sent messages last 30 days in #e6edf3
+- Never Visited: neverVisited count in #8b949e
+
+OUTREACH QUEUE PANEL (spans 2 columns, row 2):
+Header: "Outreach Queue" + pending count badge + 
+"View All →" linking to /messages
+
+Show top 3 messages only (slice first 3 from messages array)
+
+Each message row:
+padding: 10px 14px
+border-bottom: 1px solid #1e2530
+display: flex, alignItems: flex-start, gap: 10px
+
+Left side (flex: 1):
+Player name in #E8A838, 12px 500
+Status pill inline next to name
+Message body: 11px #8b949e italic, lineHeight 1.4, 
+max 2 lines (overflow hidden, display -webkit-box, 
+-webkit-line-clamp 2, -webkit-box-orient vertical)
+Cooldown badge if applicable (existing logic)
+
+Right side (flex-shrink 0):
+"Send" button: #E8A838 background, #0f1117 text, 10px 600
+"Edit" button: #1e2530 background, #30363d border, #8b949e text
+"Dismiss" button: same as Edit but on hover turns 
+rgba(207,34,46,0.15) background, #ff6b6b text
+
+Send button loading state: same as Needs Attention panel —
+thin amber progress bar under button, "Sending..." label,
+then "✓ Sent" in green for 1.5s
+
+Footer: "View all X messages →" amber centered link
+
+NEW PLAYER INTROS PANEL (1 column, row 2):
+Header: "New Player Intros" + "7 days" badge + 
+"View All →" linking to /feedback
+
+Uses existing introCards state from StaffIntroPanel logic.
+Show first 4 new players across the next 7 days.
+
+Date divider rows (between different dates):
+padding: 4px 12px
+fontSize: 9px, fontFamily mono, color #8b949e
+textTransform uppercase, letterSpacing 0.05em
+background #161b22, border-bottom 1px solid #1e2530
+
+Each new player row:
+padding: 8px 12px
+border-bottom: 1px solid #1e2530
+
+Top line: NEW badge + player name + visit ordinal
+NEW badge: background #2ea043, color #fff, fontSize 9px, 
+fontWeight 700, padding 1px 5px, borderRadius 3px
+Name: 11px 500 #e6edf3
+Visit ordinal: 10px #8b949e ("1st visit", "2nd visit", etc)
+
+Second line (if buddy connections exist):
+"→ knows {name} & {name}" in 10px #8b949e italic
+
+Footer: "View X more this week →" amber centered link
+
+--- NAVIGATION ---
+
+"View All →" links use useNavigate() from react-router-dom.
+Each link navigates to the correct page:
+- Club Health → /players
+- Needs Attention → /players  
+- Outreach Queue → /messages
+- New Player Intros → /feedback
+- Stat card clicks → /players (active/attention) or /messages
+
+Import useNavigate at the top of the file if not already imported.
+
+--- PROGRESS INDICATOR COMPONENT ---
+
+Create a small inline ProgressBar component at the top of 
+Dashboard.tsx (above the main export):
+
+function ProgressBar({ active }: { active: boolean }) {
+  return (
+    <div style={{
+      height: 2,
+      background: active ? '#E8A838' : 'transparent',
+      borderRadius: 1,
+      marginTop: 2,
+      width: active ? '100%' : '0%',
+      transition: active ? 'none' : 'width 0s',
+      animation: active ? 'progressFill 20s linear forwards' : 'none',
+    }} />
+  );
+}
+
+Add to CSS in index.css or as a style tag:
+@keyframes progressFill {
+  from { width: 0% }
+  to { width: 100% }
+}
+
+Use this under every "Send Outreach" and "Send" button 
+while the action is in loading state.
+
+--- REMOVING THE PLAYER TABLE ---
+
+The AtRiskPanel component and all its associated state 
+(search, filters, sort, pagination) should be removed 
+from Dashboard.tsx entirely. The player table now lives 
+only on /players.
+
+Keep these existing pieces:
+- fetchData() and all its Supabase queries
+- fetchMessages() 
+- runAgent() / runBatchAgent()
+- syncAll()
+- PlayerDrawer (keep — clicking player names opens it)
+- ConfirmDialog (keep — for batch send confirmation)
+- All state variables that feed the new panels
+- NeedsAssessmentPanel logic (repurposed into the new 
+  Needs Attention panel inline — no longer a separate component)
+- StaffIntroPanel data fetch (keep the fetch, remove the 
+  old component, use data inline in New Player Intros panel)
+
+Remove entirely:
+- AtRiskPanel component and all its sub-components
+- SortTh, SkeletonRows (if only used by AtRiskPanel)
+- filterState, setFilterState (no longer needed)
+- All sort/filter/search state that was for the player table
+
+--- COLORS REFERENCE ---
+Dark bg: #0f1117
+Dark surface: #161b22  
+Card bg: #0f1117
+Border: #30363d
+Inner border: #1e2530
+Text primary: #e6edf3
+Text secondary: #8b949e
+Accent: #E8A838
+Active/green: #2ea043
+Drifting/orange: #d4813a
+Inactive/red: #cf222e (pill text: #ff6b6b)
+
+--- ARCHITECTURE NOTES ---
+- Do NOT change any other files — only Dashboard.tsx and 
+  adding @keyframes progressFill to index.css
+- Keep all existing Supabase imports and queries unchanged
+- Keep PlayerDrawer and ConfirmDialog unchanged
+- marginLeft for the main content area stays at 240px 
+  (set in the previous redesign)
+- The Sidebar component is unchanged — it already has the 
+  dark theme from the previous build
+- After completing, take a screenshot of the dashboard 
+  and confirm it matches the dark bento grid design with 
+  the briefing banner, stat strip, and 4 panels
+- The NeedsAssessmentPanel was a separate component before —
+  inline its logic directly into the new dashboard layout 
+  rather than keeping it as a separate component
