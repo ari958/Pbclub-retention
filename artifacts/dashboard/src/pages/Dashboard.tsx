@@ -432,6 +432,23 @@ export default function Dashboard() {
   const needsAttentionCount = lapsing + dormant;
   const total = players.length || 1;
 
+  const highRiskPlayers = players.filter(
+    (p) => p.churn_risk === "high" && p.last_visit_date !== null
+  );
+
+  const highRiskDrifting = players.filter(
+    (p) =>
+      p.churn_risk === "high" &&
+      (getEngagementState(p.last_visit_date) === "lapsing" ||
+        getEngagementState(p.last_visit_date) === "dormant")
+  );
+
+  const mostUrgent = [...highRiskDrifting].sort((a, b) => {
+    const aDate = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
+    const bDate = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
+    return aDate - bDate;
+  })[0] ?? null;
+
   const CHURN_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
   const atRiskPlayers = [...players]
@@ -488,46 +505,92 @@ export default function Dashboard() {
 
   function buildBriefing() {
     if (loading) return <span>Loading club data…</span>;
-    if (urgentPlayers.length === 0 && messages.length === 0) {
+
+    // High-risk path
+    if (highRiskDrifting.length > 0 && mostUrgent) {
+      const nameParts = mostUrgent.name.trim().split(" ");
+      const firstName = nameParts[0];
+      const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1][0] + "." : "";
+      const displayName = lastInitial ? `${firstName} ${lastInitial}` : firstName;
+      const othersCount = highRiskDrifting.length - 1;
+      const othersText = othersCount > 0
+        ? ` and ${othersCount} other${othersCount > 1 ? "s" : ""}`
+        : "";
+      const daysAway = mostUrgent.last_visit_date
+        ? Math.floor((Date.now() - new Date(mostUrgent.last_visit_date).getTime()) / 86400000)
+        : 0;
+      const timeAway =
+        daysAway < 30 ? "a few weeks"
+        : daysAway < 60 ? "over a month"
+        : daysAway < 120 ? "a couple of months"
+        : "several months";
+      return (
+        <>
+          {messages.length > 0 && (
+            <>
+              You have{" "}
+              <span style={{ color: C.accent, fontWeight: 600 }}>
+                {messages.length} message{messages.length !== 1 ? "s" : ""} ready to send
+              </span>
+              {" "}and{" "}
+            </>
+          )}
+          {messages.length === 0 && <>There are{" "}</>}
+          <span style={{ color: C.redText, fontWeight: 600 }}>
+            {highRiskPlayers.length} player{highRiskPlayers.length !== 1 ? "s" : ""} at high churn risk
+          </span>
+          {" "}this week.{" "}
+          <span style={{ color: C.textPrimary }}>{displayName}</span>
+          {othersText} haven't been back in {timeAway} — worth reaching out today.
+        </>
+      );
+    }
+
+    // Fallback path — no high-risk drifters
+    const atRisk = players.filter(
+      (p) =>
+        getEngagementState(p.last_visit_date) === "lapsing" ||
+        getEngagementState(p.last_visit_date) === "dormant"
+    );
+
+    if (atRisk.length === 0 && messages.length === 0) {
       return <span>Everything looks good — no players need attention right now.</span>;
     }
+
     const first = urgentPlayers[0];
     const others = urgentPlayers.length - 1;
     const weeksAway = first?.last_visit_date
       ? Math.floor((Date.now() - new Date(first.last_visit_date).getTime()) / (7 * 24 * 3600000))
       : null;
-    const timeLabel = weeksAway === null || weeksAway <= 0
-      ? "a while"
-      : weeksAway < 4
-        ? "a few weeks"
-        : weeksAway < 8
-          ? "over a month"
-          : weeksAway < 16
-            ? "a couple of months"
-            : "several months";
-
-    const highChurnDrifters = urgentPlayers.filter((p) => p.churn_risk === "high");
+    const timeLabel =
+      weeksAway === null || weeksAway <= 0 ? "a while"
+      : weeksAway < 4 ? "a few weeks"
+      : weeksAway < 8 ? "over a month"
+      : weeksAway < 16 ? "a couple of months"
+      : "several months";
 
     return (
       <>
         {messages.length > 0 && (
           <>
             You have{" "}
-            <span style={{ color: C.accent, fontWeight: 600 }}>{messages.length} message{messages.length !== 1 ? "s" : ""} ready to send</span>
-            {urgentPlayers.length > 0 ? " and " : "."}
+            <span style={{ color: C.accent, fontWeight: 600 }}>
+              {messages.length} message{messages.length !== 1 ? "s" : ""} ready to send
+            </span>
+            {atRisk.length > 0 ? " and " : "."}
           </>
         )}
-        {urgentPlayers.length > 0 && (
+        {atRisk.length > 0 && (
           <>
-            <span style={{ color: C.accent, fontWeight: 600 }}>{urgentPlayers.length} player{urgentPlayers.length !== 1 ? "s" : ""} drifting</span>
+            <span style={{ color: C.accent, fontWeight: 600 }}>
+              {atRisk.length} player{atRisk.length !== 1 ? "s" : ""} drifting
+            </span>
             {" "}this week.{" "}
-            <span style={{ color: C.textPrimary }}>{first.name}</span>
-            {others > 0 ? ` and ${others} other${others !== 1 ? "s" : ""}` : ""}
-            {" "}haven't been back in {timeLabel} — worth a nudge today.
-            {highChurnDrifters.length > 0 && (
+            {first && (
               <>
-                {" "}<span style={{ color: "#ff6b6b", fontWeight: 600 }}>{highChurnDrifters.length} of them</span>
-                {" "}are flagged high churn risk — prioritise these first.
+                <span style={{ color: C.textPrimary }}>{first.name}</span>
+                {others > 0 ? ` and ${others} other${others !== 1 ? "s" : ""}` : ""}
+                {" "}haven't been back in {timeLabel} — worth a nudge today.
               </>
             )}
           </>
@@ -594,7 +657,9 @@ export default function Dashboard() {
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, padding: "16px 24px 0" }}>
             {[
               { label: "ACTIVE PLAYERS", value: active, color: C.green, sub: "playing regularly", onClick: () => navigate("/players") },
-              { label: "NEED ATTENTION", value: needsAttentionCount, color: C.red, sub: "drifting or inactive", onClick: () => navigate("/players") },
+              highRiskPlayers.length > 10
+                ? { label: "HIGH CHURN RISK", value: highRiskPlayers.length, color: "#cf222e", sub: "need outreach now", onClick: () => navigate("/players") }
+                : { label: "NEED ATTENTION", value: needsAttentionCount, color: C.red, sub: "drifting or inactive", onClick: () => navigate("/players") },
               { label: "OUTREACH QUEUE", value: messages.length, color: C.accent, sub: "messages ready to send", onClick: () => navigate("/messages") },
             ].map((card) => (
               <div

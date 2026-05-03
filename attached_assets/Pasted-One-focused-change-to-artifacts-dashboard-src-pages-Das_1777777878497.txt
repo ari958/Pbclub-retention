@@ -1,0 +1,142 @@
+One focused change to artifacts/dashboard/src/pages/Dashboard.tsx only.
+
+Update the AI briefing banner logic to incorporate churn risk data.
+
+CURRENT BEHAVIOR:
+The briefing mentions the longest-away players regardless of 
+churn risk signal.
+
+NEW BEHAVIOR:
+The briefing should prioritize high churn risk players and 
+mention the signal explicitly when it exists.
+
+CHANGE 1 — Add churn_risk to the players fetch:
+In fetchData(), the players Supabase select string already 
+has churn_risk from the recent build. Confirm it's there.
+If not, add 'churn_risk' to the select string.
+
+CHANGE 2 — Compute high risk count in derived state:
+Add these derived values alongside the existing active/lapsing 
+/dormant counts:
+
+const highRiskPlayers = players.filter(p => 
+  p.churn_risk === 'high' && 
+  p.last_visit_date !== null
+);
+
+const highRiskDrifting = players.filter(p =>
+  p.churn_risk === 'high' &&
+  (getEngagementState(p.last_visit_date) === 'lapsing' ||
+   getEngagementState(p.last_visit_date) === 'dormant')
+);
+
+// Most urgent = high risk + longest away
+const mostUrgent = [...highRiskDrifting].sort((a, b) => {
+  const aDate = a.last_visit_date ? 
+    new Date(a.last_visit_date).getTime() : 0;
+  const bDate = b.last_visit_date ? 
+    new Date(b.last_visit_date).getTime() : 0;
+  return aDate - bDate;
+})[0];
+
+CHANGE 3 — Update briefing text logic:
+Replace the current briefing text computation with this:
+
+const getBriefingText = () => {
+  const parts = [];
+  
+  // Pending messages part
+  if (messages.length > 0) {
+    parts.push({
+      text: `You have `,
+      highlight: `${messages.length} messages ready to send`,
+      after: ``
+    });
+  }
+
+  // High churn risk part — replaces generic drifting count
+  if (highRiskDrifting.length > 0 && mostUrgent) {
+    const firstName = mostUrgent.name.split(' ')[0];
+    const lastName = mostUrgent.name.split(' ').slice(-1)[0];
+    const displayName = `${firstName} ${lastName[0]}.`;
+    const othersCount = highRiskDrifting.length - 1;
+    
+    const daysAway = mostUrgent.last_visit_date 
+      ? Math.floor((Date.now() - new Date(
+          mostUrgent.last_visit_date).getTime()) / 86400000)
+      : 0;
+    
+    const timeAway = daysAway < 30 ? 'a few weeks' 
+      : daysAway < 60 ? 'over a month'
+      : daysAway < 120 ? 'a couple of months'
+      : 'several months';
+
+    const othersText = othersCount > 0 
+      ? ` and ${othersCount} other${othersCount > 1 ? 's' : ''}` 
+      : '';
+
+    return buildBriefing(
+      messages.length,
+      highRiskDrifting.length,
+      displayName,
+      othersText,
+      timeAway,
+      highRiskPlayers.length
+    );
+  }
+
+  // Fallback — no high risk players, use old logic
+  const atRisk = players.filter(p =>
+    getEngagementState(p.last_visit_date) === 'lapsing' ||
+    getEngagementState(p.last_visit_date) === 'dormant'
+  );
+  
+  if (atRisk.length === 0 && messages.length === 0) {
+    return { 
+      text: "Everything looks good — no players need attention right now.",
+      highlights: []
+    };
+  }
+
+  return buildFallbackBriefing(messages.length, atRisk.length);
+};
+
+Implement buildBriefing() as a function that returns JSX 
+with highlighted spans:
+
+The briefing text when high risk players exist:
+"You have [X messages ready to send] and [Y players at high 
+churn risk] this week. [Name] and Z others haven't been back 
+in [time] — worth reaching out today."
+
+Where:
+- "X messages ready to send" → amber #E8A838 fontWeight 600
+- "Y players at high churn risk" → red #ff6b6b fontWeight 600
+- "Name" → white #e6edf3 (not amber, not red)
+- Everything else → #8b949e
+
+The briefing text when no high risk players but drifting exist:
+"You have [X messages ready to send] and [Y players drifting] 
+this week. [Name] and Z others haven't been back in [time] 
+— worth a nudge today."
+
+The briefing text when everything is fine:
+"Everything looks good — no players need attention right now."
+In #8b949e, no highlights.
+
+CHANGE 4 — Update the stat strip:
+The middle stat card currently shows "Need Attention" with 
+lapsing+dormant count. Update it to show high churn risk 
+count instead if it's meaningful (> 10):
+
+Label: "HIGH CHURN RISK"  
+Value: highRiskPlayers.length
+Color: #cf222e
+Sub: "need outreach now"
+
+If highRiskPlayers.length <= 10, keep showing the 
+lapsing+dormant count with "NEED ATTENTION" label as before.
+
+Do not change any other files. After completing, take a 
+screenshot of the dashboard to confirm the briefing banner 
+and stat strip update correctly.
