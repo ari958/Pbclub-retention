@@ -1,0 +1,296 @@
+We are building a churn risk scoring system for Pulse. The goal 
+is to give club owners and coaches a prioritized signal about 
+which players are most likely to stop coming back — so outreach 
+goes to the right people at the right time, not just whoever 
+has been away the longest.
+
+This is NOT a replacement for the existing Active/Drifting/Inactive 
+status. It sits alongside it. Status tells you where a player is. 
+Churn risk tells you how urgently to act.
+
+The churn risk signal has three tiers:
+- HIGH — act now, likely churning
+- MEDIUM — showing signs of drift, worth a nudge  
+- LOW — engaged and connected, low priority
+- (no badge) — Never Visited players are excluded entirely.
+  Active players with LOW risk also show no badge — 
+  only surface the signal when it matters.
+
+--- STEP 1: DATABASE ---
+
+Add a churn_score column to the players table and a 
+churn_risk column. Run in Supabase:
+
+ALTER TABLE players 
+  ADD COLUMN IF NOT EXISTS churn_score integer,
+  ADD COLUMN IF NOT EXISTS churn_risk text 
+    CHECK (churn_risk IN ('high', 'medium', 'low'));
+
+Also add a job row for the nightly computation:
+INSERT INTO jobs (id) VALUES ('compute_churn_scores')
+ON CONFLICT (id) DO NOTHING;
+
+--- STEP 2: SCORING ENGINE ---
+
+Create artifacts/api-server/src/lib/churnScore.ts
+
+This file exports one function:
+computeChurnScore(playerId: string): Promise<void>
+
+The function computes a 0-100 churn score for the player 
+and writes churn_score and churn_risk back to the players 
+table. Never Visited players (last_visit_date IS NULL) are 
+skipped entirely — do not write any score for them.
+
+SCORING MODEL — five independent signals summed to 0-100:
+
+SIGNAL 1 — Recency (max 30 pts)
+  days_since = days between last_visit_date and today
+  0–14 days  → 0 pts
+  15–30 days → 10 pts
+  31–60 days → 20 pts
+  61+ days   → 30 pts
+
+SIGNAL 2 — Frequency drop (max 25 pts)
+  Query attendances for this player:
+  baseline_sessions = COUNT where attended_at between 
+    (first_attended_at) and (first_attended_at + 60 days)
+  baseline_weekly = baseline_sessions / 8.57 
+    (60 days / 7 = 8.57 weeks)
+  recent_sessions = COUNT where attended_at >= now - 30 days
+  recent_weekly = recent_sessions / 4.33 
+    (30 days / 7 = 4.33 weeks)
+  
+  If baseline_weekly = 0: score = 12 (neutral prior)
+  Else:
+    drop = (baseline_weekly - recent_weekly) / baseline_weekly
+    score = Math.round(25 * Math.max(0, Math.min(1, drop)))
+
+SIGNAL 3 — Social isolation (max 20 pts)
+  buddy_count = COUNT from buddy_pairs WHERE 
+    player_a = id OR player_b = id
+  0 buddies  → 20 pts
+  1-2        → 10 pts
+  3+         → 0 pts
+
+SIGNAL 4 — Outreach non-response (max 15 pts)
+  Query messages via conversations:
+  outbound_count = COUNT of outbound messages sent to player
+  inbound_count = COUNT of inbound replies from player
+  
+  If outbound_count = 0: score = 0 (no data, neutral)
+  Else:
+    response_rate = inbound_count / outbound_count
+    response_rate = 0%    → 15 pts
+    response_rate 1-49%   → 8 pts
+    response_rate 50%+    → 0 pts
+
+SIGNAL 5 — Membership (max 10 pts)
+  membership_status != 'member' → 10 pts
+  membership_status = 'member'  → 0 pts
+
+TOTAL = signal1 + signal2 + signal3 + signal4 + signal5
+
+TIERS:
+  0-34  → churn_risk = 'low'
+  35-64 → churn_risk = 'medium'
+  65-100 → churn_risk = 'high'
+
+Write both churn_score and churn_risk to players table:
+  UPDATE players SET 
+    churn_score = {score}, 
+    churn_risk = {tier}
+  WHERE id = {playerId}
+
+Import supabase from src/lib/supabaseClient.ts — never inline.
+Use the shared client for all queries.
+Paginate any query that could return 1000+ rows.
+
+--- STEP 3: BATCH COMPUTATION ROUTE ---
+
+In artifacts/api-server/src/routes/sync.ts (or create a new 
+churn.ts route file), add:
+
+POST /api/sync/churn-scores
+Computes churn scores for all eligible players (those with 
+last_visit_date IS NOT NULL).
+
+Logic:
+1. startJob('compute_churn_scores')
+2. Fetch all player ids where last_visit_date IS NOT NULL
+   Paginate in batches of 1000
+3. For each player: await computeChurnScore(playerId)
+   Add 50ms delay between players to avoid DB overload
+4. finishJob('compute_churn_scores', 'done', { players_scored: N })
+5. Return { success: true, players_scored: N }
+
+GET /api/sync/churn-scores/status
+Returns current job status using getJob('compute_churn_scores')
+
+POST /api/sync/churn-scores/cancel
+Cancels the running job using existing cancel pattern
+
+--- STEP 4: NIGHTLY CHAIN ---
+
+In artifacts/api-server/src/lib/scheduler.ts, add Step 5 
+after the buddy pair computation (Step 4):
+
+// Step 5: Churn score recompute
+try {
+  await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
+  const res = await fetch(
+    "http://localhost:3000/api/sync/churn-scores",
+    { method: "POST", signal: AbortSignal.timeout(10 * 60 * 1000) }
+  );
+  const result = await res.json();
+  await appendJobLog(JOB_NIGHTLY,
+    `Step 5 complete — churn scores computed for ${result.players_scored} players`);
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY,
+    `Churn score recompute error (non-fatal): ${err.message}`);
+}
+
+--- STEP 5: TEST ROUTE ---
+
+POST /api/sync/churn-scores/test
+Runs churn score computation for a single player.
+Body: { player_id: string }
+Returns: { player_id, churn_score, churn_risk }
+Useful for verifying the model on known players like 
+Carlota Digon or Alfonso Romillo without running full batch.
+
+--- STEP 6: FRONTEND — PLAYERS PAGE ---
+
+In artifacts/dashboard/src/pages/Players.tsx:
+
+1. Add churn_risk to the player type/select query:
+   Add 'churn_risk' to the Supabase select string in fetchData()
+   Add churn_risk?: string to the Player type if not already there
+
+2. Add a ChurnBadge component at the top of the file:
+   function ChurnBadge({ risk }: { risk: string | null }) {
+     if (!risk || risk === 'low') return null;
+     const styles = {
+       high: { 
+         background: 'rgba(207,34,46,0.15)', 
+         color: '#ff6b6b',
+         border: '1px solid rgba(207,34,46,0.25)',
+         label: 'High Churn Risk'
+       },
+       medium: { 
+         background: 'rgba(212,129,58,0.12)', 
+         color: '#d4813a',
+         border: '1px solid rgba(212,129,58,0.25)',
+         label: 'Medium Risk'
+       }
+     };
+     const s = styles[risk as keyof typeof styles];
+     if (!s) return null;
+     return (
+       <span style={{
+         fontSize: 9, fontWeight: 600, fontFamily: 'var(--font-mono)',
+         padding: '1px 6px', borderRadius: 8,
+         background: s.background, color: s.color, border: s.border,
+         whiteSpace: 'nowrap'
+       }}>
+         {s.label}
+       </span>
+     );
+   }
+
+3. In the player name cell, add ChurnBadge below the name:
+   <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
+   <div style={{ display: 'flex', gap: 4, marginTop: 2, 
+     flexWrap: 'wrap', alignItems: 'center' }}>
+     {p.skill_level && (
+       <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+         {toTitleCase(p.skill_level)}
+       </span>
+     )}
+     <ChurnBadge risk={p.churn_risk ?? null} />
+   </div>
+
+4. Update the sort logic — add churn_risk to the 
+   STATUS sort so that within each engagement state,
+   high churn risk players float to the top:
+   When sortCol === 'state':
+     Primary sort: STATE_SORT_ORDER[state]
+     Secondary sort: churn risk order: 
+       high=0, medium=1, low=2, null=3
+
+5. Add a "High Churn Risk" filter chip to the STATUS 
+   filter row. When active, filter displayed list to 
+   only players where p.churn_risk === 'high'.
+
+--- STEP 7: FRONTEND — PLAYER DRAWER ---
+
+In artifacts/dashboard/src/components/PlayerDrawer.tsx:
+
+1. The drawer already fetches player data — add churn_risk 
+   and churn_score to its select query if not present.
+
+2. In the player drawer, add a churn risk section below 
+   the engagement status section:
+   
+   Only show this section if churn_risk is 'high' or 'medium'.
+   
+   Section header: "Churn Risk" in 10px mono uppercase #8b949e
+   
+   Risk display:
+   - High: large badge with explanation
+     "⚠ High Churn Risk — This player shows strong signs 
+     of not returning. Outreach recommended today."
+     Background rgba(207,34,46,0.08), border rgba(207,34,46,0.2),
+     borderRadius 6px, padding 10px 12px, fontSize 12px,
+     color #ff6b6b
+   
+   - Medium: subtler badge
+     "↓ Medium Risk — Engagement is declining. A nudge 
+     in the next week could make a difference."
+     Background rgba(212,129,58,0.08), 
+     border rgba(212,129,58,0.2),
+     color #d4813a
+   
+   Do not show the numeric score — only the tier label 
+   and the human-readable explanation.
+
+--- STEP 8: FRONTEND — DASHBOARD ---
+
+In artifacts/dashboard/src/pages/Dashboard.tsx:
+
+1. Update the Needs Attention panel sort to use churn_risk:
+   Sort players array before slicing to 4:
+   Primary: lapsing before dormant
+   Secondary within each group: 
+     high churn risk first, then medium, then low/null
+   Tertiary: last_visit_date ascending
+   
+   Add churn_risk to the select query in fetchData() if 
+   not already present.
+
+2. Update the briefing banner to mention churn risk 
+   when high risk players exist:
+   If any lapsing/dormant player has churn_risk = 'high':
+   "You have [N messages ready] and [X players drifting]. 
+   [Name] and [Y others] are at high churn risk — 
+   worth reaching out today."
+   
+   If no high risk players:
+   Keep existing phrasing (longest away players mentioned).
+
+--- ARCHITECTURE NOTES ---
+- Import supabase from src/lib/supabaseClient.ts always
+- Paginate all players queries (1000 row limit)
+- 50ms delay between player score computations to avoid 
+  overwhelming the DB
+- Never Visited players (last_visit_date IS NULL) are 
+  skipped — no score written, no badge shown
+- Active players with churn_risk = 'low' show no badge — 
+  ChurnBadge returns null for low/null
+- The churn_score integer is stored but never shown in UI — 
+  only the churn_risk tier label is displayed
+- After building, run the SQL migration first, then call 
+  POST /api/sync/churn-scores/test with Carlota Digon's 
+  player_id (4703d133-9a5b-49e4-a2e7-a3953087eb0a) and 
+  Alfonso Romillo's id (8933b7b6-0a70-4ee7-a32a-3fd9d046e076)
+  to verify the scores make sense before running the full batch

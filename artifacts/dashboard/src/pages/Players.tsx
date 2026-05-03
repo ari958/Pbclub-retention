@@ -63,6 +63,43 @@ const PROG_SORT_ORDER: Record<string, number> = {
   "at-ceiling": 3,
 };
 
+function ChurnBadge({ risk }: { risk: string | null }) {
+  if (!risk || risk === "low") return null;
+  const styles: Record<string, { background: string; color: string; border: string; label: string }> = {
+    high: {
+      background: "rgba(207,34,46,0.15)",
+      color: "#ff6b6b",
+      border: "1px solid rgba(207,34,46,0.25)",
+      label: "High Churn Risk",
+    },
+    medium: {
+      background: "rgba(212,129,58,0.12)",
+      color: "#d4813a",
+      border: "1px solid rgba(212,129,58,0.25)",
+      label: "Medium Risk",
+    },
+  };
+  const s = styles[risk];
+  if (!s) return null;
+  return (
+    <span
+      style={{
+        fontSize: 9,
+        fontWeight: 600,
+        fontFamily: "var(--font-mono)",
+        padding: "1px 6px",
+        borderRadius: 8,
+        background: s.background,
+        color: s.color,
+        border: s.border,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {s.label}
+    </span>
+  );
+}
+
 function StatePill({ state }: { state: EngagementState }) {
   return (
     <span
@@ -215,6 +252,7 @@ export default function Players() {
   const [progFilter, setProgFilter] = useState("");
   const [memberFilter, setMemberFilter] = useState("");
   const [misfitFilter, setMisfitFilter] = useState("");
+  const [churnFilter, setChurnFilter] = useState("");
   const [sortCol, setSortCol] = useState<SortCol>("state");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [page, setPage] = useState(1);
@@ -229,12 +267,26 @@ export default function Players() {
     const allPlayers: Player[] = [];
     let offset = 0;
     while (true) {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("players")
         .select(
-          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating"
+          "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating, churn_risk"
         )
         .range(offset, offset + 999);
+      // If churn_risk column not yet migrated, fall back to select without it
+      if (error && error.code === "42703") {
+        const { data: fallback } = await supabase
+          .from("players")
+          .select(
+            "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating"
+          )
+          .range(offset, offset + 999);
+        if (!fallback || fallback.length === 0) break;
+        allPlayers.push(...(fallback as Player[]));
+        if (fallback.length < 1000) break;
+        offset += 1000;
+        continue;
+      }
       if (!data || data.length === 0) break;
       allPlayers.push(...(data as Player[]));
       if (data.length < 1000) break;
@@ -270,9 +322,9 @@ export default function Players() {
     setPage(1);
   };
 
-  useEffect(() => { setPage(1); }, [search, engFilter, progFilter, memberFilter, misfitFilter]);
+  useEffect(() => { setPage(1); }, [search, engFilter, progFilter, memberFilter, misfitFilter, churnFilter]);
 
-  const hasFilters = search || engFilter || progFilter || memberFilter || misfitFilter;
+  const hasFilters = search || engFilter || progFilter || memberFilter || misfitFilter || churnFilter;
 
   const clearFilters = () => {
     setSearch("");
@@ -280,8 +332,11 @@ export default function Players() {
     setProgFilter("");
     setMemberFilter("");
     setMisfitFilter("");
+    setChurnFilter("");
     setPage(1);
   };
+
+  const CHURN_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
 
   const displayed = useMemo(() => {
     let list = [...players];
@@ -295,15 +350,21 @@ export default function Players() {
     if (memberFilter === "member") list = list.filter((p) => p.membership_status === "member");
     if (memberFilter === "non-member") list = list.filter((p) => p.membership_status !== "member");
     if (misfitFilter === "misfit") list = list.filter((p) => misfitPlayerIds.has(p.id));
+    if (churnFilter === "high") list = list.filter((p) => p.churn_risk === "high");
 
     list.sort((a, b) => {
       let cmp = 0;
       if (sortCol === "name") {
         cmp = a.name.localeCompare(b.name);
       } else if (sortCol === "state") {
-        cmp =
-          STATE_SORT_ORDER[getEngagementState(a.last_visit_date)] -
-          STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
+        const sa = STATE_SORT_ORDER[getEngagementState(a.last_visit_date)];
+        const sb = STATE_SORT_ORDER[getEngagementState(b.last_visit_date)];
+        cmp = sa - sb;
+        if (cmp === 0) {
+          const ca = CHURN_ORDER[a.churn_risk ?? ""] ?? 3;
+          const cb = CHURN_ORDER[b.churn_risk ?? ""] ?? 3;
+          cmp = ca - cb;
+        }
       } else if (sortCol === "progression") {
         const ak = a.progression_status ?? "null";
         const bk = b.progression_status ?? "null";
@@ -324,7 +385,7 @@ export default function Players() {
     });
 
     return list;
-  }, [players, search, engFilter, progFilter, memberFilter, misfitFilter, misfitPlayerIds, sortCol, sortDir]);
+  }, [players, search, engFilter, progFilter, memberFilter, misfitFilter, churnFilter, misfitPlayerIds, sortCol, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(displayed.length / PAGE_SIZE));
   const paginated = displayed.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
@@ -360,9 +421,10 @@ export default function Players() {
     if (memberFilter === "non-member") parts.push("Non-member");
     if (progFilter === "null") parts.push("Needs Attention");
     else if (progFilter) parts.push(PROG_DISPLAY[progFilter] ?? toTitleCase(progFilter));
+    if (churnFilter === "high") parts.push("High Churn Risk");
     if (search) parts.push(`"${search}"`);
     return parts.join(" · ");
-  }, [displayed.length, engFilter, memberFilter, progFilter, search]);
+  }, [displayed.length, engFilter, memberFilter, progFilter, churnFilter, search]);
 
   const btnStyle = (variant: "default" | "accent" = "default"): React.CSSProperties => ({
     padding: "6px 14px",
@@ -476,6 +538,11 @@ export default function Players() {
               <Chip label="Inactive" active={engFilter === "dormant"} dot={STATE_COLORS.dormant} onClick={() => { setEngFilter("dormant"); setMisfitFilter(""); }} />
               <Chip label="Never Visited" active={engFilter === "never-visited"} onClick={() => { setEngFilter("never-visited"); setMisfitFilter(""); }} />
               <Chip label="Level Concern" active={misfitFilter === "misfit"} onClick={() => { setMisfitFilter("misfit"); setEngFilter(""); }} />
+              <Chip
+                label="High Churn Risk"
+                active={churnFilter === "high"}
+                onClick={() => setChurnFilter(churnFilter === "high" ? "" : "high")}
+              />
             </div>
 
             {/* Progress chips */}
@@ -546,19 +613,14 @@ export default function Players() {
                           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = D.inner; }}
                           onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
                         >
-                          <td
-                            style={{
-                              padding: "12px 16px",
-                              fontWeight: 500,
-                              fontSize: 13,
-                              color: D.text,
-                              whiteSpace: "nowrap",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              maxWidth: 200,
-                            }}
-                          >
-                            {p.name}
+                          <td style={{ padding: "12px 16px", maxWidth: 220 }}>
+                            <div style={{ fontWeight: 500, fontSize: 13, color: D.text }}>{p.name}</div>
+                            <div style={{ display: "flex", gap: 4, marginTop: 2, flexWrap: "wrap", alignItems: "center" }}>
+                              {p.skill_level && (
+                                <span style={{ fontSize: 11, color: D.faint }}>{toTitleCase(p.skill_level)}</span>
+                              )}
+                              <ChurnBadge risk={p.churn_risk ?? null} />
+                            </div>
                           </td>
                           <td style={{ padding: "12px 16px" }}>
                             <StatePill state={state} />

@@ -137,6 +137,22 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Step 4 buddy pairs error (non-fatal): ${err.message}`);
     }
 
+    // Step 5: Churn score recompute (non-fatal)
+    try {
+      const port = process.env.PORT ?? "8080";
+      await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
+      const churnRes = await fetch(
+        `http://localhost:${port}/api/sync/churn-scores`,
+        { method: "POST", signal: AbortSignal.timeout(10 * 60 * 1000) }
+      );
+      const churnResult = await churnRes.json() as any;
+      await appendJobLog(JOB_NIGHTLY,
+        `Step 5 complete — churn scores computed for ${churnResult.players_scored ?? "?"} players`);
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY,
+        `Churn score recompute error (non-fatal): ${err.message}`);
+    }
+
     // Mark nightly_sync done
     await finishJob(JOB_NIGHTLY, "done");
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");

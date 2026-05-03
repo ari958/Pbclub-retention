@@ -211,11 +211,19 @@ export default function Dashboard() {
 
     const allPlayers: Player[] = [];
     let offset = 0;
+    let churnColAvailable: boolean | null = null;
     while (true) {
-      const { data } = await supabase
+      const selectCols = churnColAvailable === false
+        ? "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at"
+        : "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at, churn_risk";
+      const { data, error } = await supabase
         .from("players")
-        .select("id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, last_outbound_at")
+        .select(selectCols)
         .range(offset, offset + 999);
+      if (error?.code === "42703") {
+        churnColAvailable = false;
+        continue;
+      }
       if (!data || data.length === 0) break;
       allPlayers.push(...(data as Player[]));
       if (data.length < 1000) break;
@@ -424,6 +432,8 @@ export default function Dashboard() {
   const needsAttentionCount = lapsing + dormant;
   const total = players.length || 1;
 
+  const CHURN_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
+
   const atRiskPlayers = [...players]
     .filter((p) => ["lapsing", "dormant"].includes(getEngagementState(p.last_visit_date)))
     .sort((a, b) => {
@@ -431,6 +441,9 @@ export default function Dashboard() {
       const sb = getEngagementState(b.last_visit_date);
       if (sa === "lapsing" && sb !== "lapsing") return -1;
       if (sa !== "lapsing" && sb === "lapsing") return 1;
+      const ca = CHURN_ORDER[a.churn_risk ?? ""] ?? 3;
+      const cb = CHURN_ORDER[b.churn_risk ?? ""] ?? 3;
+      if (ca !== cb) return ca - cb;
       const da = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
       const db = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
       return da - db;
@@ -493,6 +506,8 @@ export default function Dashboard() {
             ? "a couple of months"
             : "several months";
 
+    const highChurnDrifters = urgentPlayers.filter((p) => p.churn_risk === "high");
+
     return (
       <>
         {messages.length > 0 && (
@@ -509,6 +524,12 @@ export default function Dashboard() {
             <span style={{ color: C.textPrimary }}>{first.name}</span>
             {others > 0 ? ` and ${others} other${others !== 1 ? "s" : ""}` : ""}
             {" "}haven't been back in {timeLabel} — worth a nudge today.
+            {highChurnDrifters.length > 0 && (
+              <>
+                {" "}<span style={{ color: "#ff6b6b", fontWeight: 600 }}>{highChurnDrifters.length} of them</span>
+                {" "}are flagged high churn risk — prioritise these first.
+              </>
+            )}
           </>
         )}
       </>

@@ -7,6 +7,7 @@ import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 import { runNightlyChain } from "../lib/scheduler";
 import { computeLevelConfidence } from "../lib/levelConfidence";
+import { computeChurnScore, computeChurnScoreAndReturn } from "../lib/churnScore";
 import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
@@ -372,6 +373,95 @@ router.get("/sync/level-confidence/status", async (_req, res) => {
     error: job.error,
     recentLogs: job.logs.slice(-50),
   });
+});
+
+// ─── Churn Score routes ────────────────────────────────────────────────────────
+
+const JOB_CHURN = "compute_churn_scores";
+
+router.post("/sync/churn-scores", async (_req, res) => {
+  await startJob(JOB_CHURN);
+  await appendJobLog(JOB_CHURN, "Churn score batch started");
+
+  (async () => {
+    try {
+      const playerIds: string[] = [];
+      let offset = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from("players")
+          .select("id")
+          .not("last_visit_date", "is", null)
+          .range(offset, offset + 999);
+        if (error) throw new Error(error.message);
+        if (!data || data.length === 0) break;
+        playerIds.push(...data.map((p: any) => p.id as string));
+        if (data.length < 1000) break;
+        offset += 1000;
+      }
+
+      await appendJobLog(JOB_CHURN, `Found ${playerIds.length} eligible players`);
+      let scored = 0;
+
+      for (const playerId of playerIds) {
+        if (await isCancelled(JOB_CHURN)) {
+          await appendJobLog(JOB_CHURN, "Cancelled by operator");
+          throw Object.assign(new Error("Churn scoring cancelled"), { name: "CancelledError" });
+        }
+        await computeChurnScore(playerId);
+        scored++;
+        if (scored % 100 === 0) {
+          await appendJobLog(JOB_CHURN, `Scored ${scored}/${playerIds.length}…`);
+        }
+        await new Promise((r) => setTimeout(r, 50));
+      }
+
+      await finishJob(JOB_CHURN, "done", { players_scored: scored });
+      await appendJobLog(JOB_CHURN, `Done — churn scores computed for ${scored} players`);
+    } catch (err: any) {
+      const cancelled = err.name === "CancelledError";
+      await finishJob(JOB_CHURN, cancelled ? "cancelled" : "error", undefined, err.message);
+      await appendJobLog(JOB_CHURN, `Churn score batch ${cancelled ? "cancelled" : "failed"}: ${err.message}`);
+    }
+  })();
+
+  return res.status(202).json({
+    message: "Churn score computation started",
+    statusUrl: "/api/sync/churn-scores/status",
+  });
+});
+
+router.get("/sync/churn-scores/status", async (_req, res) => {
+  const job = await getJob(JOB_CHURN);
+  res.json({
+    status: job.status,
+    startedAt: job.started_at,
+    finishedAt: job.finished_at,
+    stats: job.stats,
+    error: job.error,
+    recentLogs: job.logs.slice(-50),
+  });
+});
+
+router.post("/sync/churn-scores/cancel", async (_req, res) => {
+  await requestCancel(JOB_CHURN);
+  res.json({ message: "Cancel requested" });
+});
+
+router.post("/sync/churn-scores/test", async (req, res) => {
+  const { player_id } = req.body ?? {};
+  if (!player_id || typeof player_id !== "string") {
+    return res.status(400).json({ error: "player_id is required" });
+  }
+  try {
+    const result = await computeChurnScoreAndReturn(player_id);
+    if (!result) {
+      return res.status(404).json({ error: "Player not found or is Never Visited" });
+    }
+    return res.json({ player_id, ...result });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message });
+  }
 });
 
 export default router;

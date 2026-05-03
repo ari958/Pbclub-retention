@@ -16,6 +16,7 @@ export interface Player {
   sms_opt_in: boolean | null;
   last_outbound_at: string | null;
   dupr_rating: number | null;
+  churn_risk: string | null;
 }
 
 export interface MessageQueueItem {

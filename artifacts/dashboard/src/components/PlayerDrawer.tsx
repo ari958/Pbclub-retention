@@ -19,6 +19,8 @@ interface FullPlayer {
   coach_level_set_at: string | null;
   dupr_rating: number | null;
   dupr_updated_at: string | null;
+  churn_risk: string | null;
+  churn_score: number | null;
 }
 
 interface LevelConfidenceRow {
@@ -180,10 +182,13 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     }
     setLoadingData(true);
 
+    const BASE_SELECT = "id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, coach_assigned_level, coach_level_notes, coach_level_set_at, dupr_rating, dupr_updated_at";
+    const CHURN_SELECT = `${BASE_SELECT}, churn_risk, churn_score`;
+
     Promise.all([
       supabase
         .from("players")
-        .select("id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, coach_assigned_level, coach_level_notes, coach_level_set_at, dupr_rating, dupr_updated_at")
+        .select(CHURN_SELECT)
         .eq("id", playerId)
         .single(),
       supabase
@@ -197,9 +202,19 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
         .select("id, triggered_by, messages!conversation_id(id, body, direction, twilio_message_sid)")
         .eq("player_id", playerId)
         .order("id", { ascending: false }),
-    ]).then(([pRes, aRes, cRes]) => {
-      if (pRes.data) {
-        const p = pRes.data as FullPlayer;
+    ]).then(async ([pRes, aRes, cRes]) => {
+      let playerData = pRes.data;
+      // Fallback if churn columns don't exist yet (pre-migration)
+      if (!playerData && pRes.error?.code === "42703") {
+        const fallback = await supabase
+          .from("players")
+          .select(BASE_SELECT)
+          .eq("id", playerId)
+          .single();
+        playerData = fallback.data;
+      }
+      if (playerData) {
+        const p = playerData as FullPlayer;
         setPlayer(p);
         setNotesDraft(p.notes ?? "");
         setCoachLevelNotesDraft(p.coach_level_notes ?? "");
@@ -831,6 +846,43 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                 />
               </div>
             </Section>
+
+            {/* Churn Risk */}
+            {(player.churn_risk === "high" || player.churn_risk === "medium") && (
+              <Section title="Churn Risk">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "4px 12px",
+                      borderRadius: 20,
+                      fontSize: 12,
+                      fontWeight: 700,
+                      fontFamily: "var(--font-mono)",
+                      background: player.churn_risk === "high"
+                        ? "rgba(207,34,46,0.15)"
+                        : "rgba(212,129,58,0.12)",
+                      color: player.churn_risk === "high" ? "#ff6b6b" : "#d4813a",
+                      border: `1px solid ${player.churn_risk === "high" ? "rgba(207,34,46,0.3)" : "rgba(212,129,58,0.3)"}`,
+                    }}
+                  >
+                    {player.churn_risk === "high" ? "HIGH RISK" : "MEDIUM RISK"}
+                  </span>
+                  {player.churn_score != null && (
+                    <span style={{ fontSize: 11, color: "var(--text-tertiary)", fontFamily: "var(--font-mono)" }}>
+                      score: {player.churn_score}/100
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+                  {player.churn_risk === "high"
+                    ? "This player shows strong churn signals. Prioritise personal outreach — a direct message or phone call can make the difference."
+                    : "This player shows moderate churn signals. A timely nudge now can prevent further disengagement."}
+                </div>
+              </Section>
+            )}
 
             {/* Agent Result inline */}
             {agentResult && (
