@@ -1,0 +1,3653 @@
+Swagger UI
+Select a definition
+
+swagger/docs/ORGANIZATION
+Organization API
+ ORGANIZATION 
+[ Base URL: api.courtreserve.com ]
+https://api.courtreserve.com/swagger/docs/ORGANIZATION
+Schemes
+
+https
+Authorize
+Filter by tag
+Membership Type
+
+
+GET
+/api/v1/membershiptype/get
+This service returns a list of membership types. Requires the MembershipType role with Read permission.
+Parameters
+Try it out
+Name	Description
+membershipTypeId
+integer($int64)
+(query)
+Retrieve membership types by membership type Id
+
+membershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "Description": "string",
+      "ShortCode": "stri",
+      "IsActive": true,
+      "OrderIndex": 0,
+      "IsPaymentRequired": true,
+      "MembershipPurchaseStartDate": "2026-05-03T17:48:07.146Z",
+      "MembershipPurchaseEndDate": "2026-05-03T17:48:07.146Z",
+      "IsRestrictByAge": true,
+      "AllowMinAge": 0,
+      "AllowMaxAge": 0,
+      "XDaysPastDueToSuspendAccount": 0,
+      "XDaysPastDueToAutoCancelMembership": 0,
+      "InitiationPrice": 0,
+      "QuarterMembershipPrice": 0,
+      "AnnualMembershipPrice": 0,
+      "CustomMembershipPrice": 0,
+      "MonthlyMembershipPrice": 0,
+      "CustomFrequencyUnitValue": 0,
+      "IsPublic": true,
+      "LifetimeMembershipPrice": 0,
+      "CostTypeAdditionalFeatureJson": "string",
+      "CostTypeAdditionalFeatureList": [
+        {
+          "Id": 0,
+          "CostTypeId": 0,
+          "OrderIndex": 0,
+          "Name": "string",
+          "CreatedOn": "2026-05-03T17:48:07.146Z",
+          "UpdatedOn": "2026-05-03T17:48:07.146Z",
+          "IsDeleted": true
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/membershiptype/create
+This service allows you to create a new membership type. Requires the MembershipType role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Name": "string",
+  "Description": "string",
+  "ShortCode": "stri",
+  "IsActive": true,
+  "OrderIndex": 0,
+  "IsPaymentRequired": true,
+  "MembershipPurchaseStartDate": "2026-05-03T17:43:14.420Z",
+  "MembershipPurchaseEndDate": "2026-05-03T17:43:14.420Z",
+  "IsRestrictByAge": true,
+  "AllowMinAge": 0,
+  "AllowMaxAge": 0,
+  "XDaysPastDueToSuspendAccount": 0,
+  "XDaysPastDueToAutoCancelMembership": 0,
+  "InitiationPrice": 0,
+  "QuarterMembershipPrice": 0,
+  "AnnualMembershipPrice": 0,
+  "CustomMembershipPrice": 0,
+  "MonthlyMembershipPrice": 0,
+  "CustomFrequencyUnitValue": 0,
+  "IsPublic": true,
+  "LifetimeMembershipPrice": 0,
+  "CostTypeAdditionalFeatureJson": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Id": 0,
+    "Name": "string",
+    "Description": "string",
+    "ShortCode": "stri",
+    "IsActive": true,
+    "OrderIndex": 0,
+    "IsPaymentRequired": true,
+    "MembershipPurchaseStartDate": "2026-05-03T17:48:07.173Z",
+    "MembershipPurchaseEndDate": "2026-05-03T17:48:07.173Z",
+    "IsRestrictByAge": true,
+    "AllowMinAge": 0,
+    "AllowMaxAge": 0,
+    "XDaysPastDueToSuspendAccount": 0,
+    "XDaysPastDueToAutoCancelMembership": 0,
+    "InitiationPrice": 0,
+    "QuarterMembershipPrice": 0,
+    "AnnualMembershipPrice": 0,
+    "CustomMembershipPrice": 0,
+    "MonthlyMembershipPrice": 0,
+    "CustomFrequencyUnitValue": 0,
+    "IsPublic": true,
+    "LifetimeMembershipPrice": 0,
+    "CostTypeAdditionalFeatureJson": "string",
+    "CostTypeAdditionalFeatureList": [
+      {
+        "Id": 0,
+        "CostTypeId": 0,
+        "OrderIndex": 0,
+        "Name": "string",
+        "CreatedOn": "2026-05-03T17:48:07.173Z",
+        "UpdatedOn": "2026-05-03T17:48:07.173Z",
+        "IsDeleted": true
+      }
+    ]
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/membershiptype/update
+This service allows you to make changes to a membership type. Requires the MembershipType role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Id": 0,
+  "Name": "string",
+  "Description": "string",
+  "ShortCode": "stri",
+  "IsActive": true,
+  "OrderIndex": 0,
+  "IsPaymentRequired": true,
+  "MembershipPurchaseStartDate": "2026-05-03T17:43:17.709Z",
+  "MembershipPurchaseEndDate": "2026-05-03T17:43:17.709Z",
+  "IsRestrictByAge": true,
+  "AllowMinAge": 0,
+  "AllowMaxAge": 0,
+  "XDaysPastDueToSuspendAccount": 0,
+  "XDaysPastDueToAutoCancelMembership": 0,
+  "InitiationPrice": 0,
+  "QuarterMembershipPrice": 0,
+  "AnnualMembershipPrice": 0,
+  "CustomMembershipPrice": 0,
+  "MonthlyMembershipPrice": 0,
+  "CustomFrequencyUnitValue": 0,
+  "IsPublic": true,
+  "LifetimeMembershipPrice": 0,
+  "CostTypeAdditionalFeatureJson": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Id": 0,
+    "Name": "string",
+    "Description": "string",
+    "ShortCode": "stri",
+    "IsActive": true,
+    "OrderIndex": 0,
+    "IsPaymentRequired": true,
+    "MembershipPurchaseStartDate": "2026-05-03T17:48:07.201Z",
+    "MembershipPurchaseEndDate": "2026-05-03T17:48:07.201Z",
+    "IsRestrictByAge": true,
+    "AllowMinAge": 0,
+    "AllowMaxAge": 0,
+    "XDaysPastDueToSuspendAccount": 0,
+    "XDaysPastDueToAutoCancelMembership": 0,
+    "InitiationPrice": 0,
+    "QuarterMembershipPrice": 0,
+    "AnnualMembershipPrice": 0,
+    "CustomMembershipPrice": 0,
+    "MonthlyMembershipPrice": 0,
+    "CustomFrequencyUnitValue": 0,
+    "IsPublic": true,
+    "LifetimeMembershipPrice": 0,
+    "CostTypeAdditionalFeatureJson": "string",
+    "CostTypeAdditionalFeatureList": [
+      {
+        "Id": 0,
+        "CostTypeId": 0,
+        "OrderIndex": 0,
+        "Name": "string",
+        "CreatedOn": "2026-05-03T17:48:07.201Z",
+        "UpdatedOn": "2026-05-03T17:48:07.201Z",
+        "IsDeleted": true
+      }
+    ]
+  },
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/membershiptype/delete
+This service allows you to delete a membership type. Requires the MembershipType role with Write permission.
+Parameters
+Try it out
+Name	Description
+membershipTypeId *
+integer($int64)
+(query)
+The membership type Id that you are deleting
+
+membershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+Family
+
+
+GET
+/api/v1/family/get
+This service returns a list of families. Requires the Family role with Read permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberFamilyId
+integer($int64)
+(query)
+Retrieve families by organization member family Id
+
+organizationMemberFamilyId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "FamilyName": "string",
+      "OrganizationMemberFamilyId": 0,
+      "FamilyNumber": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/family/create
+This service allows you to create a new family. Requires the Family role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "FamilyName": "string",
+  "FamilyNumber": "string",
+  "FamilyMembershipTypeId": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "OrganizationMemberFamilyId": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/family/update
+This service allows you to make changes to a family. Requires the Family role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "FamilyName": "string",
+  "OrganizationMemberFamilyId": 0,
+  "FamilyNumber": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/family/delete
+This service allows you to delete a family. Requires the Family role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberFamilyId *
+integer($int64)
+(query)
+The organization member family id that you are deleting
+
+organizationMemberFamilyId
+removeUpcomingReservations
+boolean
+(query)
+Set it to true, if you desire to delete upcoming reservations and events of member you are deleting(default value = true).
+
+Default value : true
+
+
+true
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+Member
+
+
+GET
+/api/v1/member/get
+This service returns a list of members. Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+pageSize
+integer($int32)
+(query)
+Retrieve members by organization member family Id
+
+Default value : 100
+
+100
+pageNumber
+integer($int32)
+(query)
+Retrieve members by organization member family Id
+
+Default value : 1
+
+1
+organizationMemberId
+integer($int32)
+(query)
+Retrieve members by organization member Id
+
+organizationMemberId
+organizationMemberFamilyId
+integer($int64)
+(query)
+Retrieve members by organization member family Id
+
+organizationMemberFamilyId
+includeUserDefinedFields
+boolean
+(query)
+Default value : false
+
+
+false
+includeRatings
+boolean
+(query)
+Default value : false
+
+
+false
+createdDateTimeStart
+string($date-time)
+(query)
+Filter members created on or after this local date and time. Must be in 'yyyy-MM-ddTHH:mm:ss' format. The range between createdFrom and createdTo cannot exceed 30 days.
+
+createdDateTimeStart
+createdDateTimeEnd
+string($date-time)
+(query)
+Filter members created on or before this local date and time. Must be in 'yyyy-MM-ddTHH:mm:ss' format. The range between createdFrom and createdTo cannot exceed 30 days.
+
+createdDateTimeEnd
+createdOrUpdatedFrom
+string($date-time)
+(query)
+Filters members who were either created or updated on or after this local datetime.
+Format: yyyy-MM-ddTHH:mm:ss. The range between this and 'createdOrUpdatedTo' must not exceed 31 days.
+
+createdOrUpdatedFrom
+createdOrUpdatedTo
+string($date-time)
+(query)
+Filters members who were either created or updated on or before this local datetime.
+Format: yyyy-MM-ddTHH:mm:ss. The range between this and 'createdOrUpdatedFrom' must not exceed 31 days.
+
+createdOrUpdatedTo
+email
+string
+(query)
+Filters members by their email address. Matching is not case-insensitive and does not support partial matches.
+Example: "user@example.com"
+
+email
+phonenumber
+string
+(query)
+phonenumber
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "TotalPages": 0,
+    "PageSize": 0,
+    "Members": [
+      {
+        "OrganizationMemberId": 0,
+        "MembershipNumber": "string",
+        "OrganizationMemberFamilyId": 0,
+        "FirstName": "string",
+        "LastName": "string",
+        "Gender": "string",
+        "PhoneNumber": "string",
+        "DateOfBirth": "2026-05-03T17:48:07.430Z",
+        "Address": "string",
+        "City": "string",
+        "State": "string",
+        "ZipCode": "string",
+        "MembershipTypeName": "string",
+        "MembershipTypeId": 0,
+        "MembershipAssignmentType": "string",
+        "MembershipStatus": "string",
+        "Email": "string",
+        "FamilyRole": "string",
+        "UserDefinedFields": [
+          {
+            "Value": "string",
+            "UdfId": 0,
+            "OrderIndex": 0,
+            "Label": "string"
+          }
+        ],
+        "Ratings": [
+          {
+            "CategoryName": "string",
+            "ValueRatingName": "string",
+            "Value": 0
+          }
+        ],
+        "AllowChildToLoginAndUseBookingPrivileges": true,
+        "MembershipStartDate": "2026-05-03T17:48:07.430Z",
+        "MembershipEndDate": "2026-05-03T17:48:07.430Z",
+        "ExternalId": "string",
+        "ProfileImageUrl": "string",
+        "UnsubscribeFromMarketingEmails": true,
+        "UnsubscribeFromMarketingTextAlerts": true,
+        "UnsubscribeFromOrganizationTextAlerts": true,
+        "UnsubscribeFromMarketingPushNotifications": true
+      }
+    ],
+    "PageNumber": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/member/create
+This service allows you to create a new member. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberFamilyId": 0,
+  "CreateNewFamily": true,
+  "FamilyName": "string",
+  "FamilyNumber": "string",
+  "FamilyRole": "Primary",
+  "AllowChildToLoginAndUseBookingPrivileges": true,
+  "MemberMembershipTypeId": 0,
+  "FamilyMembershipTypeId": 0,
+  "SendWelcomeEmail": true,
+  "CustomFields": [
+    {
+      "UserDefinedFieldId": 0,
+      "Value": "string"
+    }
+  ],
+  "ExternalId": "string",
+  "FirstName": "string",
+  "LastName": "string",
+  "Email": "string",
+  "Username": "string",
+  "MemberNumber": "string",
+  "PhoneNumber": "string",
+  "Gender": "string",
+  "DateOfBirth": "2026-05-03T17:43:38.163Z",
+  "Note": "string",
+  "Address": "string",
+  "City": "string",
+  "State": "string",
+  "ZipCode": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "OrganizationMemberId": 0,
+    "OrganizationMemberFamilyId": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/member/delete
+This service allows you to delete a member. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberId *
+integer($int32)
+(query)
+The organization member id of member you are deleting
+
+organizationMemberId
+removeUpcomingReservations
+boolean
+(query)
+Set it to true, if you desire to delete upcoming reservations and events of member you are deleting(default value = true).
+
+Default value : true
+
+
+true
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/member/update
+This service allows you to make changes to a member. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "FamilyRole": "Primary",
+  "AllowChildToLoginAndUseBookingPrivileges": true,
+  "CustomFields": [
+    {
+      "UserDefinedFieldId": 0,
+      "Value": "string"
+    }
+  ],
+  "OrganizationMemberId": 0,
+  "FirstName": "string",
+  "LastName": "string",
+  "Email": "string",
+  "Username": "string",
+  "MemberNumber": "string",
+  "PhoneNumber": "string",
+  "Gender": "string",
+  "DateOfBirth": "2026-05-03T17:43:43.662Z",
+  "Note": "string",
+  "Address": "string",
+  "City": "string",
+  "State": "string",
+  "ZipCode": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PATCH
+/api/v1/member/update
+This service allows you to make partial changes to a member. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+A JSON object containing OrganizationMemberId (required) and any fields to update.
+
+Example Value
+Model
+{}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "OrganizationMemberId": 0,
+    "MembershipNumber": "string",
+    "OrganizationMemberFamilyId": 0,
+    "FirstName": "string",
+    "LastName": "string",
+    "Gender": "string",
+    "PhoneNumber": "string",
+    "DateOfBirth": "2026-05-03T17:48:07.518Z",
+    "Address": "string",
+    "City": "string",
+    "State": "string",
+    "ZipCode": "string",
+    "MembershipTypeName": "string",
+    "MembershipTypeId": 0,
+    "MembershipAssignmentType": "string",
+    "MembershipStatus": "string",
+    "Email": "string",
+    "FamilyRole": "string",
+    "UserDefinedFields": [
+      {
+        "Value": "string",
+        "UdfId": 0,
+        "OrderIndex": 0,
+        "Label": "string"
+      }
+    ],
+    "Ratings": [
+      {
+        "CategoryName": "string",
+        "ValueRatingName": "string",
+        "Value": 0
+      }
+    ],
+    "AllowChildToLoginAndUseBookingPrivileges": true,
+    "MembershipStartDate": "2026-05-03T17:48:07.518Z",
+    "MembershipEndDate": "2026-05-03T17:48:07.518Z",
+    "ExternalId": "string",
+    "ProfileImageUrl": "string",
+    "UnsubscribeFromMarketingEmails": true,
+    "UnsubscribeFromMarketingTextAlerts": true,
+    "UnsubscribeFromOrganizationTextAlerts": true,
+    "UnsubscribeFromMarketingPushNotifications": true
+  },
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/member/detachfromfamily
+This service allows you to detach a member from a family. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0,
+  "OrganizationFamilyMemberId": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "OrganizationMemberId": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/member/changememberfamily
+This service allows you to change family of a member, either to a new family, or remove it from the family. Requires the Member role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0,
+  "FromOrganizationFamilyMemberId": 0,
+  "ToOrganizationFamilyMemberId": 0,
+  "FamilyRole": "Primary"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/member/getssolink
+This service allows you to get the SSO link for a member. Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+orgMemberId *
+integer($int32)
+(query)
+Id of the member for whom sso request is made
+
+orgMemberId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "SsoUrl": "string"
+  },
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/member/getssolinkbyExternalId
+This service allows you to get the SSO link for a member using the external id of a member that was stored by courtreserve when synching member data. Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+externalId *
+string
+(query)
+External Id of the member for whom sso request is made
+
+externalId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "SsoUrl": "string"
+  },
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/member/getssolinkbyfamilyidandmembershipnumber
+Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+familyId *
+string
+(query)
+Id of the family where this member belngs to
+
+familyId
+membershipNumber *
+string
+(query)
+Member # of the member
+
+membershipNumber
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "SsoUrl": "string"
+  },
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/member/geteventlistpublicapiurl
+Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+orgMemberId *
+integer($int32)
+(query)
+orgMemberId
+startDate
+string($date-time)
+(query)
+startDate
+endDate
+string($date-time)
+(query)
+endDate
+categoryId
+integer($int32)
+(query)
+categoryId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "ExpiresOnUtc": "2026-05-03T17:48:07.646Z",
+      "Url": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/member/reservations
+Requires the Member role with Read permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberId *
+integer($int32)
+(query)
+organizationMemberId
+startDate
+string($date-time)
+(query)
+startDate
+endDate
+string($date-time)
+(query)
+endDate
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "TypeName": "string",
+      "Start": "2026-05-03T17:48:07.664Z",
+      "End": "2026-05-03T17:48:07.664Z",
+      "IsEvent": true,
+      "EventName": "string",
+      "Courts": "string",
+      "PlayerNames": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+Family Membership
+
+
+POST
+/api/v1/familymembership/assign
+This service allows you to assign a new membership to a family. Requires the FamilyMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberFamilyId *
+integer($int64)
+(query)
+The organization member family Id that you are assigning new membership
+
+organizationMemberFamilyId
+membershipTypeId *
+integer($int64)
+(query)
+The membership type id that you are assigning to the family
+
+membershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/familymembership/cancel
+This service allows you to cancel membership of a family. Requires the FamilyMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberFamilyId": 0,
+  "Reason": "string",
+  "EndingDate": "2026-05-03T17:44:14.700Z"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/familymembership/update
+This service allows you to CHANGE membership of a family. Requires the FamilyMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberFamilyId *
+integer($int64)
+(query)
+The organization member family Id that you are changing membership
+
+organizationMemberFamilyId
+newMembershipTypeId *
+integer($int64)
+(query)
+New membership type id that you are assigning to the family
+
+newMembershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/familymembership/suspend
+This service allows you to suspend membership of a family. Requires the FamilyMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberFamilyId": 0,
+  "Reason": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/familymembership/reactivate
+This service allows you to reactivate membership of a family. Requires the FamilyMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberFamilyId": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+Member Membership
+
+
+POST
+/api/v1/membermembership/assign
+This service allows you to assign a new membership to a member. Requires the MemberMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberId *
+integer($int32)
+(query)
+The organization member Id that you are assigning new membership
+
+organizationMemberId
+membershipTypeId *
+integer($int64)
+(query)
+The membership type id that you are assigning to the member
+
+membershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/membermembership/cancel
+This service allows you to cancel membership of a member. Requires the MemberMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0,
+  "Reason": "string",
+  "EndingDate": "2026-05-03T17:44:26.324Z"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/membermembership/update
+This service allows you to CHANGE membership of a member. Requires the MemberMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+organizationMemberId *
+integer($int32)
+(query)
+The organization member Id that you are changing membership
+
+organizationMemberId
+newMembershipTypeId *
+integer($int64)
+(query)
+New membership type id that you are assigning to the member
+
+newMembershipTypeId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/membermembership/suspend
+This service allows you to suspend membership of a member. Requires the MemberMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0,
+  "Reason": "string"
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/membermembership/reactivate
+This service allows you to reactivate membership of a member. Requires the MemberMembership role with Write permission.
+Parameters
+Try it out
+Name	Description
+request *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+Member Custom Field
+
+
+GET
+/api/v1/membercustomfield/get
+This service returns a list of custom fields. Requires the MemberCustomField role with Read permission.
+Parameters
+Try it out
+Name	Description
+customFieldId
+integer($int64)
+(query)
+Retrieve custom fields by custom field Id
+
+customFieldId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Type": "string",
+      "Id": 0,
+      "Label": "string",
+      "Options": [
+        "string"
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/membercustomfield/create
+This service allows you to create a new member custom field. Requires the MemberCustomField role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Type": "string",
+  "Label": "string",
+  "Options": [
+    "string"
+  ]
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "UserDefinedFieldId": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/membercustomfield/update
+This service allows you to make changes to a member custom field. Requires the MemberCustomField role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Id": 0,
+  "Label": "string",
+  "Options": [
+    "string"
+  ]
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/membercustomfield/delete
+This service allows you to delete a member custom field. Requires the MemberCustomField role with Write permission.
+Parameters
+Try it out
+Name	Description
+customFieldId *
+integer($int64)
+(query)
+The custom field Id that you are deleting
+
+customFieldId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+Custom Rating
+
+
+GET
+/api/v1/customrating/get
+This service returns a list of custom ratings created via the API. Requires the CustomRating role with Read permission.
+Parameters
+Try it out
+Name	Description
+ratingCategoryId
+integer($int64)
+(query)
+Optional: filter by a specific rating category Id
+
+ratingCategoryId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "Description": "string",
+      "SportType": "string",
+      "Precision": 0,
+      "MinVal": 0,
+      "MaxVal": 0,
+      "IsPublic": true,
+      "IsRequired": true,
+      "DisplayOnMembersGrid": true,
+      "OrderIndex": 0
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/customrating/create
+This service allows you to create a new custom rating. Requires the CustomRating role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Name": "string",
+  "Description": "string",
+  "SportType": "string",
+  "Precision": 0,
+  "MinVal": 0,
+  "MaxVal": 0,
+  "IsPublic": true,
+  "IsRequired": true,
+  "DisplayOnMembersGrid": true,
+  "OrderIndex": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Id": 0,
+    "Name": "string",
+    "Description": "string",
+    "SportType": "string",
+    "Precision": 0,
+    "MinVal": 0,
+    "MaxVal": 0,
+    "IsPublic": true,
+    "IsRequired": true,
+    "DisplayOnMembersGrid": true,
+    "OrderIndex": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/customrating/update
+This service allows you to make changes to a custom rating. Requires the CustomRating role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "Id": 0,
+  "Name": "string",
+  "Description": "string",
+  "SportType": "string",
+  "Precision": 0,
+  "MinVal": 0,
+  "MaxVal": 0,
+  "IsPublic": true,
+  "IsRequired": true,
+  "DisplayOnMembersGrid": true,
+  "OrderIndex": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Id": 0,
+    "Name": "string",
+    "Description": "string",
+    "SportType": "string",
+    "Precision": 0,
+    "MinVal": 0,
+    "MaxVal": 0,
+    "IsPublic": true,
+    "IsRequired": true,
+    "DisplayOnMembersGrid": true,
+    "OrderIndex": 0
+  },
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/customrating/delete
+This service allows you to delete a custom rating. Requires the CustomRating role with Write permission.
+Parameters
+Try it out
+Name	Description
+ratingCategoryId *
+integer($int64)
+(query)
+The rating category Id to delete
+
+ratingCategoryId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": "string",
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/customrating/assign
+This service allows you to assign a custom rating value to a member. Requires the CustomRating role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "OrganizationMemberId": 0,
+  "RatingCategoryId": 0,
+  "Value": 0
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "OrganizationMemberRatingId": 0,
+    "OrganizationMemberId": 0,
+    "RatingCategoryId": 0,
+    "RatingCategoryName": "string",
+    "Value": 0
+  },
+  "IsSuccessStatusCode": true
+}
+Audit Log
+
+
+GET
+/api/v1/auditlog/get
+This service returns API request logs for your organization within the last 7 days. Requires the AuditLog role with Read permission.
+Parameters
+Try it out
+Name	Description
+startDate
+string($date-time)
+(query)
+Start of the date range (UTC). Cannot be older than 7 days.
+
+startDate
+endDate
+string($date-time)
+(query)
+End of the date range (UTC).
+
+endDate
+apiKey
+string
+(query)
+Optional: filter by a specific API key.
+
+apiKey
+endpoint
+string
+(query)
+Optional: filter by endpoint (partial match).
+
+endpoint
+pageSize
+integer($int32)
+(query)
+Number of records per page (default 100, max 500).
+
+Default value : 100
+
+100
+pageNumber
+integer($int32)
+(query)
+Page number (default 1).
+
+Default value : 1
+
+1
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "TotalCount": 0,
+    "PageSize": 0,
+    "PageNumber": 0,
+    "TotalPages": 0,
+    "Entries": [
+      {
+        "Id": 0,
+        "OrgId": 0,
+        "OrganizationName": "string",
+        "Date": "2026-05-03T17:48:08.034Z",
+        "EndPoint": "string",
+        "Username": "string",
+        "DevAction": "string",
+        "Body": "string"
+      }
+    ]
+  },
+  "IsSuccessStatusCode": true
+}
+Event Calendar
+
+
+GET
+/api/v1/eventcalendar/categories
+This service returns a list of event categories types. Requires the EventCalendar role with Read permission.
+Parameters
+Try it out
+Name	Description
+categoryId
+integer($int32)
+(query)
+Retrieve event categories by ID
+
+categoryId
+isPublic
+boolean
+(query)
+Leave NULL to retrieve all, otherwise set accordingly
+
+
+--
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "BackgroundColor": "string",
+      "TextColor": "string",
+      "IsPublic": true
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/eventcalendar/geteventcategoriespublicapiurl
+Requires the EventCalendar role with Read permission.
+Parameters
+Try it out
+Name	Description
+categoryId
+integer($int32)
+(query)
+categoryId
+isPublic
+boolean
+(query)
+
+--
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "ExpiresOnUtc": "2026-05-03T17:48:08.080Z",
+      "Url": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/eventcalendar/eventlist
+This service returns a list of event categories types Requires the EventCalendar role with Read permission.
+Parameters
+Try it out
+Name	Description
+orgMemberId
+integer($int32)
+(query)
+orgMemberId
+startDate
+string($date-time)
+(query)
+startDate
+endDate
+string($date-time)
+(query)
+endDate
+categoryId
+integer($int32)
+(query)
+categoryId
+includeRegisteredPlayersCount
+boolean
+(query)
+Default value : false
+
+
+false
+includePriceInfo
+boolean
+(query)
+Default value : false
+
+
+false
+includeRatingRestrictions
+boolean
+(query)
+Default value : false
+
+
+false
+includeTags
+boolean
+(query)
+Default value : false
+
+
+false
+eventFilterName
+string
+(query)
+eventFilterName
+eventFilterId
+integer($int64)
+(query)
+eventFilterId
+tagNames
+string
+(query)
+tagNames
+tagIds
+string
+(query)
+tagIds
+categoryIds
+string
+(query)
+categoryIds
+status
+string
+(query)
+Accepted values:
+
+Active
+Canceled
+All
+Default value : Active
+
+Active
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "EventId": 0,
+      "EventName": "string",
+      "EventCategoryId": 0,
+      "EventCategoryName": "string",
+      "StartDateTime": "2026-05-03T17:48:08.170Z",
+      "EndDateTime": "2026-05-03T17:48:08.170Z",
+      "ReservationId": 0,
+      "BackgroundColor": "string",
+      "TextColor": "string",
+      "IsRegistered": true,
+      "SsoUrl": "string",
+      "ImageUrl": "string",
+      "MaxRegistrants": 0,
+      "RegisteredCount": 0,
+      "AllowWaitlist": true,
+      "WaitlistCount": 0,
+      "PriceInfo": [
+        {
+          "MembershipTypeName": "string",
+          "DailyPrice": 0,
+          "EntireEventPrice": 0
+        }
+      ],
+      "RatingRestrictions": [
+        {
+          "CategoryName": "string",
+          "SystemName": "string",
+          "MinSingles": 0,
+          "MaxSingles": 0,
+          "MinDoubles": 0,
+          "MaxDoubles": 0,
+          "AllowedRatingNames": "string"
+        }
+      ],
+      "TagsInfo": [
+        {
+          "Name": "string",
+          "TextColor": "string",
+          "BackgroundColor": "string"
+        }
+      ],
+      "Courts": [
+        {
+          "Id": 0,
+          "Label": "string",
+          "TypeName": "string",
+          "OrderIndex": 0
+        }
+      ],
+      "IsPublicBookingAllowed": true,
+      "PublicEventUrl": "string",
+      "IsCanceled": true
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+Public Event
+
+
+GET
+/api/v1/publicevent/Categories
+Requires the PublicEvent role with Read permission.
+Parameters
+Try it out
+Name	Description
+orgId *
+integer($int32)
+(query)
+orgId
+apiKey *
+string
+(query)
+apiKey
+categoryId
+integer($int32)
+(query)
+categoryId
+isPublic
+boolean
+(query)
+
+--
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "BackgroundColor": "string",
+      "TextColor": "string",
+      "IsPublic": true
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/publicevent/eventlist
+Requires the PublicEvent role with Read permission.
+Parameters
+Try it out
+Name	Description
+orgId *
+integer($int32)
+(query)
+orgId
+apiKey *
+string
+(query)
+apiKey
+orgMemberId *
+integer($int32)
+(query)
+orgMemberId
+startDate
+string($date-time)
+(query)
+startDate
+endDate
+string($date-time)
+(query)
+endDate
+categoryId
+integer($int32)
+(query)
+categoryId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "BackgroundColor": "string",
+      "TextColor": "string",
+      "IsPublic": true
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+Reservation Report
+
+
+GET
+/api/v1/reservationreport/listactive
+Retrieves the reservation data for active reservations by reservation periods or creation/update period. Requires the ReservationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+createdOrUpdatedOnFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+createdOrUpdatedOnFrom
+createdOrUpdatedOnTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+createdOrUpdatedOnTo
+reservationsFromDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationsFromDate
+reservationsToDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationsToDate
+includeUserDefinedFields
+boolean
+(query)
+Default value : false
+
+
+false
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "ReservationTypeId": 0,
+      "ReservationTypeName": "string",
+      "Courts": "string",
+      "Instructors": "string",
+      "IsLesson": true,
+      "StartTime": "2026-05-03T17:48:08.272Z",
+      "EndTime": "2026-05-03T17:48:08.272Z",
+      "CreatedOnUtc": "2026-05-03T17:48:08.272Z",
+      "UpdatedOnUtc": "2026-05-03T17:48:08.272Z",
+      "CancelledOn": "2026-05-03T17:48:08.272Z",
+      "Players": [
+        {
+          "OrganizationMemberId": 0,
+          "FirstName": "string",
+          "LastName": "string",
+          "Email": "string",
+          "Phone": "string",
+          "PriceToPay": 0,
+          "PaidAmount": 0,
+          "UnsubscribeFromMarketingEmails": true,
+          "UnsubscribeFromMarketingTextAlerts": true,
+          "MembershipTypeId": 0
+        }
+      ],
+      "UserDefinedFields": [
+        {
+          "Value": "string",
+          "UdfId": 0,
+          "OrderIndex": 0,
+          "Label": "string"
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+
+GET
+/api/v1/reservationreport/listcancelled
+Retrieves the reservation data for canceled reservations by reservation periods or creation/update period. Requires the ReservationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+cancelledOnFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+cancelledOnFrom
+cancelledOnTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+cancelledOnTo
+reservationsFromDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationsFromDate
+reservationsToDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationsToDate
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "ReservationTypeId": 0,
+      "ReservationTypeName": "string",
+      "Courts": "string",
+      "Instructors": "string",
+      "IsLesson": true,
+      "StartTime": "2026-05-03T17:48:08.325Z",
+      "EndTime": "2026-05-03T17:48:08.325Z",
+      "CreatedOnUtc": "2026-05-03T17:48:08.325Z",
+      "UpdatedOnUtc": "2026-05-03T17:48:08.325Z",
+      "CancelledOn": "2026-05-03T17:48:08.325Z",
+      "Players": [
+        {
+          "OrganizationMemberId": 0,
+          "FirstName": "string",
+          "LastName": "string",
+          "Email": "string",
+          "Phone": "string",
+          "PriceToPay": 0,
+          "PaidAmount": 0,
+          "UnsubscribeFromMarketingEmails": true,
+          "UnsubscribeFromMarketingTextAlerts": true,
+          "MembershipTypeId": 0
+        }
+      ],
+      "UserDefinedFields": [
+        {
+          "Value": "string",
+          "UdfId": 0,
+          "OrderIndex": 0,
+          "Label": "string"
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+
+GET
+/api/v1/reservationreport/whoisheretoday
+Gets a list of member reservations and event registrations, filtered by date range and cancellation status. Requires the ReservationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+startDateTime *
+string($date-time)
+(query)
+The inclusive start of the reservation window.
+Must be specified when using a date range filter.
+The interval between {startDateTime} and {endDateTime}
+cannot exceed 31 days.
+
+startDateTime
+endDateTime *
+string($date-time)
+(query)
+The inclusive end of the reservation window.
+Must be specified when using a date range filter.
+The interval between {startDateTime} and {endDateTime}
+cannot exceed 31 days.
+
+endDateTime
+includeCancelled
+boolean
+(query)
+When set to true, returns both active and cancelled reservations.
+Ignored if {cancelledOnly} is true.
+
+Default value : false
+
+
+false
+cancelledOnly
+boolean
+(query)
+When set to true, returns only cancelled reservations.
+Takes precedence over {includeCancelled}.
+
+Default value : false
+
+
+false
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Successfully retrieved reservation data.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "OrganizationMemberId": 0,
+      "MemberFirstName": "string",
+      "MemberLastName": "string",
+      "MemberEmail": "string",
+      "StartDateTime": "2026-05-03T17:48:08.376Z",
+      "EndDateTime": "2026-05-03T17:48:08.376Z",
+      "CreatedOnUtc": "2026-05-03T17:48:08.376Z",
+      "IsCancelled": true,
+      "IsApproved": true,
+      "CancelledOnUtc": "2026-05-03T17:48:08.376Z",
+      "ReservationMemberId": 0,
+      "CourtData": [
+        {
+          "CourtId": 0,
+          "CourtName": "string",
+          "CourtTypeName": "string"
+        }
+      ],
+      "BookingType": "string",
+      "EventName": "string",
+      "TypeName": "string",
+      "ReservationId": 0
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Invalid request (e.g., missing parameters or date range > 31 days).
+
+401	
+Authentication required or invalid credentials.
+
+500	
+Unexpected server error.
+
+Revenue Recognition
+
+
+GET
+/api/v1/revenuerecognition/list
+Retrieves a list of transactions to help reconcile your revenue for the day. Requires the RevenueRecognition role with Read permission.
+Parameters
+Try it out
+Name	Description
+start *
+string($date-time)
+(query)
+start
+end *
+string($date-time)
+(query)
+end
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "FeeCategory": "string",
+      "Subtotal": 0,
+      "TaxTotal": 0,
+      "Total": 0,
+      "PaymentType": "string",
+      "StartDateTime": "2026-05-03T17:48:08.412Z",
+      "EndDateTime": "2026-05-03T17:48:08.412Z",
+      "PaidDate": "2026-05-03T17:48:08.412Z",
+      "OrganizationMemberId": 0,
+      "MemberFirstName": "string",
+      "MemberLastName": "string",
+      "Description": "string",
+      "AdditionalDates": [
+        {
+          "StartDateTime": "2026-05-03T17:48:08.412Z",
+          "EndDateTime": "2026-05-03T17:48:08.412Z"
+        }
+      ],
+      "FeeId": 0,
+      "PaymentId": 0,
+      "RelationId": 0,
+      "TransactionType": "string",
+      "PackageInfo": {
+        "PackageName": "string",
+        "TotalPunches": 0,
+        "PackagePrice": 0
+      }
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+Transactions
+
+
+GET
+/api/v1/transactions/list
+Retrieves a list of transactions based on the provided filters. Requires the Transactions role with Read permission.
+Parameters
+Try it out
+Name	Description
+transactionStartDate
+string($date-time)
+(query)
+The start date of the transaction.
+
+transactionStartDate
+transactionEndDate
+string($date-time)
+(query)
+The end date of the transaction.
+
+transactionEndDate
+reservationStartDate
+string($date-time)
+(query)
+The start date of the reservation.
+
+reservationStartDate
+reservationEndDate
+string($date-time)
+(query)
+The end date of the reservation.
+
+reservationEndDate
+transactionTypes
+string
+(query)
+A comma-separated list of transaction types. Possible values are:
+
+Fee
+Membership Fee
+Misc. Fee
+Payment
+Preauthorization
+Refund - Account Credit
+Refund to CC
+Refund to eCheck
+Balance Credit
+Preauth Cancellation
+Cash Refund
+Payment - Punch
+Refund - Punch
+transactionTypes
+showOnlyPaidTransactions
+boolean
+(query)
+If true, only paid transactions will be shown.
+
+Default value : false
+
+
+false
+showOnlyUnpaidTransactions
+boolean
+(query)
+If true, only unpaid transactions will be shown.
+
+Default value : false
+
+
+false
+reservationTypesIds
+string
+(query)
+A comma-separated list of reservation type Ids.
+
+reservationTypesIds
+eventCategoryIds
+string
+(query)
+A comma-separated list of event category Ids.
+
+eventCategoryIds
+paymentTypes
+string
+(query)
+A comma-separated list of payment types. Possible values are:
+
+Cash
+Credit Card
+Balance
+eCheck
+Manual CC
+Check
+Gift Card
+Manual Adjustment
+Other
+Punch
+paymentTypes
+showPartialPaidFeesOnly
+boolean
+(query)
+If true, only partially paid fees will be shown.
+
+Default value : false
+
+
+false
+instructorIds
+string
+(query)
+A comma-separated list of instructor IDs.
+
+instructorIds
+revenueCategoryIds
+string
+(query)
+A comma-separated list of revenue category IDs.
+
+revenueCategoryIds
+eventSessionIds
+string
+(query)
+A comma-separated list of event session IDs.
+
+eventSessionIds
+recurringFeeIds
+string
+(query)
+A comma-separated list of recurring fee IDs.
+
+recurringFeeIds
+eventTagIds
+string
+(query)
+A comma-separated list of event tag IDs.
+
+eventTagIds
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "TransactionId": 0,
+      "TransactionType": "string",
+      "TransactionDate": "2026-05-03T17:48:08.528Z",
+      "Subtotal": 0,
+      "TaxTotal": 0,
+      "Total": 0,
+      "UnpaidAmount": 0,
+      "PainOn": "2026-05-03T17:48:08.528Z",
+      "PaymentType": "string",
+      "Category": "string",
+      "ReservationStart": "2026-05-03T17:48:08.528Z",
+      "ReservationEnd": "2026-05-03T17:48:08.528Z",
+      "Instructors": "string",
+      "OrganizationMemberId": 0,
+      "OrganizationFirstName": "string",
+      "OrganizationLastName": "string",
+      "OrganizationMemberEmail": "string",
+      "OrganizationMemberPhone": "string",
+      "AccountCreationDate": "2026-05-03T17:48:08.528Z"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/transactions/salessummarydetailed
+Retrieves the sales summary report for a specified organization within a given date range. This report will include the paid fees + refunds based on the dates specified. Requires the Transactions role with Read permission.
+Parameters
+Try it out
+Name	Description
+paymentStartDate *
+string($date-time)
+(query)
+The start date of the reporting period. The date range between the start and end date cannot exceed 31 days.
+
+paymentStartDate
+paymentEndDate *
+string($date-time)
+(query)
+The end date of the reporting period. The date range between the start and end date cannot exceed 31 days.
+
+paymentEndDate
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Start": "2026-05-03T17:48:08.555Z",
+    "End": "2026-05-03T17:48:08.555Z",
+    "OrganizationId": 0,
+    "OrganizationName": "string",
+    "DetailedRows": [
+      {
+        "FeeCategoryName": "string",
+        "ItemName": "string",
+        "RevenueCategoryName": "string",
+        "Amount": 0,
+        "AmountWithNoTax": 0,
+        "TaxTotal": 0,
+        "OrgMemberId": 0,
+        "OrgMemberFamilyId": 0,
+        "MemberFullName": "string",
+        "MembershipName": "string",
+        "Start": "2026-05-03T17:48:08.555Z",
+        "End": "2026-05-03T17:48:08.555Z",
+        "CourtLabels": "string",
+        "InstructorNames": "string",
+        "PaymentType": "string",
+        "TransactionType": "string",
+        "TransactionId": 0,
+        "TransactionDate": "2026-05-03T17:48:08.555Z",
+        "PaidDate": "2026-05-03T17:48:08.555Z",
+        "FamilyName": "string",
+        "ItemCost": 0
+      }
+    ]
+  },
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+Event Registration Report
+
+
+GET
+/api/v1/eventregistrationreport/listactive
+Retrieves the reservation data for active event registrations. Requires the EventRegistrationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+registeredOnFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+registeredOnFrom
+registeredOnTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+registeredOnTo
+eventDateFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateFrom
+eventDateTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateTo
+includeCourts
+boolean
+(query)
+Whether to include court information in the report.
+
+Default value : false
+
+
+false
+includePartnerInfo
+boolean
+(query)
+Whether to include partner(s) info for team based events.
+
+Default value : false
+
+
+false
+includeUserDefinedFields
+boolean
+(query)
+Whether to include registration user defined fields.
+
+Default value : false
+
+
+false
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "EventId": 0,
+      "EventName": "string",
+      "IsTeamEvent": true,
+      "EventCategoryId": 0,
+      "EventCategoryName": "string",
+      "EventDateId": 0,
+      "StartTime": "2026-05-03T17:48:08.629Z",
+      "EndTime": "2026-05-03T17:48:08.629Z",
+      "OrganizationMemberId": 0,
+      "FirstName": "string",
+      "LastName": "string",
+      "PartnersInfo": [
+        {
+          "FirstName": "string",
+          "LastName": "string",
+          "OrganizationMemberId": 0
+        }
+      ],
+      "Email": "string",
+      "Phone": "string",
+      "PriceToPay": 0,
+      "PaidAmount": 0,
+      "UnsubscribeFromMarketingEmails": true,
+      "UnsubscribeFromMarketingTextAlerts": true,
+      "SignedUpOnUtc": "2026-05-03T17:48:08.629Z",
+      "CancelledOnUtc": "2026-05-03T17:48:08.629Z",
+      "Courts": [
+        {
+          "CourtId": 0,
+          "CourtTypeId": 0,
+          "CourtName": "string",
+          "CourtTypeName": "string"
+        }
+      ],
+      "UserDefinedFields": [
+        {
+          "Value": "string",
+          "UdfId": 0,
+          "OrderIndex": 0,
+          "Label": "string"
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+
+GET
+/api/v1/eventregistrationreport/listcancelled
+Retrieves the reservation data for canceled event registrations. Requires the EventRegistrationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+cancelledOnFrom
+string($date-time)
+(query)
+cancelledOnFrom
+cancelledOnTo
+string($date-time)
+(query)
+cancelledOnTo
+eventDateFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateFrom
+eventDateTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateTo
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "EventId": 0,
+      "EventName": "string",
+      "IsTeamEvent": true,
+      "EventCategoryId": 0,
+      "EventCategoryName": "string",
+      "EventDateId": 0,
+      "StartTime": "2026-05-03T17:48:08.670Z",
+      "EndTime": "2026-05-03T17:48:08.670Z",
+      "OrganizationMemberId": 0,
+      "FirstName": "string",
+      "LastName": "string",
+      "PartnersInfo": [
+        {
+          "FirstName": "string",
+          "LastName": "string",
+          "OrganizationMemberId": 0
+        }
+      ],
+      "Email": "string",
+      "Phone": "string",
+      "PriceToPay": 0,
+      "PaidAmount": 0,
+      "UnsubscribeFromMarketingEmails": true,
+      "UnsubscribeFromMarketingTextAlerts": true,
+      "SignedUpOnUtc": "2026-05-03T17:48:08.670Z",
+      "CancelledOnUtc": "2026-05-03T17:48:08.670Z",
+      "Courts": [
+        {
+          "CourtId": 0,
+          "CourtTypeId": 0,
+          "CourtName": "string",
+          "CourtTypeName": "string"
+        }
+      ],
+      "UserDefinedFields": [
+        {
+          "Value": "string",
+          "UdfId": 0,
+          "OrderIndex": 0,
+          "Label": "string"
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+
+GET
+/api/v1/eventregistrationreport/listwaitlist
+Retrieves the reservation data for waitlist. Requires the EventRegistrationReport role with Read permission.
+Parameters
+Try it out
+Name	Description
+registeredOnFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+registeredOnFrom
+registeredOnTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+registeredOnTo
+eventDateFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateFrom
+eventDateTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+eventDateTo
+includeCourts
+boolean
+(query)
+Whether to include court information in the report.
+
+Default value : false
+
+
+false
+includePartnerInfo
+boolean
+(query)
+Whether to include partner(s) info for team based events.
+
+Default value : false
+
+
+false
+includeUserDefinedFields
+boolean
+(query)
+Whether to include registration user defined fields.
+
+Default value : false
+
+
+false
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+Returns the sales summary report successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "EventId": 0,
+      "EventName": "string",
+      "IsTeamEvent": true,
+      "EventCategoryId": 0,
+      "EventCategoryName": "string",
+      "EventDateId": 0,
+      "StartTime": "2026-05-03T17:48:08.740Z",
+      "EndTime": "2026-05-03T17:48:08.740Z",
+      "OrganizationMemberId": 0,
+      "FirstName": "string",
+      "LastName": "string",
+      "PartnersInfo": [
+        {
+          "FirstName": "string",
+          "LastName": "string",
+          "OrganizationMemberId": 0
+        }
+      ],
+      "Email": "string",
+      "Phone": "string",
+      "PriceToPay": 0,
+      "PaidAmount": 0,
+      "UnsubscribeFromMarketingEmails": true,
+      "UnsubscribeFromMarketingTextAlerts": true,
+      "SignedUpOnUtc": "2026-05-03T17:48:08.740Z",
+      "CancelledOnUtc": "2026-05-03T17:48:08.740Z",
+      "Courts": [
+        {
+          "CourtId": 0,
+          "CourtTypeId": 0,
+          "CourtName": "string",
+          "CourtTypeName": "string"
+        }
+      ],
+      "UserDefinedFields": [
+        {
+          "Value": "string",
+          "UdfId": 0,
+          "OrderIndex": 0,
+          "Label": "string"
+        }
+      ]
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+Attendance Report
+
+
+GET
+/api/v1/attendancereport/detailed
+Retrieves the attendance data by attendance period.
+Parameters
+Try it out
+Name	Description
+attendedFrom
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+attendedFrom
+attendedTo
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+attendedTo
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+The detailed attendance report was retrieved successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "DateTime": "2026-05-03T17:48:08.774Z",
+      "InputMethod": "Scan",
+      "InputMethodDisplay": "string",
+      "ScannedByFullName": "string",
+      "MemberFirstName": "string",
+      "MemberLastName": "string",
+      "MemberFullName": "string",
+      "OrganizationMemberId": 0,
+      "MemberEmail": "string",
+      "UiCulture": "string",
+      "TimeZone": "string",
+      "DateTimeDisplay": "string",
+      "KioskName": "string",
+      "MembershipName": "string",
+      "FamilyRole": "Primary",
+      "FamilyRoleDisplay": "string",
+      "MembershipNumber": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+
+GET
+/api/v1/attendancereport/checkin
+Retrieves check-in data by attendance period or reservation period.
+Parameters
+Try it out
+Name	Description
+checkInStartDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+checkInStartDate
+checkInEndDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+checkInEndDate
+reservationStartDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationStartDate
+reservationEndDate
+string($date-time)
+(query)
+The date range between the start and end date cannot exceed 31 days.
+
+reservationEndDate
+includeCourtBooking
+boolean
+(query)
+Default Value : true
+
+Default value : true
+
+
+true
+includeEvents
+boolean
+(query)
+Default Value : true
+
+Default value : true
+
+
+true
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+The attendance period or reservation period report was retrieved successfully.
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "MemberNumber": "string",
+      "MemberFirstName": "string",
+      "MemberLastName": "string",
+      "CheckinDateTime": "2026-05-03T17:48:08.848Z",
+      "RegistrationTypeDisplay": "string",
+      "EventName": "string",
+      "ReservationDateTimeDisplay": "string",
+      "CheckInType": "string",
+      "CheckedinByName": "string",
+      "CheckInStatusName": "string",
+      "IsGuest": "string",
+      "Type": "string",
+      "RegisteredOnDateTimeDisplay": "string",
+      "ReservationStartDateTime": "2026-05-03T17:48:08.848Z",
+      "ReservationEndDateTime": "2026-05-03T17:48:08.848Z"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+400	
+Bad request, check the input parameters.
+
+401	
+Unauthorized, check your authentication credentials.
+
+500	
+Internal server error.
+
+WebSite Settings
+
+
+GET
+/api/v1/websitesettings/general
+This service returns general settings for the website. Requires the WebSiteSettings role with Read permission.
+Parameters
+Try it out
+No parameters
+
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "Id": 0,
+    "BaseBackgroundColor": "string",
+    "BaseTextColor": "string",
+    "HeaderBackgroundColor": "string",
+    "HeaderTextColor": "string",
+    "FacebookLink": "string",
+    "InstagramLink": "string",
+    "CurrentWebsiteLink": "string",
+    "HideHoursOfOperations": true,
+    "FooterOption": "string",
+    "AnnouncementViewOption": "string",
+    "OperationHours": [
+      {
+        "Day": 0,
+        "DayName": "string",
+        "OpenTime": 0,
+        "CloseTime": 0
+      }
+    ]
+  },
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/websitesettings/announcements
+This service returns announcements for the website. Requires the WebSiteSettings role with Read permission.
+Parameters
+Try it out
+No parameters
+
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Title": "string",
+      "Content": "string",
+      "IncludeOnWelcomePage": true,
+      "ActiveFromUtc": "2026-05-03T17:48:08.881Z",
+      "ActiveUntilUtc": "2026-05-03T17:48:08.881Z",
+      "ActiveFrom": "2026-05-03T17:48:08.881Z",
+      "ActiveUntil": "2026-05-03T17:48:08.881Z",
+      "UpdatedOnUtc": "2026-05-03T17:48:08.881Z",
+      "CreatedOnUtc": "2026-05-03T17:48:08.881Z"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/websitesettings/news
+This service returns active news. Requires the WebSiteSettings role with Read permission.
+Parameters
+Try it out
+Name	Description
+categoryId
+integer($int64)
+(query)
+Use this parameter to filter news by a specific category.
+
+categoryId
+newsId
+integer($int64)
+(query)
+Use this parameter to get a specific item by id
+
+newsId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Subject": "string",
+      "Content": "string",
+      "ImageUrl": "string",
+      "DisplayType": "string",
+      "CreatedOn": "2026-05-03T17:48:08.901Z",
+      "LastUpdatedOn": "2026-05-03T17:48:08.901Z",
+      "Guid": "string",
+      "CategoryId": 0,
+      "ShortDescription": "string",
+      "ActiveFrom": "2026-05-03T17:48:08.901Z",
+      "ActiveTo": "2026-05-03T17:48:08.901Z",
+      "CategoryName": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/websitesettings/locations
+This service return general settings for the website. Requires the WebSiteSettings role with Read permission.
+Parameters
+Try it out
+No parameters
+
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Subject": "string",
+      "Content": "string",
+      "ImageUrl": "string",
+      "DisplayType": "string",
+      "CreatedOn": "2026-05-03T17:48:08.909Z",
+      "LastUpdatedOn": "2026-05-03T17:48:08.909Z",
+      "Guid": "string",
+      "CategoryId": 0,
+      "ShortDescription": "string",
+      "ActiveFrom": "2026-05-03T17:48:08.909Z",
+      "ActiveTo": "2026-05-03T17:48:08.909Z",
+      "CategoryName": "string"
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+Reservation
+
+
+GET
+/api/v1/reservation/reservationtypes
+This service returns a list of reservation types. Requires the Reservation role with Read permission.
+Parameters
+Try it out
+No parameters
+
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Name": "string",
+      "BackgroundColor": "string",
+      "TextColor": "string",
+      "OrderIndex": 0
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+GET
+/api/v1/reservation/courts
+This service returns a list of courts. Requires the Reservation role with Read permission.
+Parameters
+Try it out
+No parameters
+
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": [
+    {
+      "Id": 0,
+      "Label": "string",
+      "TypeName": "string",
+      "OrderIndex": 0
+    }
+  ],
+  "IsSuccessStatusCode": true
+}
+
+POST
+/api/v1/reservation/createcourtblock
+This service allows you to create a court block. Requires the Reservation role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "ReservationTypeId": 0,
+  "Start": "2026-05-03T17:47:56.240Z",
+  "End": "2026-05-03T17:47:56.240Z",
+  "Notes": "string",
+  "CourtIds": [
+    0
+  ],
+  "IsPrivate": true
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "ReservationId": 0,
+    "ErrorMessage": "string",
+    "IsSuccessStatusCode": true
+  },
+  "IsSuccessStatusCode": true
+}
+
+PUT
+/api/v1/reservation/updatecourtblock
+This service allows you to update a court block. Requires the Reservation role with Write permission.
+Parameters
+Try it out
+Name	Description
+data *
+object
+(body)
+Example Value
+Model
+{
+  "ReservationId": 0,
+  "ReservationTypeId": 0,
+  "Start": "2026-05-03T17:48:00.714Z",
+  "End": "2026-05-03T17:48:00.714Z",
+  "Notes": "string",
+  "CourtIds": [
+    0
+  ],
+  "IsPrivate": true
+}
+Parameter content type
+
+application/json
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "ReservationId": 0,
+    "ErrorMessage": "string",
+    "IsSuccessStatusCode": true
+  },
+  "IsSuccessStatusCode": true
+}
+
+DELETE
+/api/v1/reservation/deletecourtblock
+This service allows you to delete a court block. Requires the Reservation role with Write permission.
+Parameters
+Try it out
+Name	Description
+reservationId *
+integer($int32)
+(query)
+reservationId
+Responses
+Response content type
+
+application/json
+Code	Description
+200	
+OK
+
+Example Value
+Model
+{
+  "ErrorMessage": "string",
+  "Data": {
+    "ReservationId": 0,
+    "ErrorMessage": "string",
+    "IsSuccessStatusCode": true
+  },
+  "IsSuccessStatusCode": true
+}
