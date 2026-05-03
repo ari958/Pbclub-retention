@@ -1,27 +1,106 @@
-# Workspace
+# Pulse — PB Club Pickleball Retention Dashboard
 
 ## Overview
 
-pnpm workspace monorepo using TypeScript. Each package manages its own dependencies.
+pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase (Postgres).
 
 ## Stack
 
-- **Monorepo tool**: pnpm workspaces
-- **Node.js version**: 24
-- **Package manager**: pnpm
-- **TypeScript version**: 5.9
-- **API framework**: Express 5
-- **Database**: PostgreSQL + Drizzle ORM
-- **Validation**: Zod (`zod/v4`), `drizzle-zod`
-- **API codegen**: Orval (from OpenAPI spec)
-- **Build**: esbuild (CJS bundle)
+- **Monorepo**: pnpm workspaces
+- **Node.js**: 24 · **TypeScript**: 5.9 · **Package manager**: pnpm
+- **API**: Express 5, esbuild bundle
+- **DB**: Supabase (Postgres) via `@supabase/supabase-js` service_role key
+- **Validation**: Zod
+- **AI**: Anthropic SDK (`claude-sonnet-4-5`, `claude-sonnet-4-6`)
+- **SMS**: Twilio
 
 ## Key Commands
 
-- `pnpm run typecheck` — full typecheck across all packages
-- `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- `pnpm --filter @workspace/api-server run dev` — run API server locally
+- `pnpm run typecheck` — full typecheck
+- `pnpm --filter @workspace/api-server run build` — build API
+- `pnpm --filter @workspace/api-server run dev` — run API locally
 
-See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details.
+## Project Constants
+
+- `CLUB_ID`: `c8976e15-e002-4619-bb4b-b1a70f5cd7ab` — never hardcode
+- Supabase project ref: `knblhxfwvebxntoshiqm`
+- `DATABASE_URL` → Replit local DB (not Supabase). All DDL runs in Supabase SQL Editor.
+
+## Architecture
+
+### Artifacts
+| Artifact | Kind | Path |
+|---|---|---|
+| `artifacts/api-server` | API | `/api` |
+| `artifacts/dashboard` | Web (React+Vite) | `/dashboard` |
+
+### API Server — `artifacts/api-server/src/`
+- `app.ts` — Express app, mounts all routes under `/api`
+- `routes/index.ts` — barrel: agent, sync, players, messages, recap, socialGraph, feedback, templates, events, import, admin, programs, health
+- `lib/supabaseClient.ts` — singleton Supabase client (service_role)
+- `lib/jobStore.ts` — `startJob / finishJob / appendJobLog / getJob / isCancelled`
+- `lib/scheduler.ts` — nightly chain (Steps 1–7), feedback poller (30 min)
+- `lib/churnScore.ts` — churn scoring engine; thresholds 70+/40–69/0–39
+- `lib/monthlyRecap.ts` — monthly recap generation + batch runner
+- `lib/milestoneCheck.ts` — milestone detection + batch runner
+- `lib/levelConfidence.ts` — session-based level confidence scoring
+- `lib/postSessionFeedback.ts` — post-session SMS feedback
+- `lib/logger.ts` — pino logger singleton (use `req.log` in routes, `logger` elsewhere)
+
+### Nightly Chain (scheduler.ts)
+1. Player import
+2. Incremental event sync (14 days)
+3. Level confidence recompute
+4. Buddy pair graph
+5. Churn score recompute
+6. **Milestone check** (every night)
+7. **Monthly recap batch** (1st of month only — prior month)
+
+### Dashboard — `artifacts/dashboard/src/`
+- `pages/Dashboard.tsx` — Recommendation tiles → Stat strip → Bento grid (no AI briefing banner)
+- `pages/Players.tsx` — Player list with churn badge + filter chip
+- `pages/Settings.tsx` — Club config, sync schedule, Monthly Recap & Milestones panel, Message Templates
+- `components/PlayerDrawer.tsx` — Player detail drawer with churn risk section
+- `lib/types.ts` — `Player` interface (includes `churn_risk`, `churn_score`)
+
+## Supabase Tables (key)
+
+| Table | Purpose |
+|---|---|
+| `players` | Core player data + `churn_score int`, `churn_risk text` |
+| `attendances` | Session attendance records |
+| `buddy_pairs` | `player_a`, `player_b`, `shared_sessions` — **no `id` column** |
+| `conversations` | Message threads (triggered_by field used for context) |
+| `messages` | Outbound/inbound SMS, `status: pending/sent/replied` |
+| `jobs` | Job tracking rows (id = job name) |
+| `player_milestones` | `UNIQUE(player_id, milestone_type)` — milestone trigger history |
+| `monthly_recaps` | `UNIQUE(player_id, recap_month)` — recap dedup (format: "2026-04") |
+
+## Recap & Milestone System
+
+### Monthly Recap (`/api/recap/monthly`)
+- `POST /api/recap/monthly` — start batch (fire-and-forget)
+- `GET /api/recap/monthly/status` — job status
+- `POST /api/recap/monthly/test` — dry_run single player (returns generated message, no DB writes)
+- Skips players with < 2 sessions in the month, sms_opt_in false, or no phone
+- Stats: sessions this month, total sessions ever, unique court partners, top 3 partners by name
+
+### Milestone Messages (`/api/recap/milestones`)
+- `POST /api/recap/milestones` — start batch
+- `GET /api/recap/milestones/status` — job status
+- `POST /api/recap/milestones/test` — dry_run single player (returns all_previews array)
+- Types: `session_10`, `session_25`, `session_50`, `best_month` (monthly repeat), `streak_3w` (21-day cooldown)
+
+## Churn Score Model
+- S1: Days since last visit (0–40 pts)
+- S2: Visit frequency trend (0–20 pts)
+- S3: Membership status (0–15 pts)
+- S4: Message non-response — requires ≥3 outbound first (0–15 pts)
+- S5: Social isolation via buddy_pairs (0–10 pts)
+- Thresholds: HIGH ≥70 / MEDIUM 40–69 / LOW 0–39
+
+## Notes
+- Never use `console.log` in server code — use `req.log` (routes) or `logger` (lib)
+- All player queries on buddy_pairs must select `player_a` (no `id` column)
+- Supabase permission pattern: after any new table, run `GRANT SELECT, INSERT, UPDATE ON <table> TO service_role; GRANT SELECT ON <table> TO anon;`
+- model string for Anthropic: `claude-sonnet-4-5` (recap/milestones), `claude-sonnet-4-6` (agent)
