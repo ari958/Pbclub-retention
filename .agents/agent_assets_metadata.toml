@@ -11,10 +11,10 @@ title = "Pulse / PB Club — Full Project Review"
 id = "OHjg_aIA4sLcZ-X4n7G25"
 uri = "file://pulse-technical-docs.md"
 type = "text"
-title = "Pulse / PB Club — Technical Developer Documentation"
+title = "Pulse — Technical Developer Documentation"
 
 [[outputs]]
 id = "lZ3A3ex1B3DOOgAbDVpve"
 uri = "file://pulse-user-guide.md"
 type = "text"
-title = "Pulse — Your Club Retention Guide"
+title = "Pulse — User Guide (for club owners & coaches)"
