@@ -1,0 +1,438 @@
+We are building two new message types for Pulse: Monthly Recap 
+and Milestone Messages. These are separate features with separate 
+triggers, separate queue entries, and separate tags. Both go into 
+the Outreach Queue for staff review before sending — no automation.
+
+The goal is to make players feel seen and celebrated. A player 
+who gets a message saying "You played 6 sessions in April, shared 
+the court with 9 different players, and your level moved up to 
+Intermediate" feels known by the club. That feeling drives 
+retention more than any discount ever could.
+
+--- STEP 1: DATABASE ---
+
+Run in Supabase SQL Editor:
+
+-- Track which milestones have been sent per player
+CREATE TABLE IF NOT EXISTS player_milestones (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id uuid REFERENCES players(id) ON DELETE CASCADE,
+  milestone_type text NOT NULL,
+  milestone_value integer,
+  triggered_at date NOT NULL DEFAULT CURRENT_DATE,
+  message_queued boolean DEFAULT false,
+  UNIQUE(player_id, milestone_type)
+);
+ALTER TABLE player_milestones ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE ON player_milestones TO service_role;
+GRANT SELECT ON player_milestones TO anon;
+
+-- Track monthly recaps sent per player per month
+CREATE TABLE IF NOT EXISTS monthly_recaps (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  player_id uuid REFERENCES players(id) ON DELETE CASCADE,
+  recap_month text NOT NULL,
+  message_queued boolean DEFAULT false,
+  queued_at timestamptz DEFAULT now(),
+  UNIQUE(player_id, recap_month)
+);
+ALTER TABLE monthly_recaps ENABLE ROW LEVEL SECURITY;
+GRANT SELECT, INSERT, UPDATE ON monthly_recaps TO service_role;
+GRANT SELECT ON monthly_recaps TO anon;
+
+-- Add milestone_sent_at tracking to jobs
+INSERT INTO jobs (id) VALUES ('monthly_recap') 
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO jobs (id) VALUES ('milestone_check') 
+ON CONFLICT (id) DO NOTHING;
+
+--- STEP 2: MONTHLY RECAP ENGINE ---
+
+Create artifacts/api-server/src/lib/monthlyRecap.ts
+
+This file exports:
+- generateMonthlyRecap(playerId, month, year): Promise<void>
+- runMonthlyRecapBatch(month, year): Promise<{queued, skipped, errors}>
+
+CONTEXT ASSEMBLY for generateMonthlyRecap:
+
+1. Get player from Supabase:
+   id, name, phone, club_id, sms_opt_in, membership_status,
+   coach_assigned_level, last_outbound_at
+
+2. Skip if: sms_opt_in === false, phone is null
+
+3. Check monthly_recaps table — if row exists for this 
+   player + recap_month (format: "2026-04"), skip.
+
+4. Compute recap stats for the prior month:
+   
+   recap_month_start = first day of prior month
+   recap_month_end = last day of prior month
+
+   sessions_this_month = COUNT from attendances WHERE 
+     player_id = id AND attended_at BETWEEN 
+     recap_month_start AND recap_month_end
+
+   Skip if sessions_this_month < 2 (not enough activity 
+   for a meaningful recap)
+
+   total_sessions_ever = COUNT from attendances WHERE 
+     player_id = id AND attended_at <= recap_month_end
+
+   unique_court_partners = COUNT DISTINCT of all other 
+     player_ids who shared the same event_id with this 
+     player during the recap month:
+     SELECT COUNT(DISTINCT a2.player_id) FROM attendances a1
+     JOIN attendances a2 ON a1.event_id = a2.event_id
+     WHERE a1.player_id = {id} AND a2.player_id != {id}
+     AND a1.attended_at BETWEEN start AND end
+
+   top_partners = same query but SELECT a2.player_id, 
+     COUNT(*) as shared GROUP BY a2.player_id 
+     ORDER BY shared DESC LIMIT 3
+     Then resolve names from players table
+
+   level_this_month = coach_assigned_level (current)
+   
+   level_changed = check if coach_level_set_at falls 
+     within recap_month. If yes, level changed this month.
+     prior_level = cannot easily get prior level without 
+     history table, so just note "your level was updated 
+     to {level} this month" without stating the prior level.
+
+   month_name = full month name e.g. "April"
+   year = e.g. "2026"
+
+5. Build the agent prompt context:
+
+SYSTEM:
+"You are a warm, encouraging retention agent for PB Club, 
+a pickleball facility. Write a monthly recap SMS message 
+for a player. The message should feel personal and 
+celebratory — like it came from a coach who knows them, 
+not a marketing tool. Keep it under 160 characters if 
+possible, or under 320 if you need to include all the 
+stats. Do not use hashtags. Do not mention the club name 
+more than once. End with a forward-looking nudge to come 
+back. Output only the message text, no subject line, no 
+preamble."
+
+USER:
+"Write a monthly recap message for {first_name}.
+
+Their {month_name} stats:
+- Sessions attended: {sessions_this_month}
+- Total sessions ever at PB Club: {total_sessions_ever}
+- Unique players shared court with: {unique_court_partners}
+{top_partners.length > 0 ? `- Most frequent court partners: 
+  {partner1_first} {partner1_last_initial}. 
+  ({shared1}x), {partner2}...` : ''}
+{level_changed ? `- Level updated to: 
+  {coach_assigned_level}` : ''}
+{membership_status === 'member' ? 
+  '- Membership: Active member' : ''}
+
+Make it feel warm and personal. Reference their court 
+partners by first name and last initial if available. 
+Celebrate their consistency. End with an encouraging 
+nudge to keep playing."
+
+6. Call Anthropic API with this prompt:
+   model: 'claude-sonnet-4-20250514'
+   max_tokens: 300
+   Use the existing fetch pattern from agent.ts
+
+7. Parse the response text
+
+8. Create conversation in Supabase:
+   INSERT INTO conversations (player_id, club_id, 
+     triggered_by) VALUES (id, club_id, 'monthly_recap')
+
+9. Insert message into messages table:
+   direction: 'outbound', sent_by: 'agent', 
+   status: 'pending', body: generatedText
+
+10. Insert into monthly_recaps:
+    { player_id, recap_month: '2026-04', 
+      message_queued: true }
+
+11. Log success
+
+runMonthlyRecapBatch(month, year):
+1. startJob('monthly_recap')
+2. Get all players where last_visit_date IS NOT NULL 
+   AND sms_opt_in != false AND phone IS NOT NULL
+   Paginate 1000 at a time
+3. For each: await generateMonthlyRecap(id, month, year)
+   100ms delay between players
+4. finishJob('monthly_recap', 'done', stats)
+5. Return stats
+
+--- STEP 3: MILESTONE ENGINE ---
+
+Create artifacts/api-server/src/lib/milestoneCheck.ts
+
+Exports:
+- checkPlayerMilestones(playerId): Promise<void>
+- runMilestoneBatch(): Promise<{checked, triggered, errors}>
+
+MILESTONE TYPES AND PRIORITY (highest first):
+1. 'session_50'  — 50th session total
+2. 'session_25'  — 25th session total
+3. 'best_month'  — most sessions in any single month 
+                   (current month beats all prior months)
+4. 'session_10'  — 10th session total
+5. 'streak_3w'   — attended at least 1 session in each 
+                   of 3 consecutive calendar weeks
+
+checkPlayerMilestones(playerId):
+1. Get player: id, name, phone, club_id, sms_opt_in,
+   coach_assigned_level, membership_status
+
+2. Skip if phone null or sms_opt_in === false
+
+3. Get all attendances for this player ordered by date
+
+4. Check each milestone:
+
+   SESSION COUNT MILESTONES (50, 25, 10):
+   total = attendances.length
+   For each threshold [50, 25, 10]:
+     If total >= threshold:
+       Check player_milestones — if no row exists for 
+       this player + 'session_{threshold}': TRIGGER
+       Break after first trigger (only 1 milestone at a time)
+
+   BEST MONTH milestone:
+   Group attendances by month (YYYY-MM)
+   current_month = current calendar month
+   current_month_count = sessions in current month
+   best_prior_count = MAX sessions in any prior month
+   If current_month_count > best_prior_count AND 
+   current_month_count >= 3 (minimum meaningful):
+     Check player_milestones for 'best_month' —
+     BUT this one can repeat: check if the last 
+     best_month trigger was in a DIFFERENT month
+     (allow one per month if they keep beating their record)
+     Use UNIQUE(player_id, milestone_type) but store 
+     month in milestone_value as YYYYMM integer
+     If no row for this player+month: TRIGGER
+
+   STREAK milestone:
+   Get distinct calendar weeks player attended 
+   (week = ISO week number)
+   Check if last 3 consecutive weeks all have attendance
+   If yes: check player_milestones for 'streak_3w' —
+   same repeat logic as best_month: allow once per 
+   rolling 3-week window
+   Store triggered_at to prevent re-trigger within 21 days
+
+5. For each triggered milestone, generate message:
+
+SYSTEM PROMPT:
+"You are a warm, encouraging retention agent for PB Club. 
+Write a milestone celebration SMS. Keep it genuine and 
+brief — under 160 characters ideally. Sound like a coach 
+who noticed something impressive, not a marketing bot. 
+Output only the message text."
+
+USER PROMPT varies by milestone:
+
+session_50:
+"Write a celebration message for {first_name} who just 
+played their 50th session at PB Club. They are a 
+{membership_status}. Current level: {coach_assigned_level 
+or 'unassigned'}. Make it feel like a genuine milestone — 
+because it is. Short and warm."
+
+session_25:
+"Write a celebration message for {first_name} who just 
+played their 25th session at PB Club. They're becoming 
+a real regular. Short, warm, encouraging."
+
+session_10:
+"Write a celebration message for {first_name} who just 
+hit their 10th session at PB Club. They're officially 
+a regular now. Welcome them to the club community. 
+Short and warm."
+
+best_month:
+"Write a celebration message for {first_name} who just 
+had their most active month ever at PB Club with 
+{current_month_count} sessions. Celebrate their momentum. 
+Short and warm."
+
+streak_3w:
+"Write a celebration message for {first_name} who has 
+attended PB Club sessions for 3 weeks in a row. 
+Celebrate their consistency. Short and warm."
+
+6. Call Anthropic API (same pattern as monthly recap)
+
+7. Create conversation with triggered_by: 
+   'milestone_{milestone_type}'
+
+8. Insert message as pending outbound agent message
+
+9. Insert into player_milestones:
+   { player_id, milestone_type, milestone_value, 
+     triggered_at: today, message_queued: true }
+
+runMilestoneBatch():
+1. startJob('milestone_check')
+2. Get all players with last_visit_date IS NOT NULL
+3. For each: await checkPlayerMilestones(id) with 50ms delay
+4. finishJob + return stats
+
+--- STEP 4: API ROUTES ---
+
+Add to artifacts/api-server/src/routes/sync.ts 
+(or new recap.ts file — whichever is cleaner):
+
+POST /api/recap/monthly
+Body: { month?: number, year?: number }
+  Defaults to prior month if not provided
+Calls runMonthlyRecapBatch(month, year)
+Returns: { success, queued, skipped, errors }
+
+GET /api/recap/monthly/status
+Returns getJob('monthly_recap')
+
+POST /api/recap/monthly/test
+Body: { player_id: string, month?: number, year?: number }
+Runs generateMonthlyRecap for single player
+Returns: { success, message_body, stats }
+  Include the generated message body in the response 
+  so we can preview it without it going to queue
+  Add a dry_run flag: if true, generate but don't insert
+
+POST /api/recap/milestones
+Calls runMilestoneBatch()
+Returns: { success, checked, triggered, errors }
+
+GET /api/recap/milestones/status  
+Returns getJob('milestone_check')
+
+POST /api/recap/milestones/test
+Body: { player_id: string }
+Runs checkPlayerMilestones for single player
+Returns which milestones would trigger + preview messages
+dry_run: true — generate messages but don't insert
+
+--- STEP 5: NIGHTLY CHAIN ---
+
+In artifacts/api-server/src/lib/scheduler.ts, add Step 6 
+after churn scores (Step 5):
+
+// Step 6: Milestone check
+try {
+  await appendJobLog(JOB_NIGHTLY, 
+    "Step 6: checking player milestones");
+  const res = await fetch(
+    "http://localhost:3000/api/recap/milestones",
+    { method: "POST", 
+      signal: AbortSignal.timeout(15 * 60 * 1000) }
+  );
+  const result = await res.json();
+  await appendJobLog(JOB_NIGHTLY,
+    `Step 6 complete — checked: ${result.checked} 
+     triggered: ${result.triggered}`);
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY,
+    `Milestone check error (non-fatal): ${err.message}`);
+}
+
+Monthly recap runs on the 1st of each month only:
+Add this check before calling runMonthlyRecapBatch:
+
+const now = new Date();
+if (now.getDate() === 1) {
+  // Run monthly recap for prior month
+  const priorMonth = now.getMonth() === 0 ? 12 : 
+    now.getMonth();
+  const priorYear = now.getMonth() === 0 ? 
+    now.getFullYear() - 1 : now.getFullYear();
+  
+  // Step 7: Monthly recap (only on 1st of month)
+  try {
+    await appendJobLog(JOB_NIGHTLY, 
+      "Step 7: generating monthly recaps");
+    const res = await fetch(
+      "http://localhost:3000/api/recap/monthly",
+      { method: "POST",
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          month: priorMonth, year: priorYear 
+        }),
+        signal: AbortSignal.timeout(30 * 60 * 1000) }
+    );
+    const result = await res.json();
+    await appendJobLog(JOB_NIGHTLY,
+      `Step 7 complete — recaps queued: ${result.queued}`);
+  } catch (err: any) {
+    await appendJobLog(JOB_NIGHTLY,
+      `Monthly recap error (non-fatal): ${err.message}`);
+  }
+}
+
+--- STEP 6: FRONTEND — SETTINGS PAGE ---
+
+In artifacts/dashboard/src/pages/Settings.tsx, add a new 
+section below the existing sections:
+
+"MONTHLY RECAP & MILESTONES" section card:
+
+Two rows:
+
+Row 1 — Monthly Recap:
+Label: "Monthly Recap"
+Sub: "Sent to players on the 1st of each month 
+  covering the prior month's activity"
+Status badge: last run date from monthly_recap job 
+  or "Never run"
+Button: "Preview for a player" — opens a small inline 
+  form asking for a player name search, then calls 
+  POST /api/recap/monthly/test with dry_run: true and 
+  shows the generated message in an expandable preview
+Button: "Run now" — calls POST /api/recap/monthly 
+  with prior month, shows progress
+
+Row 2 — Milestone Messages:
+Label: "Milestone Messages"  
+Sub: "Automatically detected nightly — 10th session, 
+  25th, 50th, best month, 3-week streak"
+Status badge: last run from milestone_check job
+Button: "Run check now" — calls POST /api/recap/milestones
+
+Both buttons follow the same ghost dark button style 
+as the rest of Settings.
+
+--- ARCHITECTURE NOTES ---
+- Import supabase from src/lib/supabaseClient.ts always
+- Use the exact same Anthropic API fetch pattern as agent.ts
+  model: 'claude-sonnet-4-20250514', max_tokens: 300
+- Paginate all player queries (1000 row limit)
+- 100ms delay between players in monthly recap batch
+- 50ms delay between players in milestone batch  
+- The test routes are the most important part — we need 
+  to preview messages before running the full batch
+- dry_run on test routes: generate the message via API 
+  but do NOT insert into messages, conversations, 
+  monthly_recaps, or player_milestones tables
+- After building, test with:
+  POST /api/recap/monthly/test 
+  Body: { 
+    "player_id": "4703d133-9a5b-49e4-a2e7-a3953087eb0a",
+    "month": 4, 
+    "year": 2026,
+    "dry_run": true 
+  }
+  And:
+  POST /api/recap/milestones/test
+  Body: { 
+    "player_id": "4703d133-9a5b-49e4-a2e7-a3953087eb0a",
+    "dry_run": true 
+  }
+  Paste both responses so we can verify the generated 
+  messages before running the full batch

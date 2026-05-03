@@ -11,6 +11,7 @@ import templatesRouter from "./templates";
 import eventsRouter from "./events";
 import feedbackRouter from "./feedback";
 import socialGraphRouter from "./socialGraph";
+import recapRouter from "./recap";
 
 const router: IRouter = Router();
 
@@ -26,5 +27,6 @@ router.use(templatesRouter);
 router.use(eventsRouter);
 router.use(feedbackRouter);
 router.use(socialGraphRouter);
+router.use(recapRouter);
 
 export default router;

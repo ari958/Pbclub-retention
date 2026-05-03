@@ -315,6 +315,230 @@ function SyncLogPanel() {
   );
 }
 
+function RecapMilestonesPanel() {
+  const [recapJob, setRecapJob] = useState<JobState | null>(null);
+  const [milestoneJob, setMilestoneJob] = useState<JobState | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // Preview state
+  const [previewPlayerId, setPreviewPlayerId] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewMessage, setPreviewMessage] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+
+  const [recapRunning, setRecapRunning] = useState(false);
+  const [milestoneRunning, setMilestoneRunning] = useState(false);
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const [rr, mr] = await Promise.all([
+        fetch("/api/recap/monthly/status"),
+        fetch("/api/recap/milestones/status"),
+      ]);
+      if (rr.ok) setRecapJob(await rr.json());
+      if (mr.ok) setMilestoneJob(await mr.json());
+    } catch { }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchJobs(); }, [fetchJobs]);
+
+  const jobStatusColor = (status: string) => {
+    if (status === "done") return D.green;
+    if (status === "error") return D.redText;
+    if (status === "running") return D.accent;
+    return D.faint;
+  };
+
+  const ghostBtn: React.CSSProperties = {
+    fontSize: 11,
+    fontFamily: "var(--font-mono)",
+    padding: "3px 10px",
+    borderRadius: 4,
+    border: `1px solid ${D.border}`,
+    background: D.inner,
+    color: D.muted,
+    cursor: "pointer",
+    textTransform: "none" as const,
+    letterSpacing: 0,
+    flexShrink: 0,
+  };
+
+  const handlePreview = async () => {
+    if (!previewPlayerId.trim()) return;
+    setPreviewLoading(true);
+    setPreviewMessage(null);
+    setPreviewError(null);
+    try {
+      const now = new Date();
+      const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+      const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      const res = await fetch("/api/recap/monthly/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_id: previewPlayerId.trim(), month: priorMonth, year: priorYear, dry_run: true }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
+      if (data.skipped) setPreviewMessage(`Skipped: ${data.reason}`);
+      else setPreviewMessage(data.message_body ?? "(no message generated)");
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Preview failed");
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleRunRecap = async () => {
+    setRecapRunning(true);
+    try {
+      const now = new Date();
+      const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+      const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+      await fetch("/api/recap/monthly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ month: priorMonth, year: priorYear }),
+      });
+      setTimeout(fetchJobs, 1500);
+    } finally {
+      setRecapRunning(false);
+    }
+  };
+
+  const handleRunMilestones = async () => {
+    setMilestoneRunning(true);
+    try {
+      await fetch("/api/recap/milestones", { method: "POST" });
+      setTimeout(fetchJobs, 1500);
+    } finally {
+      setMilestoneRunning(false);
+    }
+  };
+
+  const rowStyle: React.CSSProperties = {
+    padding: "14px 20px",
+    borderBottom: `1px solid ${D.border}`,
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: 16,
+  };
+
+  const renderJobBadge = (job: JobState | null) => {
+    if (!job) return <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: D.faint }}>Never run</span>;
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", padding: "1px 6px", borderRadius: 3, background: D.inner, color: jobStatusColor(job.status), border: `1px solid ${D.border}` }}>
+          {job.status}
+        </span>
+        <span style={{ fontSize: 11, color: D.faint, fontFamily: "var(--font-mono)" }}>
+          {job.finishedAt ? formatJobTime(job.finishedAt) : job.startedAt ? `Started ${formatJobTime(job.startedAt)}` : "—"}
+        </span>
+      </div>
+    );
+  };
+
+  return (
+    <div style={cardStyle}>
+      <div style={{ ...cardHeadStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span>Monthly Recap &amp; Milestones</span>
+        <button onClick={fetchJobs} style={ghostBtn}>Refresh</button>
+      </div>
+
+      {loading ? (
+        <div style={{ padding: "16px 20px", fontSize: 13, color: D.faint }}>Loading…</div>
+      ) : (
+        <>
+          {/* Monthly Recap row */}
+          <div style={rowStyle}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, color: D.text, marginBottom: 3 }}>Monthly Recap</div>
+              <div style={{ fontSize: 12, color: D.faint, lineHeight: 1.5 }}>
+                Sent to players on the 1st of each month covering the prior month's activity
+              </div>
+              <div style={{ marginTop: 8 }}>{renderJobBadge(recapJob)}</div>
+
+              {/* Preview form */}
+              <div style={{ marginTop: 10 }}>
+                <button
+                  onClick={() => { setPreviewOpen((o) => !o); setPreviewMessage(null); setPreviewError(null); }}
+                  style={{ ...ghostBtn, fontSize: 10 }}
+                >
+                  {previewOpen ? "Hide preview" : "Preview for a player"}
+                </button>
+                {previewOpen && (
+                  <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <input
+                        type="text"
+                        placeholder="Player UUID"
+                        value={previewPlayerId}
+                        onChange={(e) => setPreviewPlayerId(e.target.value)}
+                        style={{ ...inputStyle, width: 280, fontSize: 12 }}
+                      />
+                      <button
+                        onClick={handlePreview}
+                        disabled={previewLoading || !previewPlayerId.trim()}
+                        style={{
+                          ...ghostBtn,
+                          background: D.accentBg,
+                          color: D.accent,
+                          border: `1px solid rgba(232,168,56,0.3)`,
+                          opacity: previewLoading || !previewPlayerId.trim() ? 0.5 : 1,
+                          cursor: previewLoading || !previewPlayerId.trim() ? "not-allowed" : "pointer",
+                        }}
+                      >
+                        {previewLoading ? "Generating…" : "Generate"}
+                      </button>
+                    </div>
+                    {previewError && (
+                      <div style={{ fontSize: 12, color: D.redText, background: D.redBg, border: "1px solid rgba(207,34,46,0.2)", borderRadius: 5, padding: "8px 12px" }}>
+                        {previewError}
+                      </div>
+                    )}
+                    {previewMessage && (
+                      <div style={{ fontSize: 13, color: D.text, background: D.inner, border: `1px solid ${D.border}`, borderRadius: 6, padding: "11px 13px", lineHeight: 1.65 }}>
+                        {previewMessage}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+            <button
+              onClick={handleRunRecap}
+              disabled={recapRunning}
+              style={{ ...ghostBtn, marginTop: 2, opacity: recapRunning ? 0.5 : 1, cursor: recapRunning ? "not-allowed" : "pointer" }}
+            >
+              {recapRunning ? "Starting…" : "Run now"}
+            </button>
+          </div>
+
+          {/* Milestone Messages row */}
+          <div style={{ ...rowStyle, borderBottom: "none" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 500, fontSize: 13, color: D.text, marginBottom: 3 }}>Milestone Messages</div>
+              <div style={{ fontSize: 12, color: D.faint, lineHeight: 1.5 }}>
+                Automatically detected nightly — 10th session, 25th, 50th, best month, 3-week streak
+              </div>
+              <div style={{ marginTop: 8 }}>{renderJobBadge(milestoneJob)}</div>
+            </div>
+            <button
+              onClick={handleRunMilestones}
+              disabled={milestoneRunning}
+              style={{ ...ghostBtn, marginTop: 2, opacity: milestoneRunning ? 0.5 : 1, cursor: milestoneRunning ? "not-allowed" : "pointer" }}
+            >
+              {milestoneRunning ? "Starting…" : "Run check now"}
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Settings() {
   const toast = useToast();
 
@@ -587,6 +811,9 @@ export default function Settings() {
               </>
             )}
           </div>
+
+          {/* ── Monthly Recap & Milestones ── */}
+          <RecapMilestonesPanel />
 
           {/* ── Message Templates ── */}
           <div style={cardStyle}>
