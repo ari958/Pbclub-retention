@@ -6,3 +6,9 @@ id = "okhqfy5ZjshoQzK48oIeM"
 uri = "file://project-review.md"
 type = "text"
 title = "Pulse / PB Club — Full Project Review"
+
+[[outputs]]
+id = "OHjg_aIA4sLcZ-X4n7G25"
+uri = "file://pulse-technical-docs.md"
+type = "text"
+title = "Pulse / PB Club — Technical Developer Documentation"

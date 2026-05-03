@@ -1,0 +1,247 @@
+Generate comprehensive technical documentation for the Pulse 
+retention platform. This document is for developers who need 
+to understand, maintain, extend, or debug the system. It should 
+be thorough enough that a new engineer could onboard without 
+needing to ask questions about architecture decisions.
+
+Output a single well-structured Markdown file saved to:
+/mnt/user-data/outputs/pulse-technical-docs.md
+
+Read the following files before writing — you need the actual 
+implementation details, not assumptions:
+
+BACKEND (read all):
+- artifacts/api-server/src/lib/churnScore.ts
+- artifacts/api-server/src/lib/levelConfidence.ts
+- artifacts/api-server/src/lib/postSessionFeedback.ts
+- artifacts/api-server/src/lib/monthlyRecap.ts
+- artifacts/api-server/src/lib/milestoneCheck.ts
+- artifacts/api-server/src/lib/scheduler.ts
+- artifacts/api-server/src/lib/supabaseClient.ts
+- artifacts/api-server/src/lib/skillLevel.ts
+- artifacts/api-server/src/lib/twilio.ts
+- artifacts/api-server/src/routes/index.ts
+- artifacts/api-server/src/routes/agent.ts
+- artifacts/api-server/src/routes/sync.ts
+- artifacts/api-server/src/routes/messages.ts
+- artifacts/api-server/src/routes/players.ts
+- artifacts/api-server/src/routes/feedback.ts
+- artifacts/api-server/src/routes/socialGraph.ts
+- artifacts/api-server/src/routes/templates.ts
+- artifacts/api-server/src/importAllPlayers.js
+- artifacts/api-server/src/syncEventAttendance.js
+- artifacts/api-server/src/app.ts
+
+FRONTEND (read all):
+- artifacts/dashboard/src/App.tsx
+- artifacts/dashboard/src/pages/Dashboard.tsx
+- artifacts/dashboard/src/pages/Players.tsx
+- artifacts/dashboard/src/pages/Assessments.tsx
+- artifacts/dashboard/src/pages/Messages.tsx
+- artifacts/dashboard/src/pages/Settings.tsx
+- artifacts/dashboard/src/pages/SessionFeedback.tsx
+- artifacts/dashboard/src/components/Sidebar.tsx
+- artifacts/dashboard/src/components/PlayerDrawer.tsx
+- artifacts/dashboard/src/lib/helpers.ts
+- artifacts/dashboard/src/lib/types.ts
+
+ALSO READ:
+- package.json files for both artifacts to understand 
+  dependencies and versions
+- Any .env.example or environment variable references 
+  in the codebase
+
+--- DOCUMENT STRUCTURE ---
+
+Write the document in this exact order:
+
+# Pulse — Technical Documentation
+
+## 1. System Overview
+- What Pulse is and what problem it solves
+- High-level architecture diagram (use ASCII/text art)
+- Tech stack: React + TypeScript frontend, Express + 
+  TypeScript API server, Supabase (PostgreSQL), 
+  Anthropic Claude API, Twilio SMS, PodPlay API
+- Deployment: Replit (monorepo)
+- How the three external services connect 
+  (PodPlay → Supabase → Agent → Twilio)
+
+## 2. Database Schema
+For EVERY table in the system:
+- Table name and purpose
+- Every column: name, type, constraints, what it stores
+- Foreign key relationships
+- RLS policies (enabled/disabled, grants)
+- Indexes if any
+Group tables by domain:
+  Core: players, clubs, attendances, programs
+  Messaging: conversations, messages, pending_sends, 
+    message_templates
+  Intelligence: level_confidence, session_feedback, 
+    buddy_pairs, player_milestones, monthly_recaps
+  Jobs: jobs
+  
+## 3. External API Integrations
+
+### PodPlay API
+- Base URL and authentication (x-api-key header)
+- Every endpoint used: path, method, params, 
+  response shape, what we use it for
+- Rate limiting approach (250-300ms delays)
+- Pagination patterns used
+
+### Anthropic Claude API  
+- Model used and why
+- Token budgets (max_tokens per call type)
+- How prompts are structured (system + user pattern)
+- Which routes call the API and for what purpose
+- Cost implications per operation type
+
+### Twilio
+- Account SID / Auth Token / Phone number setup
+- Messaging Service SID usage
+- Status callback webhook setup
+- Inbound message webhook setup
+- A2P 10DLC registration requirements
+- STOP/opt-out handling
+
+## 4. Backend Architecture
+
+### API Server Structure
+- Express app setup and middleware
+- Route registration pattern
+- Error handling approach
+- Environment variables required (list every one)
+
+### Nightly Chain
+Document every step in order:
+Step 1: Player import (importAllPlayers.js)
+Step 2: Event attendance sync (syncEventAttendance.js)  
+Step 3: Level confidence recompute
+Step 4: Buddy pair graph update
+Step 5: Churn score recompute
+Step 6: Milestone check
+Step 7: Monthly recap (1st of month only)
+For each step: what it does, how long it takes, 
+what it writes to DB, error handling
+
+### Job System
+- How jobs table works
+- startJob / finishJob / isCancelled pattern
+- How to monitor job status via API
+
+### Level Confidence Scoring System
+- The four signals (C1/C2/C3/C4) with full formulas
+- Score range and certainty calculation
+- Trust tiers and how agent uses them
+- How DUPR syncs from PodPlay
+- Level taxonomy and rank ordering
+
+### Churn Score System
+- The five signals with full formulas
+- Score range and tier thresholds
+- How scores feed into dashboard and agent
+
+### Social Graph (Buddy Pairs)
+- How co-occurrence is computed from attendances
+- 3-session threshold and why
+- How upcoming-with-buddies works (PodPlay signups API)
+- How agent uses social context
+
+### Post-Session Feedback Flow
+- How events are detected (endTime from PodPlay)
+- 30-minute poller architecture
+- Two-question SMS format and reply parsing
+- How session_feedback feeds C2 signal
+- Idempotency via pending_sends
+
+### Monthly Recap & Milestones
+- Monthly recap trigger (1st of month, min 2 sessions)
+- Stats computed per player
+- Milestone types, priority order, deduplication
+- How messages enter the queue
+
+## 5. Agent System
+- How assembleProfile works (what context is gathered)
+- Social context injection
+- Level confidence context injection  
+- Registration filter (already-booked sessions)
+- Buddy session priority rule
+- How messages enter the pending queue
+- Cooldown system (24 hours)
+
+## 6. Frontend Architecture
+- React + Vite setup
+- Routing (react-router-dom)
+- Supabase client usage (anon key, direct from browser)
+- State management approach (no Redux — local state)
+- CSS variable system and dark theme tokens
+- Page-by-page breakdown:
+  For each page: purpose, key data fetched, 
+  main interactions, navigation targets
+
+## 7. API Reference
+Complete list of every API endpoint:
+For each endpoint: METHOD /path, purpose, 
+request body/params, response shape, 
+which frontend page calls it
+
+Group by domain:
+- /api/players
+- /api/agent  
+- /api/sync
+- /api/messages
+- /api/feedback
+- /api/social-graph
+- /api/recap
+- /api/templates
+- /api/import
+- /api/events
+- /api/admin
+
+## 8. Environment Variables
+Complete list of every environment variable:
+- Variable name
+- Where it comes from
+- What breaks if it's missing
+- Example value format (not real values)
+
+## 9. Common Operations
+
+### Running the system locally
+### Triggering a manual nightly sync
+### Running churn scores manually
+### Testing the agent for a specific player
+### Resetting a player's feedback/milestone state
+### Checking job status
+### Monitoring the feedback poller
+
+## 10. Known Issues & Technical Debt
+Be honest — list things that are suboptimal:
+- Any TODOs found in the code
+- Known race conditions or edge cases
+- Things that would need to change before 
+  scaling to 100+ clubs
+- Security considerations (RLS gaps, anon key 
+  exposure, etc.)
+
+## 11. Deployment Notes
+- How the monorepo is structured
+- Which processes run (API server + React dev server 
+  or build)
+- Replit-specific configuration
+- How to update environment variables
+
+--- FORMATTING RULES ---
+- Use proper Markdown with headers, code blocks, tables
+- Every code example should be in a fenced code block 
+  with language specified
+- Database schemas should be in SQL code blocks
+- API request/response examples in JSON code blocks
+- Be specific — no vague statements like "handles errors 
+  appropriately." Say exactly how.
+- If you find something in the code that isn't documented 
+  in these instructions, document it anyway — the code 
+  is the source of truth
+- Minimum 5000 words — this should be thorough
