@@ -76,7 +76,7 @@ export async function computeChurnScore(playerId: string): Promise<void> {
   // ── Signal 3: Social isolation (max 20 pts) ───────────────────────────────────
   const { count: buddyCount } = await supabase
     .from("buddy_pairs")
-    .select("id", { count: "exact", head: true })
+    .select("player_a", { count: "exact", head: true })
     .or(`player_a.eq.${playerId},player_b.eq.${playerId}`);
 
   const bc = buddyCount ?? 0;
@@ -210,7 +210,7 @@ export async function computeChurnScoreAndReturn(
 
   const { count: buddyCount } = await supabase
     .from("buddy_pairs")
-    .select("id", { count: "exact", head: true })
+    .select("player_a", { count: "exact", head: true })
     .or(`player_a.eq.${playerId},player_b.eq.${playerId}`);
   const bc = buddyCount ?? 0;
   let s3 = 20;
