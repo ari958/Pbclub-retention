@@ -556,12 +556,6 @@ export default function Dashboard() {
         getEngagementState(p.last_visit_date) === "dormant")
   );
 
-  const mostUrgent = [...highRiskDrifting].sort((a, b) => {
-    const aDate = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
-    const bDate = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
-    return aDate - bDate;
-  })[0] ?? null;
-
   // ─── Recommendation engine ────────────────────────────────────────────────────
 
   const recommendations = useMemo((): Recommendation[] => {
@@ -742,14 +736,6 @@ export default function Dashboard() {
     })
     .slice(0, 4);
 
-  const urgentPlayers = [...players]
-    .filter((p) => ["lapsing", "dormant"].includes(getEngagementState(p.last_visit_date)))
-    .sort((a, b) => {
-      const da = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
-      const db = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
-      return da - db;
-    });
-
   const queueDeduped = messages
     .reduce<MessageQueueItem[]>((acc, m) => {
       const pid = m.conversations?.player_id ?? m.conversations?.players?.id ?? null;
@@ -776,103 +762,7 @@ export default function Dashboard() {
     introGrouped.get(key)!.push(item);
   }
 
-  // ─── AI Briefing ──────────────────────────────────────────────────────────────
 
-  function buildBriefing() {
-    if (loading) return <span>Loading club data…</span>;
-
-    // High-risk path
-    if (highRiskDrifting.length > 0 && mostUrgent) {
-      const nameParts = mostUrgent.name.trim().split(" ");
-      const firstName = nameParts[0];
-      const lastInitial = nameParts.length > 1 ? nameParts[nameParts.length - 1][0] + "." : "";
-      const displayName = lastInitial ? `${firstName} ${lastInitial}` : firstName;
-      const othersCount = highRiskDrifting.length - 1;
-      const othersText = othersCount > 0
-        ? ` and ${othersCount} other${othersCount > 1 ? "s" : ""}`
-        : "";
-      const daysAway = mostUrgent.last_visit_date
-        ? Math.floor((Date.now() - new Date(mostUrgent.last_visit_date).getTime()) / 86400000)
-        : 0;
-      const timeAway =
-        daysAway < 30 ? "a few weeks"
-        : daysAway < 60 ? "over a month"
-        : daysAway < 120 ? "a couple of months"
-        : "several months";
-      return (
-        <>
-          {messages.length > 0 && (
-            <>
-              You have{" "}
-              <span style={{ color: C.accent, fontWeight: 600 }}>
-                {messages.length} message{messages.length !== 1 ? "s" : ""} ready to send
-              </span>
-              {" "}and{" "}
-            </>
-          )}
-          {messages.length === 0 && <>There are{" "}</>}
-          <span style={{ color: C.redText, fontWeight: 600 }}>
-            {highRiskPlayers.length} player{highRiskPlayers.length !== 1 ? "s" : ""} at high churn risk
-          </span>
-          {" "}this week.{" "}
-          <span style={{ color: C.textPrimary }}>{displayName}</span>
-          {othersText} haven't been back in {timeAway} — worth reaching out today.
-        </>
-      );
-    }
-
-    // Fallback path — no high-risk drifters
-    const atRisk = players.filter(
-      (p) =>
-        getEngagementState(p.last_visit_date) === "lapsing" ||
-        getEngagementState(p.last_visit_date) === "dormant"
-    );
-
-    if (atRisk.length === 0 && messages.length === 0) {
-      return <span>Everything looks good — no players need attention right now.</span>;
-    }
-
-    const first = urgentPlayers[0];
-    const others = urgentPlayers.length - 1;
-    const weeksAway = first?.last_visit_date
-      ? Math.floor((Date.now() - new Date(first.last_visit_date).getTime()) / (7 * 24 * 3600000))
-      : null;
-    const timeLabel =
-      weeksAway === null || weeksAway <= 0 ? "a while"
-      : weeksAway < 4 ? "a few weeks"
-      : weeksAway < 8 ? "over a month"
-      : weeksAway < 16 ? "a couple of months"
-      : "several months";
-
-    return (
-      <>
-        {messages.length > 0 && (
-          <>
-            You have{" "}
-            <span style={{ color: C.accent, fontWeight: 600 }}>
-              {messages.length} message{messages.length !== 1 ? "s" : ""} ready to send
-            </span>
-            {atRisk.length > 0 ? " and " : "."}
-          </>
-        )}
-        {atRisk.length > 0 && (
-          <>
-            <span style={{ color: C.accent, fontWeight: 600 }}>
-              {atRisk.length} player{atRisk.length !== 1 ? "s" : ""} drifting
-            </span>
-            {" "}this week.{" "}
-            {first && (
-              <>
-                <span style={{ color: C.textPrimary }}>{first.name}</span>
-                {others > 0 ? ` and ${others} other${others !== 1 ? "s" : ""}` : ""}
-                {" "}haven't been back in {timeLabel} — worth a nudge today.
-              </>
-            )}
-          </>
-        )}
-      </>
-    );
-  }
 
   // ─── Render ───────────────────────────────────────────────────────────────────
 
@@ -917,16 +807,6 @@ export default function Dashboard() {
         </header>
 
         <main style={{ flex: 1, overflowY: "auto", background: C.surface }}>
-
-          {/* ── AI Briefing Banner ── */}
-          <div style={{ background: C.bg, borderBottom: `1px solid ${C.border}`, padding: "12px 24px", display: "flex", alignItems: "flex-start", gap: 12 }}>
-            <div style={{ width: 28, height: 28, minWidth: 28, borderRadius: "50%", background: "rgba(232,168,56,0.15)", border: "1px solid rgba(232,168,56,0.25)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, color: C.accent, marginTop: 1, flexShrink: 0 }}>
-              ✦
-            </div>
-            <p style={{ fontSize: 12, color: C.textSecondary, lineHeight: 1.6, margin: 0, paddingTop: 5 }}>
-              {buildBriefing()}
-            </p>
-          </div>
 
           {/* ── Recommendation Tiles ── */}
           {!loading && visibleRecs.length > 0 && (
