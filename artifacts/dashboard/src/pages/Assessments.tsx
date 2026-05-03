@@ -198,19 +198,6 @@ export default function Assessments() {
           }}
         >
           <span style={{ fontWeight: 600, fontSize: 14, color: D.text }}>Progress</span>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              color: D.orange,
-              background: D.orangeBg,
-              padding: "2px 8px",
-              borderRadius: 3,
-              border: "1px solid rgba(212,129,58,0.2)",
-            }}
-          >
-            {players.length} pending
-          </span>
         </header>
 
         <main
@@ -268,8 +255,8 @@ export default function Assessments() {
                     <div>
                       <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 3, color: D.text }}>{p.name}</div>
                       <div style={{ fontSize: 12, color: D.faint }}>
-                        {p.skill_level ?? "No skill level"} · {relativeTime(p.last_visit_date)}
-                        {p.membership_status && ` · ${p.membership_status}`}
+                        {[p.skill_level, relativeTime(p.last_visit_date), p.membership_status]
+                          .filter(Boolean).join(" · ")}
                       </div>
                       {p.notes && (
                         <div style={{ fontSize: 12, color: D.muted, marginTop: 6, fontStyle: "italic", maxWidth: 460 }}>

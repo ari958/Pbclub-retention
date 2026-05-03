@@ -1,0 +1,55 @@
+Five targeted fixes across the pages. Do not touch Dashboard.tsx.
+
+FIX 1 — Players.tsx: The topbar is missing entirely. Add the 
+same topbar pattern as Dashboard — height 52px, background 
+#0f1117, border-bottom 1px solid #30363d, position sticky 
+top 0 zIndex 5. Left: "Players" in 14px fontWeight 600 #fff. 
+Right: showing count in 11px mono #8b949e, Export CSV ghost 
+button, Send Bulk Outreach amber button.
+
+FIX 2 — Assessments.tsx: 
+a) Remove "No skill level" from sub-labels — show nothing 
+   when skill_level is null, just last visit · membership
+b) Move the pending count out of the top-right corner and 
+   into the left column panel header as a styled amber badge 
+   next to "Needs Assessment" title. Remove the floating 
+   top-right count entirely.
+
+FIX 3 — SessionFeedback.tsx: Fix the corrupted template body.
+The text "Did you sfdffe YOU belonged" is wrong — this is 
+the actual text stored in the database from an earlier test.
+Do not try to fix it in the UI code — instead run this SQL 
+in Supabase to correct the database record directly:
+
+UPDATE message_templates 
+SET body = 'Hi {{first_name}}! Quick question about today''s 
+{{level}} session 🎾
+
+1️⃣ Did YOU feel like you belonged at this level?
+2️⃣ Did the OTHER players belong at this level?
+
+Reply with 2 answers — e.g. ''Y Y'', ''Y N'', ''N Y'', or ''N N'''
+WHERE use_case_tags @> ARRAY['session_feedback']::text[];
+
+After running the SQL, add a helper note below the Save 
+button in the template editor:
+"This message is sent automatically 30 minutes after each 
+leveled session ends."
+Style: 11px #8b949e italic, marginTop 8px.
+
+FIX 4 — Messages.tsx: Add visual weight to distinguish sent 
+vs queued rows. Sent rows should have a subtle left border:
+borderLeft: '2px solid #2ea043' (green for sent)
+Queued rows: borderLeft: '2px solid #E8A838' (amber for queued)
+Failed rows: borderLeft: '2px solid #cf222e' (red for failed)
+Apply to each <tr> or row div based on the message status field.
+
+FIX 5 — Sidebar.tsx: The SVG icons disappeared from nav items 
+on the non-dashboard pages — they show text only. Check that 
+the Sidebar component renders correctly on all routes. The 
+icons should be visible on every page. If the issue is that 
+marginLeft changed and the sidebar is overlapping, verify 
+all pages use marginLeft: 240px on their main content wrapper.
+
+After all fixes take a screenshot of Players and Messages 
+to confirm.

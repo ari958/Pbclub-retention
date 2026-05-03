@@ -294,15 +294,25 @@ export default function Messages() {
                       const playerId = m.conversations?.player_id ?? player?.id ?? null;
                       const isReply = m.direction === "inbound";
                       const dateToShow = m.delivered_at ?? m.sent_at ?? null;
+                      const effectiveStatus = m.delivery_status === "delivered" ? "delivered" : m.status;
+                      const rowLeftBorder = (() => {
+                        if (isReply) return `2px solid ${D.green}`;
+                        if (effectiveStatus === "sent" || effectiveStatus === "delivered") return `2px solid ${D.green}`;
+                        if (effectiveStatus === "pending") return `2px solid ${D.accent}`;
+                        if (effectiveStatus === "failed" || effectiveStatus === "undelivered") return `2px solid ${D.red}`;
+                        return `2px solid transparent`;
+                      })();
+                      const rowBg = isReply ? "rgba(46,160,67,0.03)" : "transparent";
                       return (
                         <tr
                           key={m.id}
                           style={{
                             borderBottom: i < filtered.length - 1 ? `1px solid ${D.border}` : "none",
-                            background: isReply ? "rgba(46,160,67,0.03)" : "transparent",
+                            borderLeft: rowLeftBorder,
+                            background: rowBg,
                           }}
                           onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = D.inner; }}
-                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = isReply ? "rgba(46,160,67,0.03)" : "transparent"; }}
+                          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = rowBg; }}
                         >
                           <td style={{ padding: "10px 16px", whiteSpace: "nowrap" }}>
                             <span

@@ -396,10 +396,46 @@ export default function Players() {
             zIndex: 5,
           }}
         >
-          <span style={{ fontWeight: 600, fontSize: 14, color: D.text }}>Players</span>
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: D.faint }}>
-            {loading ? "…" : `Showing ${displayed.length} of ${players.length}`}
-          </span>
+          <span style={{ fontWeight: 600, fontSize: 14, color: "#fff" }}>Players</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: D.muted }}>
+              {loading ? "…" : `Showing ${displayed.length} of ${players.length}`}
+            </span>
+            <button
+              onClick={exportCSV}
+              style={{
+                padding: "5px 12px",
+                borderRadius: 5,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+                border: `1px solid ${D.border}`,
+                background: "transparent",
+                color: D.muted,
+                fontFamily: "var(--font-sans)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Export CSV
+            </button>
+            <button
+              onClick={() => setBulkModalOpen(true)}
+              style={{
+                padding: "5px 14px",
+                borderRadius: 5,
+                fontSize: 12,
+                fontWeight: 500,
+                cursor: "pointer",
+                border: "none",
+                background: D.accent,
+                color: "#fff",
+                fontFamily: "var(--font-sans)",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Send Bulk Outreach
+            </button>
+          </div>
         </header>
 
         <main style={{ flex: 1, overflowY: "auto", padding: "20px 28px", background: D.bg }}>
@@ -429,12 +465,6 @@ export default function Players() {
                   Clear filters
                 </button>
               )}
-              <div style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                <button onClick={exportCSV} style={btnStyle()}>Export CSV</button>
-                <button onClick={() => setBulkModalOpen(true)} style={btnStyle("accent")}>
-                  Message All ({displayed.length})
-                </button>
-              </div>
             </div>
 
             {/* Status chips */}

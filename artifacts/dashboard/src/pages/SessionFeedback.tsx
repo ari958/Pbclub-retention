@@ -499,6 +499,9 @@ export default function SessionFeedback() {
                       </button>
                     </div>
                   )}
+                  <p style={{ fontSize: 11, color: D.muted, fontStyle: "italic", marginTop: 8, marginBottom: 0, textAlign: "right" }}>
+                    This message is sent automatically 30 minutes after each leveled session ends.
+                  </p>
                 </div>
               )}
             </div>
