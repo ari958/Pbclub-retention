@@ -124,7 +124,33 @@ async function syncPlayer(player) {
   const existingIds = new Set((existing ?? []).map((r) => r.event_id));
 
   const now = new Date();
-  const pastEvents = events.filter((e) => new Date(e.startTime) <= now);
+
+  // Exclude non-programming event subtypes — court reservations, internal ops,
+  // co-working sessions, and private bookings all appear when fetching by userId
+  // but are not club attendance records.
+  const EXCLUDED_SUBTYPES = new Set([
+    "COURT_RESERVATION",
+    "CO_WORKING",
+    "INTERNAL",
+    "PRIVATE",
+    "PRIVATE_EVENT",
+    "OPERATIONS",
+    "CONTRACT_TIME",
+  ]);
+
+  // Only count signups the player actually committed to. Null/missing status
+  // = legacy record from before PodPlay added the field — allow through.
+  const ALLOWED_STATUSES = new Set(["CONFIRMED", "CHECKED_IN", "COMPLETED"]);
+
+  const pastEvents = events.filter((e) => {
+    if (new Date(e.startTime) > now) return false;
+    if (e.isCanceled) return false;
+    if (e.subtype && EXCLUDED_SUBTYPES.has(e.subtype.toUpperCase())) return false;
+    const status = e.invitationStatus ?? e.status ?? null;
+    if (status && !ALLOWED_STATUSES.has(status.toUpperCase())) return false;
+    return true;
+  });
+
   const newEvents = pastEvents.filter((e) => !existingIds.has(e.id));
 
   console.log(
