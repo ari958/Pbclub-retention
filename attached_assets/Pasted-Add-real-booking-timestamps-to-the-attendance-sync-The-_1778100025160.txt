@@ -1,0 +1,101 @@
+Add real booking timestamps to the attendance sync.
+The booking time is at signup.summary?.invitation?.createdDate
+on each signup object from GET /events/{eventId}/signups.
+
+STEP 1 — Supabase migration
+Run this before any code changes:
+alter table attendances
+  add column if not exists booked_at timestamptz;
+
+STEP 2 — Update syncEventAttendance.js
+When writing each attendance record, extract:
+  signup.summary?.invitation?.createdDate
+
+Store it as booked_at in the attendances upsert.
+If the field is null or missing, store null — 
+do not block the upsert.
+
+STEP 3 — Update computePlayerTiming in playerTiming.ts
+Replace the existing lead time query with:
+
+SELECT attended_at, booked_at
+FROM attendances
+WHERE player_id = X
+AND attended_at >= NOW() - INTERVAL '90 days'
+AND booked_at IS NOT NULL
+AND booked_at < attended_at
+
+Compute lead_days per row:
+  EXTRACT(EPOCH FROM (attended_at - booked_at)) / 86400
+
+avg_booking_lead_days = AVG(lead_days) rounded to 1 decimal.
+
+Archetype thresholds stay the same but now reflect 
+real behavior:
+  < 0.5 days  → 'late'     → lead to use for scheduling = 1
+  0.5–2 days  → 'mid'      → lead to use for scheduling = 2  
+  2–5 days    → 'early'    → lead to use for scheduling = 4
+  > 5 days    → 'planner'  → lead to use for scheduling = 7
+
+For preferred_booking_dow and preferred_booking_hour,
+extract from booked_at (not attended_at) in 
+America/New_York timezone:
+  preferred_booking_dow  = mode of day-of-week from booked_at
+  preferred_booking_hour = mode of hour from booked_at
+    grouped into windows:
+      6–10  → 8
+      11–16 → 13
+      17–22 → 19
+    Hours outside 6–22 excluded from hour preference
+    but still count toward lead time calculation.
+
+Fallback if fewer than 3 rows have booked_at:
+  Use attended_at dow for preferred_booking_dow
+  preferred_booking_hour = 18
+  avg_booking_lead_days = 3
+  archetype = 'default'
+
+STEP 4 — Backfill Kerrie
+After deploying, immediately run the full attendance
+sync for Kerrie (player_id = fe8f3e78-ef7b-4ccb-acc8-
+2c3d7274b51b) to backfill her booked_at values.
+
+Then call computePlayerTiming for her and log:
+  - How many rows had booked_at populated
+  - avg_booking_lead_days
+  - preferred_booking_dow
+  - preferred_booking_hour  
+  - archetype
+
+Expected based on today's test: she booked ~8 hours
+before the session so archetype should be 'late',
+avg_booking_lead_days should be < 0.5, and
+preferred_booking_hour should reflect afternoon
+(she booked at 3:50pm Eastern → window = 13).
+
+STEP 5 — Update players table columns
+Add if not exists:
+alter table players
+  add column if not exists preferred_booking_dow int,
+  add column if not exists preferred_booking_hour int,
+  add column if not exists attendance_archetype text;
+
+Write all five fields back to players after computing:
+  avg_booking_lead_days
+  preferred_booking_dow
+  preferred_booking_hour
+  attendance_archetype
+  timing_computed_at = NOW()
+
+DO NOT CHANGE
+- warmScore.ts
+- The agent system prompt
+- sanitizeScheduledSendAt
+- Any dashboard files
+- Any other sync files
+
+COMPLETION
+At the end report:
+  ✓ Completed items
+  ✗ Skipped items with reason
+  ? Anything needing operator input

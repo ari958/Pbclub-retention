@@ -283,6 +283,9 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
             ? rawSessionType.toLowerCase()
             : null;
 
+        // Real booking timestamp — nested inside signup.summary.invitation.createdDate
+        const bookedAt = signup.summary?.invitation?.createdDate ?? null;
+
         pendingUpserts.push({
           player_id: player.id,
           event_id: event.id,
@@ -291,6 +294,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           program_type: event.customType ?? event.type ?? null,
           level: extractSkillLevel(event.tags),
           session_type,
+          booked_at: bookedAt,
         });
 
         // Track newest attendance per player for win-back check
