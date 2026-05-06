@@ -1,0 +1,57 @@
+We have a bug introduced today in syncEventAttendance.js. 
+Context for diagnosis:
+
+WHAT HAPPENED
+We made changes to syncEventAttendance.js today to 
+capture booked_at from signup.summary?.invitation?.createdDate.
+After those changes, we ran a manual sync for one player 
+(Kerrie Barry, player_id: fe8f3e78-ef7b-4ccb-acc8-2c3d7274b51b,
+external_id: isapXoITEeOC5yAotTi9OzITTDn1).
+
+The sync returned 971 events for her and wrote 968 attendance 
+records. This is wrong. Every other player in the database 
+has 30-70 records. Carlota Digon, who plays at the same 
+sessions as Kerrie, has 63 clean records with no duplicates 
+and no junk program types.
+
+All other players were synced before today's changes and 
+look correct. Kerrie is the only player synced after today's 
+changes. Therefore today's changes broke the sync.
+
+WHAT CORRECT LOOKS LIKE
+Carlota's records:
+- 63 total records
+- No duplicate event_ids
+- Only Open Play and Clinics program types
+- No co-working, court reservations, kids classes
+- Player counts per shared event: 4-12 players
+- Realistic program names only
+
+WHAT KERRIE'S SYNC PRODUCED
+- 971 events fetched from PodPlay
+- 968 records written
+- Co-working, court reservations, kids classes included
+- "Kerrie Barry" listed as a program name (court reservations)
+- Clearly wrong
+
+WHAT WE NEED
+1. Show every change made to syncEventAttendance.js 
+   today — before and after diff for each change.
+   
+2. Identify which specific change caused the sync to 
+   fetch 971 events instead of ~60-80.
+
+3. Fix only the broken part. Keep the booked_at 
+   capture (signup.summary?.invitation?.createdDate) 
+   — that part is correct and we want to keep it.
+
+4. Do not run any sync yet. Show us the fix first 
+   and explain why it caused the problem.
+
+IMPORTANT CONSTRAINT
+Kerrie's attendance records were deleted from Supabase 
+as part of debugging. She currently has 0 records.
+Do not re-sync her until we confirm the fix is correct.
+
+After showing the diff and the fix, we will review 
+before approving the sync to run.
