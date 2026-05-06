@@ -1,0 +1,91 @@
+Run this in the shell. Do not write any code.
+Do not run any sync. Read only.
+
+This test scans the full PodPlay event history and 
+counts how many events Kerrie appears in as a signup.
+It mimics exactly what syncEventAttendance.js does 
+but writes nothing.
+
+node -e "
+const PODPLAY_BASE = 'https://pbclub.podplay.app/apis/v2';
+const API_KEY = process.env.PODPLAY_API_KEY;
+const KERRIE_ID = 'isapXoITEeOC5yAotTi9OzITTDn1';
+const START = '2025-01-01T00:00:00.000Z';
+const END = new Date().toISOString();
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function run() {
+  let page = 1;
+  let totalEvents = 0;
+  let kerrieEvents = [];
+  let done = false;
+
+  while (!done) {
+    const url = PODPLAY_BASE + '/events' +
+      '?startTime=' + encodeURIComponent(START) +
+      '&endTime=' + encodeURIComponent(END) +
+      '&page=' + page + '&ipp=100';
+
+    const res = await fetch(url, {
+      headers: { 'x-api-key': API_KEY }
+    });
+    const j = await res.json();
+    const items = j.items || [];
+    totalEvents += items.length;
+
+    const now = new Date();
+    const pastEvents = items.filter(e =>
+      !e.isCanceled &&
+      new Date(e.startTime) <= now &&
+      !['COURT_RESERVATION','CO_WORKING','INTERNAL',
+        'PRIVATE','PRIVATE_EVENT','OPERATIONS',
+        'CONTRACT_TIME'].includes((e.subtype||'').toUpperCase())
+    );
+
+    for (const event of pastEvents) {
+      await sleep(150);
+      const sRes = await fetch(
+        PODPLAY_BASE + '/events/' + event.id + '/signups',
+        { headers: { 'x-api-key': API_KEY } }
+      );
+      const sJson = await sRes.json();
+      const signups = sJson.items || [];
+      const kerrieSignup = signups.find(
+        s => s.owner?.id === KERRIE_ID
+      );
+      if (kerrieSignup) {
+        kerrieEvents.push({
+          name: event.name,
+          subtype: event.subtype,
+          date: event.startTime?.split('T')[0],
+          status: kerrieSignup.status
+        });
+      }
+    }
+
+    console.log('Page ' + page + 
+      ' | events: ' + items.length + 
+      ' | past+filtered: ' + pastEvents.length +
+      ' | kerrie matches so far: ' + kerrieEvents.length);
+
+    if (items.length < 100) done = true;
+    else page++;
+  }
+
+  console.log('=== FINAL RESULT ===');
+  console.log('Total events scanned:', totalEvents);
+  console.log('Kerrie found in:', kerrieEvents.length, 'events');
+  console.log('Program breakdown:');
+  const counts = {};
+  kerrieEvents.forEach(e => {
+    counts[e.name] = (counts[e.name]||0) + 1;
+  });
+  Object.entries(counts)
+    .sort((a,b) => b[1]-a[1])
+    .forEach(([name, count]) => 
+      console.log(' ', count, 'x', name)
+    );
+}
+
+run().catch(console.error);
+"
