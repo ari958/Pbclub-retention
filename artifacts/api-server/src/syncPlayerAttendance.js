@@ -138,16 +138,18 @@ async function syncPlayer(player) {
     "CONTRACT_TIME",
   ]);
 
-  // Only count signups the player actually committed to. Null/missing status
-  // = legacy record from before PodPlay added the field — allow through.
-  const ALLOWED_STATUSES = new Set(["CONFIRMED", "CHECKED_IN", "COMPLETED"]);
+  // Name-based exclusions for sessions that PodPlay labels with a generic subtype
+  // (e.g. co-working and named court reservations come back as OPEN_PLAY subtype).
+  const EXCLUDED_NAME_PATTERNS = [
+    /co.?work/i,
+    /court\s+reserv/i,
+  ];
 
   const pastEvents = events.filter((e) => {
     if (new Date(e.startTime) > now) return false;
     if (e.isCanceled) return false;
     if (e.subtype && EXCLUDED_SUBTYPES.has(e.subtype.toUpperCase())) return false;
-    const status = e.invitationStatus ?? e.status ?? null;
-    if (status && !ALLOWED_STATUSES.has(status.toUpperCase())) return false;
+    if (e.name && EXCLUDED_NAME_PATTERNS.some((p) => p.test(e.name))) return false;
     return true;
   });
 
