@@ -95,7 +95,7 @@ router.post("/onboarding/validate", async (req, res) => {
         });
         return;
       }
-      const body = await r.json();
+      const body = await r.json() as any;
       const raw = Array.isArray(body) ? body : (body.items ?? body.data ?? []);
       const categories = (raw as any[]).map((c: any) => ({
         id: String(c.Id ?? c.id ?? ""),

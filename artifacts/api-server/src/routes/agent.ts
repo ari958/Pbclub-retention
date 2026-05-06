@@ -7,6 +7,7 @@ import { assembleProfile } from "../assembleProfile.js";
 // @ts-ignore — plain JS module
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { supabase } from "../lib/supabaseClient";
+import { computeWarmScore, scorToLinkStrategy } from "../lib/warmScore";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
@@ -348,8 +349,57 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     req.log.info({ err }, "Social context fetch skipped (non-fatal)");
   }
 
+  // ── Warm score + link strategy ────────────────────────────────────────────
+  // Pick the top program heuristically (before Claude runs) — prefer level match,
+  // fall back to first available program.
+  const playerSkillLevel: string | null = profile.skill_level ?? null;
+  const topProgram: any | null =
+    programsForAgent.find(
+      (p: any) => p.skill_level && p.skill_level === playerSkillLevel,
+    ) ?? programsForAgent[0] ?? null;
+
+  let link_strategy: "direct" | "ask" | "soft" = "soft";
+  let warmScore: number | null = null;
+  let topProgramSignupUrl: string | null = null;
+
+  if (topProgram) {
+    try {
+      warmScore = await computeWarmScore(player_id, topProgram.program_type ?? "", topProgram.name, {
+        programLevel: topProgram.skill_level ?? undefined,
+      });
+      link_strategy = scorToLinkStrategy(warmScore);
+      if (link_strategy === "direct") {
+        topProgramSignupUrl = topProgram.signup_url ?? null;
+      }
+      req.log.info(
+        { player_id, warmScore, link_strategy, program: topProgram.name },
+        "[agent] warm score computed",
+      );
+    } catch (err) {
+      req.log.warn({ err }, "[agent] warm score failed — defaulting to soft");
+    }
+  }
+
+  const linkStrategyInstruction =
+    link_strategy === "direct"
+      ? `A direct signup link is included. Weave it naturally into the message as a tap-to-register option. Do not make the link the focus of the message — lead with the value, end with the link.`
+      : link_strategy === "ask"
+        ? `Do not include a link. End the message with a single question asking if they want more details or the signup link. One question only.`
+        : `Mention the program briefly as something they might find interesting. No link, no direct ask. Informational only.`;
+
+  const linkStrategyBlock = [
+    `LINK STRATEGY: ${link_strategy}`,
+    linkStrategyInstruction,
+    link_strategy === "direct" && topProgramSignupUrl
+      ? `Signup URL: ${topProgramSignupUrl}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
   const userMessage = [
     `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}`,
+    linkStrategyBlock,
     `AVAILABLE PROGRAMS:\n${JSON.stringify(programsForAgent, null, 2)}`,
     socialContext,
   ].filter(Boolean).join("\n\n");
@@ -385,23 +435,31 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     : null;
   const signup_url: string | null = matchedProgram?.signup_url ?? null;
 
-  // Create message record linked to this conversation
-  const { data: messageData, error: messageError } = await supabase
-    .from("messages")
-    .insert({
+  // Create message record linked to this conversation.
+  // Try with link_strategy first; fall back without it if the column doesn't exist yet
+  // (migration pending).
+  let messageData: { id: string } | null = null;
+  {
+    const payload: Record<string, unknown> = {
       conversation_id,
       body: agentResponse.message,
       direction: "outbound",
       sent_by: "agent",
       signup_url,
-    })
-    .select("id")
-    .single();
-
-  if (messageError) {
-    req.log.error({ err: messageError }, "Failed to create message record");
-    res.status(500).json({ error: "Failed to create message", detail: messageError.message });
-    return;
+      link_strategy,
+    };
+    let { data, error } = await supabase.from("messages").insert(payload).select("id").single();
+    if (error && (error.code === "PGRST204" || error.message?.includes("link_strategy"))) {
+      req.log.warn("[agent] link_strategy column missing — inserting without it (migration pending)");
+      const { link_strategy: _omit, ...fallbackPayload } = payload;
+      ({ data, error } = await supabase.from("messages").insert(fallbackPayload).select("id").single());
+    }
+    if (error) {
+      req.log.error({ err: error }, "Failed to create message record");
+      res.status(500).json({ error: "Failed to create message", detail: error.message });
+      return;
+    }
+    messageData = data as { id: string };
   }
 
   const message_id: string = messageData.id;
@@ -409,6 +467,8 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   res.json({
     conversation_id,
     message_id,
+    warm_score: warmScore,
+    link_strategy,
     ...agentResponse,
   });
 });

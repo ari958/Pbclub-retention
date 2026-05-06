@@ -1,0 +1,103 @@
+We are adding warm/cold link scoring to the retention agent. 
+This determines whether the agent embeds a direct signup link 
+in a message or asks first. Here is everything you need to build it.
+
+--- GOAL ---
+Before generating any outbound message, compute a warm score 
+for the player + program combination. Use the score to decide 
+whether to include a direct signup link, ask first, or skip.
+
+--- NEW FILE: artifacts/api-server/src/lib/warmScore.ts ---
+
+Build and export a function:
+  computeWarmScore(playerId: string, programType: string, programName: string): Promise<number>
+
+It queries Supabase and returns an integer score. Higher = warmer.
+
+SCORING LOGIC:
+
+Positive signals — add these points:
+  +5  player previously enrolled in this exact program (match on program_name in attendances)
+  +4  player attended same program_type before (e.g. "open_play", "clinic", "drilling")
+  +3  player's progression_status = "ready-to-advance" (from players table)
+  +4  player replied positively to a prior message (messages where direction="inbound" AND reply_sentiment="positive")
+  +2  player attended a session_type = "trial" or "intro"
+  +3  player clicked a link in a prior message (messages.link_clicked = true)
+
+Negative signals — subtract these:
+  −2  player has never attended this program_type (no rows in attendances matching program_type)
+  −3  player has 2 or more ignored outbound messages (messages.ignored = true, direction = "outbound")
+  −3  programType level is 2+ levels above player's skill_level (use this level order: beginner, advanced_beginner, intermediate, advanced)
+  −2  player's last_visit_date is 30+ days ago
+  −1  player's progression_status is null (no coach assessment)
+
+DECAY MULTIPLIER — apply to all attendance-based signals only:
+  Days since most recent relevant attendance:
+    0–30 days → multiplier 1.0
+    31–90 days → multiplier 0.6
+    91+ days → multiplier 0.3
+  Use players.last_visit_date for the decay calculation.
+
+EDGE CASE OVERRIDES — check these before scoring and return immediately if matched:
+  Return 10 (force warm) if:
+    - program start date is within 48 hours (pass programStartDate as optional param)
+  Return -10 (force cold / skip) if:
+    - any inbound message from this player has reply_sentiment = "negative" or body ILIKE '%stop%'
+  Return 0 (ask first) if:
+    - player was created less than 14 days ago (players.created_at)
+
+CACHE: After computing, write the score back to players.warm_score and players.warm_score_updated_at. 
+Use the cached score if warm_score_updated_at is less than 24 hours ago, unless forceRefresh=true is passed.
+
+--- UPDATE: artifacts/api-server/src/routes/agent.ts ---
+
+In POST /api/agent/run, after fetching the player profile and available 
+programs but before calling Claude:
+
+1. Call computeWarmScore(playerId, topProgram.type, topProgram.name)
+
+2. Determine link strategy:
+   score > 6  → link_strategy = "direct" — embed signup_url in message
+   score 3–6  → link_strategy = "ask"    — ask if they want info, no link yet
+   score < 3  → link_strategy = "soft"   — mention only, no ask, no link
+
+3. Pass link_strategy and signup_url (if direct) into the Claude prompt 
+   as part of the player context block. Add these exact instructions 
+   to the system prompt based on strategy:
+
+   If "direct":
+     "A direct signup link is included. Weave it naturally into the 
+      message as a tap-to-register option. Do not make the link the 
+      focus of the message — lead with the value, end with the link."
+
+   If "ask":
+     "Do not include a link. End the message with a single question 
+      asking if they want more details or the signup link. One question only."
+
+   If "soft":
+     "Mention the program briefly as something they might find interesting. 
+      No link, no direct ask. Informational only."
+
+4. Store link_strategy in the messages table (add column if not exists: 
+   link_strategy text).
+
+5. Return link_strategy in the API response alongside the message.
+
+--- UPDATE: artifacts/api-server/src/lib/syncEventAttendance.ts ---
+
+When writing attendance records, map the PodPlay event tag field 
+(the level/type tag on the event object) to attendances.program_type. 
+If the event has a session type field (clinic, open_play, drilling, 
+trial, intro) map that to attendances.session_type.
+Do not parse program names — use the structured tag fields only.
+
+--- NO DASHBOARD CHANGES NEEDED YET ---
+Dashboard warm score display is a Twilio-dependent feature. 
+Skip any UI changes for now.
+
+--- TESTING ---
+After building, test by calling POST /api/agent/run with Kerrie's 
+player_id and logging the warm_score and link_strategy in the response.
+Expected: Kerrie should score moderately warm given her attendance 
+history, and link_strategy should be "ask" or "direct" depending on 
+whether she has prior program matches.

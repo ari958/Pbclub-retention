@@ -274,6 +274,14 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         matched++;
         const attendedAt = toLocalDateString(event.startTime, clubTimezone);
 
+        // Map session type from structured PodPlay field (not from tags/program name)
+        const rawSessionType = event.sessionType ?? null;
+        const SESSION_TYPE_WHITELIST = new Set(["clinic", "open_play", "drilling", "trial", "intro"]);
+        const session_type =
+          rawSessionType && SESSION_TYPE_WHITELIST.has(rawSessionType.toLowerCase())
+            ? rawSessionType.toLowerCase()
+            : null;
+
         pendingUpserts.push({
           player_id: player.id,
           event_id: event.id,
@@ -281,6 +289,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           attended_at: attendedAt,
           program_type: event.customType ?? event.type ?? null,
           level: extractSkillLevel(event.tags),
+          session_type,
         });
 
         // Track newest attendance per player for win-back check
