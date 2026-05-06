@@ -1,0 +1,237 @@
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PROMPT 3 — Personalized send timing
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+GOAL
+Every outbound message gets a scheduled_send_at timestamp
+computed from the player's real booking behavior. Messages
+land when that specific player is in decision-making mode,
+not at a generic "good open rate" time. A last-minute booker
+gets a message 36 hours before the program. A planner gets
+it 7 days out. All sends are clamped to a hard legal +
+courtesy window — never before 8am or after 7:30pm in the
+player's local time.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 1 — Supabase migrations
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Run these first before any code changes. All use IF NOT
+EXISTS so they are safe to re-run.
+
+alter table players
+  add column if not exists avg_booking_lead_days numeric,
+  add column if not exists preferred_send_hour int,
+  add column if not exists timing_computed_at timestamptz;
+
+alter table messages
+  add column if not exists scheduled_send_at timestamptz,
+  add column if not exists send_strategy text;
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 2 — New file: playerTiming.ts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Create artifacts/api-server/src/lib/playerTiming.ts
+
+Export three functions in this file:
+
+────────────────────────────────────────
+FUNCTION 1: computePlayerTiming
+────────────────────────────────────────
+computePlayerTiming(playerId: string): Promise<{
+  avg_booking_lead_days: number,
+  preferred_send_hour: number,
+  archetype: 'early' | 'mid' | 'late' | 'default'
+}>
+
+Logic:
+- Query attendances WHERE player_id = X
+    AND attended_at >= NOW() - INTERVAL '90 days'
+    AND attended_at > created_at
+- If fewer than 3 rows → return default immediately:
+    { avg_booking_lead_days: 3, preferred_send_hour: 18,
+      archetype: 'default' }
+- Compute avg_booking_lead_days:
+    AVG of (attended_at - created_at) in fractional days
+    Round to 1 decimal place
+- Compute preferred_send_hour from the HOUR of
+    created_at timestamps. Group into windows:
+      morning  6–10  → preferred_send_hour = 8
+      midday  11–16  → preferred_send_hour = 13
+      evening 17–22  → preferred_send_hour = 19
+    Pick the window with the most bookings.
+    Tie → prefer evening (19).
+    Bookings outside 6–22 (late night / very early)
+    → do NOT use these hours to determine preferred window.
+    They only count toward avg_booking_lead_days.
+    This prevents a midnight booker from getting a
+    midnight text.
+- Archetype from avg_booking_lead_days:
+    < 1.5 days  → 'late'
+    1.5–5 days  → 'mid'
+    > 5 days    → 'early'
+- Write avg_booking_lead_days, preferred_send_hour,
+    timing_computed_at = NOW() back to players table
+- Cache: if timing_computed_at is less than 24 hours
+    ago, return cached values without recomputing.
+
+────────────────────────────────────────
+FUNCTION 2: sanitizeScheduledSendAt
+────────────────────────────────────────
+sanitizeScheduledSendAt(
+  proposedSendAt: Date,
+  timezone: string = 'America/New_York'
+): Date | null
+
+This is a hard guardrail. It runs on every computed send
+time before it touches the database. No exceptions.
+
+Rules applied in this order:
+
+1. Convert proposedSendAt to the player's local time
+   using the given timezone.
+
+2. HARD WINDOW:
+   Weekdays: no sends before 08:00 or after 19:30 local.
+   Weekends: no sends before 08:30 or after 19:30 local.
+   (TCPA allows until 21:00 — we use 19:30 as a courtesy
+   buffer. This is a ceiling, not a suggestion.)
+
+3. IF time is before the window open:
+   Push to window open time (08:00 or 08:30) same day.
+
+4. IF time is after 19:30:
+   Push to 08:00 the next day (08:30 if next day is a
+   weekend).
+
+5. After applying rules 3–4, check if the result is
+   now in the past (can happen if we push to "tomorrow
+   at 8am" but the program has already started).
+   If the sanitized time is in the past → return null.
+   Caller treats null as: do not schedule, skip this send.
+
+6. Return the sanitized Date.
+
+────────────────────────────────────────
+FUNCTION 3: computeScheduledSendAt
+────────────────────────────────────────
+computeScheduledSendAt(
+  playerId: string,
+  programStartAt: Date | null,
+  urgencyOverride?: boolean,
+  timezone?: string
+): Promise<Date | null>
+
+This is the main function called by the agent route.
+
+Logic:
+1. If urgencyOverride = true OR programStartAt is within
+   48 hours from now:
+   → proposedSendAt = NOW() + 5 minutes
+   → run through sanitizeScheduledSendAt
+   → return result (may be null if somehow in the past)
+
+2. Call computePlayerTiming(playerId) to get archetype,
+   avg_booking_lead_days, preferred_send_hour.
+
+3. If programStartAt is known:
+   ideal_send = programStartAt minus avg_booking_lead_days
+   (subtract fractional days).
+   Set the TIME component of ideal_send to
+   preferred_send_hour:00:00 in the player's timezone.
+   proposedSendAt = that datetime.
+
+4. If programStartAt is null (re-engagement message,
+   no specific program date):
+   Find the next future occurrence of preferred_send_hour
+   that is at least 2 hours from now.
+   Example: preferred_send_hour = 19, current time = 20:15
+   → tomorrow at 19:00.
+   proposedSendAt = that datetime.
+
+5. Pass proposedSendAt through sanitizeScheduledSendAt.
+   Return the result (may be null).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 3 — Update agent route
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+File: artifacts/api-server/src/routes/agent.ts
+Route: POST /api/agent/run
+
+After generating the message and before writing to the
+messages table:
+
+1. Get programStartAt from the top recommended program's
+   start_time field (already in fetchAvailablePrograms
+   response). Parse to Date. If missing → pass null.
+
+2. Get urgencyOverride: set to true if warm_score > 8.
+
+3. Call computeScheduledSendAt(
+     playerId,
+     programStartAt,
+     urgencyOverride,
+     'America/New_York'
+   )
+
+4. Write scheduled_send_at and send_strategy (archetype
+   value from computePlayerTiming) to the messages row.
+   If computeScheduledSendAt returns null, set
+   scheduled_send_at = null and add a log line:
+   "Send skipped — sanitized time is in the past or
+   program already started."
+
+5. Return scheduled_send_at, send_strategy, and
+   (if null) a skip_reason field in the API response.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+STEP 4 — Nightly sync update
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+File: artifacts/api-server/src/lib/syncEventAttendance.ts
+or wherever the nightly import runs.
+
+After each player's attendance records are upserted,
+call computePlayerTiming(playerId) with forceRefresh=true
+to recompute and cache their timing profile overnight.
+
+This means by the time the agent runs during the day,
+timing data is already warm in the database and
+computePlayerTiming returns instantly from cache.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DO NOT CHANGE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Existing warm score logic in warmScore.ts
+- Existing link decision logic in agent.ts
+- Any Supabase tables other than players and messages
+- The dashboard UI — no frontend changes in this prompt
+- Twilio send logic — scheduled_send_at is stored but
+  the scheduler that reads it and fires Twilio is a
+  separate build (Twilio backlog item 9)
+- The anti-AI system prompt rules
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TESTING
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+After building, test by calling POST /api/agent/run
+with Kerrie's player_id.
+
+Expected response fields:
+  warm_score         — integer
+  link_strategy      — "direct" | "ask" | "soft"
+  scheduled_send_at  — ISO datetime string or null
+  send_strategy      — "early" | "mid" | "late" | "default"
+  skip_reason        — only present if scheduled_send_at
+                       is null
+
+Log computePlayerTiming output for Kerrie so we can
+validate her archetype and preferred_send_hour make
+sense given her attendance history.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLETION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Complete all 4 steps without stopping. If a step hits a
+blocker, note it and continue. At the end provide:
+  ✓ Completed items
+  ✗ Skipped items with reason
+  ? Anything needing operator input before it will work

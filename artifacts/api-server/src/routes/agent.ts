@@ -8,6 +8,7 @@ import { assembleProfile } from "../assembleProfile.js";
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { supabase } from "../lib/supabaseClient";
 import { computeWarmScore, scorToLinkStrategy } from "../lib/warmScore";
+import { computeScheduledSendAt } from "../lib/playerTiming";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
@@ -435,9 +436,43 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     : null;
   const signup_url: string | null = matchedProgram?.signup_url ?? null;
 
+  // ── Scheduled send timing ──────────────────────────────────────────────────
+  // Parse program start date from the matched (or top) program's raw ISO field.
+  const programForTiming: any = matchedProgram ?? topProgram ?? null;
+  const programStartAt: Date | null =
+    programForTiming?.start_time_iso ? new Date(programForTiming.start_time_iso) : null;
+
+  const urgencyOverride = warmScore !== null && warmScore > 8;
+
+  let scheduledSendAt: Date | null = null;
+  let send_strategy: string = "default";
+  let skip_reason: string | undefined;
+
+  try {
+    const timingResult = await computeScheduledSendAt(
+      player_id,
+      programStartAt,
+      urgencyOverride,
+      "America/New_York",
+    );
+    scheduledSendAt = timingResult.scheduledSendAt;
+    send_strategy = timingResult.archetype;
+
+    if (scheduledSendAt === null) {
+      skip_reason = "Send skipped — sanitized time is in the past or program already started.";
+      req.log.info({ player_id, programStartAt }, "[agent] scheduled send skipped — time in past");
+    } else {
+      req.log.info(
+        { player_id, scheduledSendAt, send_strategy, urgencyOverride },
+        "[agent] scheduled send computed",
+      );
+    }
+  } catch (err) {
+    req.log.warn({ err }, "[agent] computeScheduledSendAt failed — skipping timing");
+  }
+
   // Create message record linked to this conversation.
-  // Try with link_strategy first; fall back without it if the column doesn't exist yet
-  // (migration pending).
+  // Try with all new columns; fall back gracefully if migrations are pending.
   let messageData: { id: string } | null = null;
   {
     const payload: Record<string, unknown> = {
@@ -447,13 +482,19 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       sent_by: "agent",
       signup_url,
       link_strategy,
+      scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
+      send_strategy,
     };
+
     let { data, error } = await supabase.from("messages").insert(payload).select("id").single();
-    if (error && (error.code === "PGRST204" || error.message?.includes("link_strategy"))) {
-      req.log.warn("[agent] link_strategy column missing — inserting without it (migration pending)");
-      const { link_strategy: _omit, ...fallbackPayload } = payload;
+
+    // Column missing (migration pending) — strip unknown columns and retry
+    if (error && (error.code === "PGRST204" || /link_strategy|scheduled_send_at|send_strategy/.test(error.message ?? ""))) {
+      req.log.warn("[agent] new columns missing — inserting without them (migration pending)");
+      const { link_strategy: _ls, scheduled_send_at: _ssa, send_strategy: _ss, ...fallbackPayload } = payload;
       ({ data, error } = await supabase.from("messages").insert(fallbackPayload).select("id").single());
     }
+
     if (error) {
       req.log.error({ err: error }, "Failed to create message record");
       res.status(500).json({ error: "Failed to create message", detail: error.message });
@@ -464,13 +505,18 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   const message_id: string = messageData.id;
 
-  res.json({
+  const responseBody: Record<string, unknown> = {
     conversation_id,
     message_id,
     warm_score: warmScore,
     link_strategy,
+    scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
+    send_strategy,
     ...agentResponse,
-  });
+  };
+  if (skip_reason) responseBody.skip_reason = skip_reason;
+
+  res.json(responseBody);
 });
 
 export default router;

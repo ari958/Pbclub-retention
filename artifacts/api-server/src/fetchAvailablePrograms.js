@@ -63,6 +63,7 @@ function formatProgram(event) {
     tags,
     spots_remaining,
     start_time,
+    start_time_iso: event.startTime ?? null,
     signup_url: event.id ? `${PODPLAY_WEB_BASE}/events/${event.id}` : null,
   };
 }

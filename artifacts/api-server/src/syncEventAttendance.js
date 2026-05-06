@@ -1,4 +1,5 @@
 import { createClient } from "@supabase/supabase-js";
+import { computePlayerTiming } from "./lib/playerTiming.js";
 
 let _supabase = null;
 function getSupabase() {
@@ -341,6 +342,13 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         .update({ last_visit_date: latest.attended_at })
         .eq("id", player.id);
       visitUpdates++;
+
+      // Recompute timing profile overnight so it's warm when the agent runs
+      try {
+        await computePlayerTiming(player.id, true);
+      } catch (err) {
+        log(`[sync/events] WARN: computePlayerTiming failed for ${player.id}: ${err?.message ?? err}`);
+      }
 
       // Win-back check: only for players who got a new attendance this sync
       const newAttendance = newAttendancesByPlayer.get(player.id);
