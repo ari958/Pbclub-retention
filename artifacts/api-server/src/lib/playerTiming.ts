@@ -163,10 +163,13 @@ export async function computePlayerTiming(
     return DEFAULTS;
   }
 
-  // Filter: booked_at must be before attended_at (sanity check)
+  // Filter: booked_at must be before attended_at (sanity check).
+  // attended_at is date-only — treat as end of that UTC day (T23:59:59Z) so a booking
+  // made earlier the same calendar date (e.g. same-day open play) is not incorrectly excluded.
   const valid = (rows ?? []).filter((r: any) => {
     if (!r.booked_at || !r.attended_at) return false;
-    return new Date(r.booked_at) < new Date(r.attended_at);
+    const attended = new Date(`${r.attended_at}T23:59:59Z`);
+    return new Date(r.booked_at) < attended;
   });
 
   if (valid.length < 3) {
