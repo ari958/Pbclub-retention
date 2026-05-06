@@ -1,0 +1,3924 @@
+
+PodPlay Inc API
+ 2.0 
+OAS3
+The PodPlay Inc V2 API
+
+Terms of service
+Servers
+
+/ - Current Server
+Authorize
+Venues
+Manage physical locations, courts, and facilities.
+
+
+Regions
+Geographic regions containing multiple playing areas and facilities.
+
+
+
+GET
+/regions
+
+
+POST
+/regions
+
+
+PATCH
+/regions/{regionId}
+
+
+DELETE
+/regions/{regionId}
+
+
+GET
+/regions/{regionId}
+
+
+GET
+/regions/closest
+
+
+GET
+/regions/{regionId}/settings
+
+
+GET
+/regions/{regionId}/areas
+
+Areas
+Specific locations within a region, such as buildings or outdoor sections.
+
+
+
+GET
+/areas
+
+
+POST
+/areas
+
+
+GET
+/areas/closest
+
+
+GET
+/areas/{areaId}
+
+
+DELETE
+/areas/{areaId}
+
+
+PATCH
+/areas/{areaId}
+
+
+GET
+/areas/{areaId}/settings
+
+
+GET
+/areas/{areaId}/branding
+
+
+GET
+/areas/{areaId}/pods
+
+
+GET
+/areas/{areaId}/available-coaches
+
+
+POST
+/areas/{areaId}/locker-rooms/{lockerRoomId}/accesses
+
+
+GET
+/areas/{areaId}/locker-rooms
+
+
+GET
+/areas/{areaId}/replays/pricing
+
+
+POST
+/areas/{areaId}/replays/pricing
+
+Pods
+Groups of courts or playing spaces within an area.
+
+
+
+GET
+/pods
+
+
+POST
+/pods
+
+
+GET
+/pods/pdk-devices
+
+
+GET
+/pods/verkada-doors
+
+
+GET
+/pods/{podId}
+
+
+PATCH
+/pods/{podId}
+
+
+DELETE
+/pods/{podId}
+
+
+GET
+/pods/{podId}/holiday-schedules
+
+
+POST
+/pods/{podId}/holiday-schedules
+
+
+GET
+/pods/{podId}/holiday-schedules/{holidayScheduleId}
+
+
+PATCH
+/pods/{podId}/holiday-schedules/{holidayScheduleId}
+
+
+DELETE
+/pods/{podId}/holiday-schedules/{holidayScheduleId}
+
+
+GET
+/pods/{podId}/settings
+
+
+GET
+/pods/{podId}/rates
+
+
+GET
+/pods/{podId}/tables
+
+
+PATCH
+/pods/{podId}/tables
+
+
+POST
+/pods/{podId}/tables
+
+
+GET
+/pods/{podId}/tables/{tableId}
+
+
+DELETE
+/pods/{podId}/tables/{tableId}
+
+
+PATCH
+/pods/{podId}/tables/{tableId}
+
+
+GET
+/pods/{podId}/tables/{tableId}/settings
+
+
+POST
+/pods/{podId}/tables/{tableId}/devices
+
+
+GET
+/pods/{podId}/closed-time-overrides
+
+
+GET
+/pods/{podId}/tables/{tableId}/voice-downs/{voiceDownId}
+
+
+PATCH
+/pods/{podId}/tables/{tableId}/voice-downs/{voiceDownId}
+
+
+POST
+/pods/{podId}/tables/{tableId}/voice-downs
+
+LockerRooms
+Locker room facilities and amenities management.
+
+
+
+GET
+/locker-rooms
+
+
+GET
+/locker-rooms/{lockerRoonId}
+
+Terminals
+Physical terminals for payments
+
+
+
+GET
+/terminals
+
+
+POST
+/terminals
+
+
+GET
+/terminals/{terminalId}
+
+
+POST
+/terminals/{terminalId}/cancel-action
+
+Taxes
+Tax configurations and rates for different venues and regions.
+
+
+
+GET
+/taxes/categories
+
+
+POST
+/taxes/categories
+
+
+GET
+/taxes/categories/{taxCategoryId}
+
+
+DELETE
+/taxes/categories/{taxCategoryId}
+
+
+PATCH
+/taxes/categories/{taxCategoryId}
+
+Proximity Access
+Proximity-based access control for courts and facilities.
+
+
+
+POST
+/proximity-access/login
+Authenticate with proximity access hardware (NFC, Bluetooth, etc.)
+
+
+POST
+/proximity-access/sync/email
+Execute proximity sync for user by email
+
+
+POST
+/proximity-access/jobs/process-expired
+Users
+User management, authentication, profiles, and account operations.
+
+
+
+GET
+/users/{userId}/memberships
+
+
+POST
+/users/{userId}/memberships
+
+
+GET
+/users/{userId}/memberships/{membershipSubscriptionId}
+
+
+PATCH
+/users/{userId}/memberships/{membershipSubscriptionId}
+
+
+GET
+/users/{userId}/memberships/{membershipSubscriptionId}/packages
+
+
+POST
+/users/{userId}/memberships/{membershipSubscriptionId}/packages/{packageId}/regrant
+
+
+GET
+/users/{userId}/enrollments
+
+Parameters
+Try it out
+Name	Description
+expand
+array[string]
+(query)
+Example : List [ "items._links.membershipSubscription" ]
+
+items._links.membershipSubscription
+userId *
+string
+(path)
+Example : o0drORnu2aUjJEvceKPa4QUyJgC2
+
+o0drORnu2aUjJEvceKPa4QUyJgC2
+Responses
+Code	Description	Links
+200	
+Returns a MembershipEnrollmentCollection
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "items": [
+    {
+      "id": "string",
+      "displayName": "string",
+      "type": "GLOBAL_MEMBER",
+      "user": {
+        "id": "string"
+      },
+      "creatorUser": {
+        "id": "string"
+      },
+      "membership": {
+        "id": "string"
+      },
+      "membershipSubscription": {
+        "id": "string"
+      },
+      "isOwner": true,
+      "createdDate": "2026-05-06T20:26:41.720Z",
+      "startDate": "2026-05-06T20:26:41.720Z",
+      "endDate": "2026-05-06T20:26:41.720Z",
+      "errors": [
+        {
+          "code": "string",
+          "message": "string",
+          "details": {}
+        }
+      ],
+      "customFee": 0,
+      "_links": {}
+    }
+  ],
+  "_total": 0,
+  "_links": {}
+}
+No links
+
+GET
+/users/{userId}/enrollments/{membershipEnrollmentId}
+
+
+GET
+/users/{userId}/memberships/{membershipSubscriptionId}/enrollments
+
+
+POST
+/users/{userId}/memberships/{membershipSubscriptionId}/enrollments
+
+
+PATCH
+/users/{userId}/memberships/{membershipSubscriptionId}/invitations
+
+
+GET
+/users/{userId}/memberships/{membershipSubscriptionId}/invitations/{invitationId}
+
+
+PATCH
+/users/{userId}/memberships/{membershipSubscriptionId}/invitations/{invitationId}
+
+
+POST
+/users/{userId}/enrollments/{membershipEnrollmentId}/reactivations
+
+
+POST
+/users/{userId}/enrollments/{membershipEnrollmentId}/cancellation
+
+
+POST
+/users/{userId}/enrollments/{membershipEnrollmentId}/pause
+
+
+POST
+/users/{userId}/enrollments/{membershipEnrollmentId}/unpause
+
+
+POST
+/users
+User Signup: Create a new user account.
+
+Parameters
+Try it out
+Name	Description
+utm_location
+string
+(query)
+Example : les
+
+les
+Request body
+
+application/json
+Example Value
+Schema
+{
+  "email": "user@example.com",
+  "password": "string",
+  "firstName": "string",
+  "lastName": "string",
+  "gender": "string",
+  "birthday": "2026-05-06T20:26:41.725Z",
+  "emailMarketingOptIn": true,
+  "smsMarketingOptIn": true,
+  "acceptedAgreements": {
+    "items": [
+      "string"
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "phoneVerificationSessionId": "string"
+}
+Responses
+Code	Description	Links
+201	
+Returns the UserSignup
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "id": "string",
+  "email": "user@example.com",
+  "password": "string",
+  "firstName": "string",
+  "lastName": "string",
+  "gender": "string",
+  "birthday": "2026-05-06T20:26:41.734Z",
+  "emailMarketingOptIn": true,
+  "smsMarketingOptIn": true,
+  "requiredAgreements": {
+    "items": [
+      "string"
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "phoneVerificationSessionId": "string",
+  "errors": [
+    {
+      "code": "string",
+      "message": "string",
+      "details": {}
+    }
+  ]
+}
+No links
+422	
+Returns an ErrorDto in case of validation errors or failures.
+
+Possible error codes are:
+US001: The email address is not valid.
+US002: The email address is already in use.
+US003: The password does not meet the minimum requirements.
+US004: Birthday is required.
+US005: Gender is required.
+US006: Gender is too long. (Max 25 characters)
+US007: Must be at least {{minimumAge}} years old to sign up.
+US008: You must accept the liability waiver to sign up.
+US009: Invalid agreement IDs: {{invalidAgreementIds}}
+
+No links
+
+GET
+/users
+
+
+POST
+/users/{userId}/dupr/logout
+
+
+GET
+/users/current
+
+
+GET
+/users/{userId}
+
+
+PATCH
+/users/{userId}
+
+
+DELETE
+/users/{userId}
+
+
+POST
+/users/{userId}/activation
+
+
+DELETE
+/users/{userId}/activation
+
+
+GET
+/users/{userId}/favorite-replays
+
+
+POST
+/users/{userId}/coach-profile
+
+
+DELETE
+/users/{userId}/coach-profile
+
+
+GET
+/users/{userId}/contacts
+
+
+GET
+/users/{userId}/virtual-credits-transactions
+
+
+POST
+/users/{userId}/virtual-credits-transactions
+
+
+GET
+/users/{userId}/preferences
+
+
+PATCH
+/users/{userId}/preferences
+
+
+GET
+/users/{userId}/frontchat
+
+
+GET
+/users/{userId}/chat
+
+
+PATCH
+/users/{userId}/chat
+
+
+GET
+/users/{userId}/quotas/booking/{areaId}
+
+
+GET
+/users/{userId}/settings/booking/{areaId}
+
+
+GET
+/users/{userId}/settings/booking/{areaId}/pods
+
+
+GET
+/users/{userId}/qr-code
+
+
+GET
+/users/{userId}/qr-code-image/{size}
+
+
+POST
+/users/{userId}/kids
+
+
+GET
+/users/{userId}/kids
+
+
+GET
+/users/{userId}/kids/{kidId}
+
+
+DELETE
+/users/{userId}/kids/{kidId}
+
+
+PATCH
+/users/{userId}/kids/{kidId}
+
+
+GET
+/users/{userId}/kids/{kidId}/invitations
+
+
+GET
+/users/{userId}/segmentation
+
+
+POST
+/users/{userId}/agreements
+
+
+GET
+/users/{userId}/agreements
+
+
+GET
+/users/{userId}/agreements/required
+
+
+GET
+/users/current/feature-flags
+
+
+GET
+/users/current/feature-flags/{featureFlagId}
+
+
+GET
+/users/{userId}/feature-flags
+
+
+GET
+/users/{userId}/feature-flags/{featureFlagId}
+
+
+GET
+/users/{userId}/phone-number
+
+
+PUT
+/users/{userId}/phone-number
+Update `User`'s phone number. It's a two-steps process: first the `phoneNumber` is sent alone, then the pair `phoneNumber` + `verificationCode`.
+
+
+DELETE
+/users/{userId}/phone-number
+Delete (clear) `User`'s phone number. admin can delete any user's phone number,
+
+
+GET
+/users/{userId}/payment-method
+
+
+POST
+/users/{userId}/payment-method/stripe/ephemeral-keys
+
+
+POST
+/users/{userId}/payment-method/stripe/setup-intents
+
+
+DELETE
+/users/{userId}/payment-method/default
+
+
+GET
+/users/{userId}/profile
+
+
+GET
+/users/{userId}/profile/picture
+
+
+GET
+/users/{userId}/security-picture
+
+
+DELETE
+/users/{userId}/devices/{deviceId}
+
+
+POST
+/users/{userId}/devices
+
+
+GET
+/users/{userId}/ratings
+
+
+PATCH
+/users/{userId}/ratings
+
+
+GET
+/users/{userId}/profile/dupr
+
+
+GET
+/users/{userId}/notes
+
+
+PUT
+/users/{userId}/notes
+
+
+DELETE
+/users/{userId}/notes
+Delete (clear) `User`'s admin notes. admin can delete any user's notes,
+
+
+GET
+/users/{userId}/activity-feed
+
+
+GET
+/users/{userId}/payment-elements
+
+
+GET
+/users/{userId}/payment-elements/{paymentElementId}
+
+
+DELETE
+/users/{userId}/payment-elements/{paymentElementId}
+
+
+GET
+/users/{userId}/payment-elements/{paymentElementId}/context-availability
+
+
+PATCH
+/users/{userId}/payment-elements/{paymentElementId}/context-availability/{context}
+
+
+GET
+/users/{userId}/settlements
+
+Parameters
+Try it out
+Name	Description
+userId *
+string
+(path)
+Example : current
+
+current
+source
+string
+(query)
+Example : BOOKING
+
+BOOKING
+eventId
+string
+(query)
+Example : event-uuid
+
+event-uuid
+createdStartDate
+string($date-time)
+(query)
+Example : 2024-01-01T00:00:00.000Z
+
+2024-01-01T00:00:00.000Z
+createdEndDate
+string($date-time)
+(query)
+Example : 2024-01-31T23:59:59.999Z
+
+2024-01-31T23:59:59.999Z
+page
+number
+(query)
+Example : 1
+
+1
+ipp
+number
+(query)
+Example : 30
+
+30
+sort
+string
+(query)
+Sort format: -fieldName (DESC) or +fieldName (ASC). Allowed fields: createdAt, createdDate, gross, id
+
+Example : -createdDate
+
+-createdDate
+Responses
+Code	Description	Links
+200	
+Returns a CustomerSettlementCollectionDto
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "items": [
+    {
+      "id": "string",
+      "code": "string",
+      "createdDate": "2026-05-06T20:26:41.782Z",
+      "title": "string",
+      "source": "string",
+      "description": "string",
+      "summary": {
+        "paymentMethod": "string",
+        "paymentMethodBrand": "string",
+        "paymentMethodLast4": "string",
+        "currency": "string",
+        "subtotal": 0,
+        "discounts": 0,
+        "taxableAmount": 0,
+        "taxes": [
+          {
+            "name": "string",
+            "amount": 0,
+            "percentage": 0
+          }
+        ],
+        "taxAmount": 0,
+        "gross": 0,
+        "virtualCredits": 0
+      },
+      "payment": {
+        "id": "string"
+      },
+      "lineItems": {
+        "items": [
+          {
+            "id": "string",
+            "description": "string",
+            "quantity": 0,
+            "unitPrice": 0,
+            "subtotal": 0,
+            "totalDiscount": 0,
+            "taxableAmount": 0,
+            "taxAmount": 0,
+            "taxes": [
+              {
+                "name": "string",
+                "amount": 0,
+                "percentage": 0
+              }
+            ],
+            "grossAmount": 0
+          }
+        ],
+        "total": 0
+      },
+      "event": {
+        "id": "string"
+      },
+      "orders": {
+        "_total": 0
+      },
+      "_links": {}
+    }
+  ],
+  "_pagination": {
+    "page": 0,
+    "ipp": 0,
+    "count": 0,
+    "total": 0
+  },
+  "_links": {
+    "self": {
+      "href": "string"
+    }
+  }
+}
+No links
+
+GET
+/users/{userId}/settlements/{settlementId}
+
+Parameters
+Try it out
+Name	Description
+userId *
+string
+(path)
+Example : current
+
+current
+settlementId *
+string
+(path)
+Example : settlement-uuid
+
+settlement-uuid
+Responses
+Code	Description	Links
+200	
+Returns a CustomerSettlementDto
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "id": "string",
+  "code": "string",
+  "createdDate": "2026-05-06T20:26:41.787Z",
+  "title": "string",
+  "source": "string",
+  "description": "string",
+  "summary": {
+    "paymentMethod": "string",
+    "paymentMethodBrand": "string",
+    "paymentMethodLast4": "string",
+    "currency": "string",
+    "subtotal": 0,
+    "discounts": 0,
+    "taxableAmount": 0,
+    "taxes": [
+      {
+        "name": "string",
+        "amount": 0,
+        "percentage": 0
+      }
+    ],
+    "taxAmount": 0,
+    "gross": 0,
+    "virtualCredits": 0
+  },
+  "payment": {
+    "id": "string"
+  },
+  "lineItems": {
+    "items": [
+      {
+        "id": "string",
+        "description": "string",
+        "quantity": 0,
+        "unitPrice": 0,
+        "subtotal": 0,
+        "totalDiscount": 0,
+        "taxableAmount": 0,
+        "taxAmount": 0,
+        "taxes": [
+          {
+            "name": "string",
+            "amount": 0,
+            "percentage": 0
+          }
+        ],
+        "grossAmount": 0
+      }
+    ],
+    "total": 0
+  },
+  "event": {
+    "id": "string"
+  },
+  "orders": {
+    "_total": 0
+  },
+  "_links": {}
+}
+No links
+OAuth2
+OAuth2 authentication and authorization flows.
+
+
+
+POST
+/oauth2/token
+OAuth2.0 Token Endpoint (https://www.rfc-editor.org/rfc/rfc6749)
+
+POST
+/oauth2/webview-token
+Custom Token Endpoint
+
+
+POST
+/oauth2/discourse-connect/authorizations
+
+
+POST
+/oauth2/authorizations
+
+
+PATCH
+/oauth2/users/credentials
+User credentials reset: Initiates the user password reset flow.
+Suspensions
+User account suspensions and restrictions.
+
+
+
+POST
+/suspensions
+
+
+GET
+/suspensions
+
+
+GET
+/suspensions/{suspensionId}
+
+
+PATCH
+/suspensions/{suspensionId}
+
+
+GET
+/suspensions/{suspensionId}/events
+
+
+POST
+/suspensions/{suspensionId}/cancellation
+
+Agreements
+User agreements, waivers, and consent management.
+
+
+
+GET
+/agreements
+
+
+POST
+/agreements
+
+
+GET
+/agreements/liability-waiver
+
+
+GET
+/agreements/kids-waiver
+
+
+GET
+/agreements/{agreementId}
+
+
+PATCH
+/agreements/{agreementId}
+
+
+GET
+/agreements/{areaId}/liability-waiver
+
+
+GET
+/agreements/{areaId}/kids-waiver
+
+Memberships
+Membership plans, subscriptions, enrollments, and prepaid packages.
+
+
+
+GET
+/membership/jobs/{jobId}
+
+
+POST
+/membership/jobs/capture
+
+
+GET
+/memberships
+
+
+POST
+/memberships
+
+
+GET
+/memberships/{membershipId}
+
+
+PATCH
+/memberships/{membershipId}
+
+
+DELETE
+/memberships/{membershipId}
+
+
+GET
+/memberships/{membershipId}/subscriptions-count
+
+
+GET
+/memberships/{membershipId}/has-or-had-members
+
+
+GET
+/memberships/{membershipId}/benefits
+
+
+GET
+/memberships/{membershipId}/one-time-price-options
+
+
+GET
+/memberships/{membershipId}/areas
+
+
+GET
+/memberships/{membershipId}/settings
+
+Packages
+Recurring passes for event signups, court bookings, guest passes.
+
+
+
+GET
+/packages/{packageId}
+
+
+PATCH
+/packages/{packageId}
+
+
+PATCH
+/packages/{packageId}/items/{itemId}
+
+
+GET
+/package-templates
+
+
+POST
+/package-templates
+
+
+PATCH
+/package-templates/{packageTemplateId}
+
+
+DELETE
+/package-templates/{packageTemplateId}
+
+
+GET
+/package-templates/{packageTemplateId}
+
+
+POST
+/package-templates/{packageTemplateId}/grants
+
+
+GET
+/users/{userId}/packages
+
+
+GET
+/users/{userId}/packages/history
+
+Bookings
+Court reservations, sessions, and booking management.
+
+
+
+POST
+/bookings
+
+
+POST
+/bookings/{id}/modifications/guests
+
+Sessions
+Active playing sessions and court access windows.
+
+
+
+GET
+/sessions
+
+
+GET
+/sessions/{sessionId}
+
+
+GET
+/sessions/{sessionId}/available-tables
+
+
+GET
+/sessions/{sessionId}/available-coaches
+
+DirectCheckoutBookings
+Streamlined booking flow for quick reservations.
+
+
+
+POST
+/direct-checkout/bookings
+
+Events
+Scheduled activities including classes, clinics, leagues, and recurring programs.
+
+
+
+POST
+/events/{eventId}/accesses
+
+
+POST
+/events/{eventId}/cancellation
+
+
+GET
+/events/{eventId}/cancellation
+
+
+GET
+/events/{eventId}/notes
+
+
+GET
+/events/{eventId}/notes/{noteId}
+
+
+PUT
+/events/{eventId}/notes/{noteId}
+
+
+GET
+/events/{eventId}/open-invitations/{openInvitationId}
+
+
+GET
+/events/{eventId}/open-invitations
+
+
+POST
+/events/{eventId}/open-invitations
+
+
+POST
+/events/{eventId}/open-invitations/{openInvitationId}/emails
+
+
+POST
+/events/{eventId}/open-invitations/{openInvitationId}/smses
+
+
+POST
+/events/{eventId}/settlement
+
+
+GET
+/events/{eventId}/payments
+
+
+GET
+/events/{eventId}/stats
+
+
+GET
+/events/{eventId}/stats/revenue
+
+
+GET
+/events/{eventId}/stats/revenue/items
+
+
+GET
+/events/{eventId}/replays
+
+
+POST
+/events/{eventId}/replays
+
+
+GET
+/events/{eventId}/replays/{replayId}
+
+
+POST
+/events/{eventId}/replays/{replayId}/retries
+
+
+GET
+/events/{eventId}/replays/{replayId}/likes
+
+
+POST
+/events/{eventId}/replays/{replayId}/likes
+
+
+GET
+/events/{eventId}/replays/{replayId}/likes/{likeId}
+
+
+DELETE
+/events/{eventId}/replays/{replayId}/likes/{likeId}
+
+
+GET
+/events/{eventId}/reservations
+
+
+GET
+/events/{eventId}/reservations/{reservationId}
+
+
+GET
+/events/{eventId}/reservations/{reservationId}/sessions
+
+
+GET
+/events
+
+
+POST
+/events/invitations
+
+
+GET
+/events/invitations
+
+
+GET
+/events/{eventId}
+
+
+PATCH
+/events/{eventId}
+
+
+GET
+/events/{eventId}/tables
+
+
+POST
+/events/{eventId}/tables
+
+
+GET
+/events/{eventId}/allowed-memberships
+
+
+GET
+/events/{eventId}/teams
+
+
+GET
+/events/{eventId}/tables/{eventTableId}
+
+
+PATCH
+/events/{eventId}/tables/{eventTableId}
+
+
+DELETE
+/events/{eventId}/tables/{eventTableId}
+
+
+POST
+/events/clones
+
+
+POST
+/events/{eventId}/chat/channels
+
+
+POST
+/events/{eventId}/signups
+
+Parameters
+Try it out
+Name	Description
+user-agent *
+string
+(header)
+user-agent
+expand
+array[string]
+(query)
+Example : List []
+
+eventId *
+string
+(path)
+Example : 3857358a-59e8-4944-8c48-3345c4375b43
+
+3857358a-59e8-4944-8c48-3345c4375b43
+Request body
+
+application/json
+Example Value
+Schema
+{
+  "type": "PREVIEW",
+  "mode": "USER_BOOKED",
+  "paymentMethod": "CASH",
+  "virtualCredits": 0,
+  "couponCode": "string",
+  "passesStrategy": "USE_ALL",
+  "termsAgreed": true,
+  "liabilityWaiverAgreed": true,
+  "guests": {
+    "id": "string"
+  },
+  "kids": {
+    "items": [
+      "string"
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "owner": {
+    "id": "string"
+  },
+  "_links": {}
+}
+Responses
+Code	Description	Links
+201	
+Returns an EventSignup
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "id": "string",
+  "type": "PREVIEW",
+  "status": "DRAFT",
+  "passesStrategy": "USE_ALL",
+  "availableGuests": {
+    "items": [
+      {
+        "id": "string",
+        "displayName": "string",
+        "guests": 0,
+        "rate": 0
+      }
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "kids": {
+    "items": [
+      "string"
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "coupon": {
+    "id": "string",
+    "code": "string",
+    "discountType": "AMOUNT_OFF",
+    "value": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "summary": {
+    "event": {
+      "id": "string"
+    },
+    "invitation": {
+      "id": "string"
+    },
+    "openInvitation": {
+      "id": "string"
+    },
+    "currency": "string",
+    "rates": {
+      "signup": 0,
+      "guests": 0,
+      "teamLeader": 0,
+      "teamMember": 0
+    },
+    "subtotal": 0,
+    "taxes": [
+      {
+        "name": "string",
+        "amount": 0,
+        "percentage": 0
+      }
+    ],
+    "virtualCredits": 0,
+    "couponDiscount": 0,
+    "passes": {
+      "items": [
+        {
+          "id": {},
+          "available": 0,
+          "quantity": 0,
+          "displayName": "string",
+          "displayNamePlural": "string",
+          "rate": 0
+        }
+      ],
+      "_total": 0,
+      "_links": {}
+    },
+    "total": 0,
+    "errors": [
+      {
+        "code": "string",
+        "message": "string",
+        "details": {}
+      }
+    ]
+  },
+  "owner": {
+    "id": "string"
+  },
+  "order": {
+    "id": "string"
+  },
+  "_links": {}
+}
+No links
+409	
+Returns an error
+
+Media type
+
+application/json
+Example Value
+Schema
+{
+  "statusCode": 0,
+  "message": {},
+  "error": "string"
+}
+No links
+422	
+Returns an ErrorDto in case of validation errors or failures.
+
+Possible error codes are:
+ES000: This action requires a logged in user.
+ES001: You're already invited to this event.
+ES002: The event has reached its spots capacity.
+ES003: The guests capacity for this event has been already reached.
+ES004: Invalid value for virtual credits.
+ES005: The amount of virtual credits exceeds your balance.
+ES006: The event admission is closed.
+ES007: The event is for members only.
+ES008: You need to add a payment method to your account.
+ES009: Your payment method is not active. Please, add a new one.
+ES010: User phone number is required.
+ES011: Terms of Service agreement is required.
+ES012: Liability waiver agreement is required.
+ES013: You are not allowed to signup for free.
+ES014: The series subscriptions are closed.
+ES015: Only {{membershipName}} members are allowed.
+ES016: Only members are allowed.
+ES017: You are not allowed to make cash signups.
+ES018: The event is for {{kidsTerm}} only. Please add a {{kidTerm}.
+ES019: There are only {{spotsLeft}} spots left. Please review your selection.
+ES020: Liability waiver agreement not found. Please contact support.
+ES021: There was an issue processing the payment for your membership. Please update your payment method to continue booking.
+ES022: There was an issue processing the payment for your group membership. Please ask the person paying for the membership to update their payment details to continue using your membership.
+ES039: You need to cover the full amount with {{virtualCreditsTerm}}
+ES040: Unable to proceed with the current payment method. Please try using a different one.
+ES041: Prepaid cards are not accepted, please use a credit or debit card.
+RA001: Could not confirm the payment. Please try again.
+ES042: The coupon {{couponCode}} is not valid.
+ES043: The coupon {{couponCode}} is not applicable to {{podDisplayName}}.
+ES044: The coupon code {{couponCode}} is not valid.
+ES045: The coupon {{couponCode}} cannot be reused.
+ES046: The coupon {{couponCode}} is valid only for the first booking.
+ES047: The coupon {{couponCode}} is not valid for the selected dates.
+ES048: The coupon {{couponCode}} is not valid for this event type.
+ES050: One or more Play Passes aren't valid for this purchase.
+ES051: One or more Play Passes have expired.
+ES052: Only {{maxDailyEventSignupsWithPackages}} Play Pass can be redeemed per day. You can continue to sign-up for this event by removing your Play Pass.
+ES060: You reached the maximum of {{count}} simultaneous upcoming {{eventCustomType}} events.
+UR009: Your DUPR account is not connected.
+UR010: Your rating is not available.
+UR011: Your {{rating}} rating is too low for this event. It must be at least {{minRating}}.
+UR012: Your {{rating}} rating is too high for this event. It must be at most {{maxRating}}.
+
+No links
+
+GET
+/events/{eventId}/signups
+
+Parameters
+Try it out
+Name	Description
+eventId *
+string
+(path)
+Example : 65d283a0-3a78-4792-8e0d-6499c5f1bd29
+
+65d283a0-3a78-4792-8e0d-6499c5f1bd29
+includeCanceled
+boolean
+(query)
+Include canceled signups
+
+Example : true
+
+
+true
+expand
+array[string]
+(query)
+Example : List []
+
+Responses
+Code	Description	Links
+200	
+Returns a EventSignupCollection
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "items": [
+    {
+      "id": "string",
+      "type": "PREVIEW",
+      "status": "DRAFT",
+      "passesStrategy": "USE_ALL",
+      "availableGuests": {
+        "items": [
+          {
+            "id": "string",
+            "displayName": "string",
+            "guests": 0,
+            "rate": 0
+          }
+        ],
+        "_total": 0,
+        "_links": {
+          "self": {
+            "href": "string"
+          }
+        }
+      },
+      "kids": {
+        "items": [
+          "string"
+        ],
+        "_total": 0,
+        "_links": {
+          "self": {
+            "href": "string"
+          }
+        }
+      },
+      "coupon": {
+        "id": "string",
+        "code": "string",
+        "discountType": "AMOUNT_OFF",
+        "value": 0,
+        "_links": {
+          "self": {
+            "href": "string"
+          }
+        }
+      },
+      "summary": {
+        "event": {
+          "id": "string"
+        },
+        "invitation": {
+          "id": "string"
+        },
+        "openInvitation": {
+          "id": "string"
+        },
+        "currency": "string",
+        "rates": {
+          "signup": 0,
+          "guests": 0,
+          "teamLeader": 0,
+          "teamMember": 0
+        },
+        "subtotal": 0,
+        "taxes": [
+          {
+            "name": "string",
+            "amount": 0,
+            "percentage": 0
+          }
+        ],
+        "virtualCredits": 0,
+        "couponDiscount": 0,
+        "passes": {
+          "items": [
+            {
+              "id": {},
+              "available": 0,
+              "quantity": 0,
+              "displayName": "string",
+              "displayNamePlural": "string",
+              "rate": 0
+            }
+          ],
+          "_total": 0,
+          "_links": {}
+        },
+        "total": 0,
+        "errors": [
+          {
+            "code": "string",
+            "message": "string",
+            "details": {}
+          }
+        ]
+      },
+      "owner": {
+        "id": "string"
+      },
+      "order": {
+        "id": "string"
+      },
+      "_links": {}
+    }
+  ],
+  "_total": 0,
+  "_links": {
+    "self": {
+      "href": "string"
+    }
+  }
+}
+No links
+
+GET
+/events/{eventId}/signups/{signupId}
+
+Parameters
+Try it out
+Name	Description
+expand
+array[string]
+(query)
+Example : List []
+
+signupId *
+string
+(path)
+Example : 46c0c528-324a-4e09-81e1-7c2d8e500b42
+
+46c0c528-324a-4e09-81e1-7c2d8e500b42
+eventId *
+string
+(path)
+Example : 65d283a0-3a78-4792-8e0d-6499c5f1bd29
+
+65d283a0-3a78-4792-8e0d-6499c5f1bd29
+Responses
+Code	Description	Links
+200	
+Returns a EventSignup
+
+Media type
+
+application/json
+Controls Accept header.
+Example Value
+Schema
+{
+  "id": "string",
+  "type": "PREVIEW",
+  "status": "DRAFT",
+  "passesStrategy": "USE_ALL",
+  "availableGuests": {
+    "items": [
+      {
+        "id": "string",
+        "displayName": "string",
+        "guests": 0,
+        "rate": 0
+      }
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "kids": {
+    "items": [
+      "string"
+    ],
+    "_total": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "coupon": {
+    "id": "string",
+    "code": "string",
+    "discountType": "AMOUNT_OFF",
+    "value": 0,
+    "_links": {
+      "self": {
+        "href": "string"
+      }
+    }
+  },
+  "summary": {
+    "event": {
+      "id": "string"
+    },
+    "invitation": {
+      "id": "string"
+    },
+    "openInvitation": {
+      "id": "string"
+    },
+    "currency": "string",
+    "rates": {
+      "signup": 0,
+      "guests": 0,
+      "teamLeader": 0,
+      "teamMember": 0
+    },
+    "subtotal": 0,
+    "taxes": [
+      {
+        "name": "string",
+        "amount": 0,
+        "percentage": 0
+      }
+    ],
+    "virtualCredits": 0,
+    "couponDiscount": 0,
+    "passes": {
+      "items": [
+        {
+          "id": {},
+          "available": 0,
+          "quantity": 0,
+          "displayName": "string",
+          "displayNamePlural": "string",
+          "rate": 0
+        }
+      ],
+      "_total": 0,
+      "_links": {}
+    },
+    "total": 0,
+    "errors": [
+      {
+        "code": "string",
+        "message": "string",
+        "details": {}
+      }
+    ]
+  },
+  "owner": {
+    "id": "string"
+  },
+  "order": {
+    "id": "string"
+  },
+  "_links": {}
+}
+No links
+
+POST
+/events/{eventId}/signups/{signupId}/cancellation
+
+
+GET
+/events/{eventId}/signups/{signupId}/cancellation
+
+
+GET
+/events/{eventId}/attendees
+
+
+POST
+/events/{eventId}/reschedules
+
+
+PUT
+/events/{eventId}/visibility-schedules
+
+
+GET
+/events/{eventId}/visibility-schedules
+
+
+DELETE
+/events/{eventId}/visibility-schedules
+
+
+PUT
+/events/{eventId}/admission-rate
+
+
+GET
+/events/{eventId}/admission-rate
+
+
+PUT
+/events/{eventId}/admission-date
+
+
+GET
+/events/{eventId}/admission-date
+
+
+GET
+/events/{eventId}/coaches
+
+
+POST
+/events/{eventId}/coaches
+
+
+GET
+/events/{eventId}/tournament-division
+
+
+POST
+/events/{eventId}/tournament-division
+
+
+PATCH
+/events/{eventId}/tournament-division
+
+
+GET
+/events/{eventId}/invitations
+
+
+POST
+/events/{eventId}/invitations
+
+
+GET
+/events/{eventId}/invitations/{invitationId}
+
+
+PATCH
+/events/{eventId}/invitations/{invitationId}
+
+
+DELETE
+/events/{eventId}/invitations/{invitationId}
+
+
+POST
+/events/{eventId}/invitations/{invitationId}/acceptance
+
+
+GET
+/events/{eventId}/invitations/{invitationId}/check-in
+
+
+POST
+/events/{eventId}/invitations/{invitationId}/check-in
+
+
+DELETE
+/events/{eventId}/invitations/{invitationId}/check-in
+
+
+POST
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination-proof
+
+
+GET
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination-proof/vaccination-proof
+
+
+GET
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination-proof/customer-id
+
+
+GET
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination
+
+
+POST
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination
+
+
+PUT
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination
+
+
+DELETE
+/events/{eventId}/invitations/{invitationId}/invitee-vaccination
+
+
+GET
+/events/{eventId}/invitations/{invitationId}/invitee-metadata
+
+
+POST
+/events/{eventId}/participants
+
+
+GET
+/events/{eventId}/waitlist
+
+
+POST
+/events/{eventId}/waitlist
+
+
+GET
+/events/{eventId}/waitlist/{waitlistedUserId}
+
+
+DELETE
+/events/{eventId}/waitlist/{waitlistedUserId}
+
+
+GET
+/events/recurrence/{recurrenceId}
+
+
+PATCH
+/events/recurrence/{recurrenceId}
+
+
+GET
+/events/recurrence/{recurrenceId}/events
+
+Series
+Multi-event series and league management.
+
+
+
+GET
+/series/{seriesId}
+
+
+PATCH
+/series/{seriesId}
+
+
+GET
+/series/{seriesId}/events
+
+
+GET
+/series/{seriesId}/signups
+
+
+POST
+/series
+
+
+POST
+/series/{seriesId}/cancellation
+
+
+DELETE
+/series/{seriesId}/visibility-schedules
+
+
+POST
+/series/{seriesId}/settlement
+
+
+PUT
+/series/{seriesId}/notes/{noteId}
+
+
+GET
+/series/{seriesId}/notes
+
+Recurrent Bookings
+Recurring booking schedules and templates.
+
+
+
+POST
+/bookings/recurrences
+
+
+GET
+/bookings/recurrences/tasks/{taskId}
+
+Payments
+Financial transactions, orders, refunds, and payment processing.
+
+
+
+GET
+/payments/{paymentId}
+
+
+GET
+/payments/{paymentId}/stripe/{stripePaymentId}
+
+Orders
+Order creation, updates, and fulfillment.
+
+
+
+GET
+/orders
+
+
+POST
+/orders
+
+
+GET
+/orders/{orderId}
+
+
+GET
+/orders/{orderId}/passes
+
+
+GET
+/orders/{orderId}/virtual-credits-transactions
+
+
+POST
+/orders/{orderId}/cancellation
+
+
+GET
+/orders/{orderId}/cancellations
+
+
+POST
+/orders/{orderId}/confirmation
+
+
+POST
+/orders/{orderId}/authentication
+
+Refunds
+Refund processing and management.
+
+
+
+POST
+/refunds
+
+Payouts
+Payouts to coaches, instructors, and partners.
+
+
+
+GET
+/payouts/{stripeAccountId}
+List all payouts
+
+
+GET
+/payouts/{stripeAccountId}/{payoutId}
+Get a payout by ID
+
+
+GET
+/payouts/{stripeAccountId}/{payoutId}/reconciliation
+Get reconciliation summary for a payout
+
+
+POST
+/payouts/{stripeAccountId}/{payoutId}/reconciliation
+Reconcile a payout with settlements
+
+
+POST
+/payouts/{stripeAccountId}/sync
+Sync historical payouts from Stripe
+
+
+POST
+/payouts/{stripeAccountId}/{payoutId}/reconciliation/transactions/{transactionId}
+Reconcile a single balance transaction for the payout
+
+Settlements
+Financial settlements and reconciliation.
+
+
+
+GET
+/settlements
+
+Transfers
+Transfer bookings and credits between users.
+
+
+
+POST
+/transfers/{transferId}/reverse
+
+Receipts
+Transaction receipts and invoice generation.
+
+
+
+POST
+/payments/{paymentId}/receipts
+
+
+GET
+/settlements/{settlementId}/receipts
+
+
+POST
+/settlements/{settlementId}/receipts
+
+
+POST
+/users/{userId}/expense-reports
+
+Coaching
+Coach profiles, availability, bookings, and payment tiers.
+
+
+Coaches
+Coach profiles, tiers, availability, and lesson bookings.
+
+
+
+GET
+/coaches/tiers
+
+
+POST
+/coaches/tiers
+
+
+GET
+/coaches/tiers/{tierId}
+
+
+PATCH
+/coaches/tiers/{tierId}
+
+
+DELETE
+/coaches/tiers/{tierId}
+
+
+GET
+/coaches
+
+
+GET
+/coaches/{coachId}
+
+
+GET
+/coaches/{coachId}/settings
+
+
+PATCH
+/coaches/{coachId}/settings
+
+
+GET
+/coaches/{coachId}/settings/areas
+
+
+GET
+/coaches/{coachId}/settings/areas/{coachSettingsAreaId}
+
+
+PATCH
+/coaches/{coachId}/settings/areas/{coachSettingsAreaId}
+
+
+GET
+/coaches/{coachId}/settings/areas/{coachSettingsAreaId}/availability
+
+
+POST
+/coaches/{coachId}/settings/areas/{coachSettingsAreaId}/availability
+
+
+PATCH
+/coaches/{coachId}/settings/areas/{coachSettingsAreaId}/availability
+
+
+GET
+/coaches/{coachId}/students
+
+
+POST
+/coaches/{coachId}/students
+
+
+DELETE
+/coaches/{coachId}/students/{userId}
+
+
+GET
+/coaches/{coachId}/settings/payments-account
+
+
+POST
+/coaches/{coachId}/settings/payments-account
+
+
+PATCH
+/coaches/{coachId}/settings/payments-account
+
+
+DELETE
+/coaches/{coachId}/settings/payments-account
+
+
+POST
+/coaches/{coachId}/orders
+
+Point of Sale
+Retail products, inventory, and in-venue purchases.
+
+
+Products
+Product catalog and inventory management.
+
+
+
+GET
+/pos/products
+
+
+POST
+/pos/products
+
+
+POST
+/pos/products/export
+
+
+GET
+/pos/products/{productId}
+
+
+DELETE
+/pos/products/{productId}
+
+
+PATCH
+/pos/products/{productId}
+
+
+POST
+/pos/products/import
+
+ProductOfferings
+Product pricing, variants, and availability.
+
+
+
+GET
+/pos/product-offerings
+
+
+POST
+/pos/product-offerings
+
+
+PATCH
+/pos/product-offerings
+
+
+GET
+/pos/product-offerings/feed
+
+
+GET
+/pos/product-offerings/{productOfferingId}/settings
+
+
+GET
+/pos/product-offerings/{productOfferingId}
+
+
+DELETE
+/pos/product-offerings/{productOfferingId}
+
+
+PATCH
+/pos/product-offerings/{productOfferingId}
+
+
+POST
+/pos/product-offerings/bulk-delete
+
+
+GET
+/pos/product-offerings/{productOfferingId}/stock-transactions/{stockTransactionId}
+
+
+GET
+/pos/product-offerings/{productOfferingId}/stock-transactions
+
+
+POST
+/pos/product-offerings/{productOfferingId}/stock-transactions
+
+Product Categories
+Product category organization and hierarchy.
+
+
+
+GET
+/pos/products/categories
+
+
+POST
+/pos/products/categories
+
+
+PATCH
+/pos/products/categories
+
+
+GET
+/pos/products/categories/{productCategoryId}
+
+
+DELETE
+/pos/products/categories/{productCategoryId}
+
+
+PATCH
+/pos/products/categories/{productCategoryId}
+
+
+PUT
+/pos/products/categories/{productCategoryId}/tax-category
+
+
+DELETE
+/pos/products/categories/{productCategoryId}/tax-category
+
+Product Subcategories
+Product subcategory management.
+
+
+
+GET
+/pos/products/categories/{productCategoryId}/subcategories
+
+
+POST
+/pos/products/categories/{productCategoryId}/subcategories
+
+
+PATCH
+/pos/products/categories/{productCategoryId}/subcategories
+
+
+GET
+/pos/products/categories/{productCategoryId}/subcategories/{productSubcategoryId}
+
+
+DELETE
+/pos/products/categories/{productCategoryId}/subcategories/{productSubcategoryId}
+
+
+PATCH
+/pos/products/categories/{productCategoryId}/subcategories/{productSubcategoryId}
+
+
+PUT
+/pos/products/categories/{productCategoryId}/subcategories/{productSubcategoryId}/tax-category
+
+
+DELETE
+/pos/products/categories/{productCategoryId}/subcategories/{productSubcategoryId}/tax-category
+
+Deprecated Products
+Legacy product endpoints (deprecated).
+
+
+
+GET
+/products
+
+
+GET
+/products/{productId}
+
+Deprecated ProductOfferings
+Legacy product offering endpoints (deprecated).
+
+
+
+GET
+/product-offerings
+
+Tournaments
+Tournament organization, brackets, and competitive match management.
+
+
+
+GET
+/tournaments/formats
+Get available tournament formats
+
+
+POST
+/tournaments/webview-token
+Generate tournament webview JWT token
+
+
+POST
+/tournaments/sync/{tournamentDivisionId}
+Manually trigger a tournament division update
+
+Matches
+Match scheduling, scoring, and results.
+
+
+
+GET
+/matches
+
+Swish Configuration
+Swish tournament platform integration settings.
+
+
+
+GET
+/tenants/{tenantId}/integrations/swish
+
+
+PATCH
+/tenants/{tenantId}/integrations/swish
+
+Promotions
+Coupons, discounts, and gift cards.
+
+
+Coupons
+Coupon codes, discounts, and promotional offers.
+
+
+
+POST
+/coupons
+
+
+GET
+/coupons
+
+
+DELETE
+/coupons/{couponId}
+
+
+PATCH
+/coupons/{couponId}
+
+
+GET
+/coupons/{couponId}
+
+
+PATCH
+/coupons/{couponId}/eligible-users
+
+
+GET
+/coupons/{couponId}/eligible-users
+
+
+GET
+/coupons/{couponId}/summary
+
+Gift Cards
+Gift card purchases and redemption.
+
+
+
+POST
+/gift-cards/redeem
+
+Gift Card Configuration
+Gift card settings and denominations.
+
+
+
+GET
+/tenants/{tenantId}/integrations/square
+
+
+PATCH
+/tenants/{tenantId}/integrations/square
+
+Content
+Media content including video replays and digital assets.
+
+
+Replays
+Video replay recording, processing, and delivery.
+
+
+
+GET
+/replays/{replayId}
+
+POST
+/replays/{playbackId}/enhance
+
+Assets
+Digital asset storage and management.
+
+
+
+POST
+/assets
+
+
+GET
+/assets/{assetId}
+
+
+GET
+/assets/{assetId}/picture
+
+OpenGraph
+Open Graph metadata for social sharing.
+
+
+
+GET
+/open-graph
+
+GET
+/open-graph/replays/{replayId}
+
+GET
+/open-graph/events/{eventId}
+
+GET
+/open-graph/series/{seriesId}
+
+GET
+/open-graph/events/invitations/{sharingKey}
+
+GET
+/open-graph/orders/{orderId}
+Communication
+User messaging and notification systems.
+
+
+InAppMessages
+In-app notifications and announcements.
+
+
+
+GET
+/in-app-messages
+
+
+PATCH
+/in-app-messages/{id}
+
+VoiceMessages
+Voice announcement system for pods.
+
+
+
+POST
+/voice-messages
+
+
+GET
+/voice-messages
+
+
+GET
+/voice-messages/{id}
+
+Configuration
+Tenant settings, API keys, and webhook configurations.
+
+
+Tenants
+Tenant settings, branding, and feature configuration.
+
+
+
+GET
+/tenants/{tenantId}
+
+GET
+/tenants/{tenantId}/settings
+
+GET
+/tenants/{tenantId}/admin-settings
+
+
+GET
+/tenants/{tenantId}/taxonomies
+
+PATCH
+/tenants/current
+
+
+PATCH
+/tenants/current/settings
+
+
+GET
+/tenants/current/branches
+
+GET
+/tenants/current/branches/default
+
+GET
+/tenants/current/branches/{branchId}
+
+PATCH
+/tenants/{tenantId}/taxonomies/{taxonomyId}
+
+
+GET
+/tenants/{tenantId}/taxonomies/event-quick-filters
+
+GET
+/tenants/{tenantId}/taxonomies/event-types
+
+GET
+/tenants/{tenantId}/taxonomies/event-types/{nodeId}/template
+
+GET
+/tenants/{tenantId}/taxonomies/event-tags
+
+GET
+/tenants/{tenantId}/taxonomies/app-menu
+
+GET
+/tenants/{tenantId}/taxonomies/admin-app-menu
+
+Api Keys
+API key management and access control.
+
+
+
+GET
+/api-keys/{apiKeyId}
+
+
+PATCH
+/api-keys/{apiKeyId}
+
+
+GET
+/api-keys
+
+
+POST
+/api-keys
+
+API Keys Configuration
+API key policies and permissions.
+
+
+
+GET
+/tenants/{tenantId}/integrations/api-keys
+
+
+PATCH
+/tenants/{tenantId}/integrations/api-keys
+
+
+GET
+/tenants/{tenantId}/integrations/api-keys/status
+
+
+POST
+/tenants/{tenantId}/integrations/api-keys/change-source
+
+Webhooks
+Incoming webhook endpoints for third-party integrations.
+
+
+
+POST
+/webhooks/users/current
+
+
+POST
+/webhooks/replays/on-premise/status
+
+
+POST
+/webhooks/replays/on-premise/cleanup
+
+
+POST
+/webhooks/stripe
+
+
+POST
+/webhooks/stripe/connect
+
+
+POST
+/webhooks/discourse/notifications
+Outbound Webhooks
+Outbound webhook configuration for event notifications.
+
+
+
+GET
+/outbound-webhooks/events
+
+
+GET
+/outbound-webhooks/{outboundWebhookId}
+
+
+PATCH
+/outbound-webhooks/{outboundWebhookId}
+
+
+DELETE
+/outbound-webhooks/{outboundWebhookId}
+
+
+GET
+/outbound-webhooks
+
+
+POST
+/outbound-webhooks
+
+Integrations
+Third-party service integrations and platform connectors.
+
+
+Segment Configuration
+Segment analytics integration settings.
+
+
+
+GET
+/tenants/{tenantId}/integrations/segment
+
+
+PATCH
+/tenants/{tenantId}/integrations/segment
+
+
+POST
+/tenants/{tenantId}/integrations/segment/sources
+
+
+POST
+/tenants/{tenantId}/integrations/segment/sources/resolve
+
+Discourse Configuration
+Discourse community forum integration.
+
+
+
+GET
+/tenants/{tenantId}/integrations/discourse
+
+
+PATCH
+/tenants/{tenantId}/integrations/discourse
+
+Analytics
+Usage analytics, reporting, and audit trails.
+
+
+
+GET
+/tenants/current/analytics/users
+
+
+GET
+/tenants/current/analytics/users/{userId}
+
+
+GET
+/tenants/current/analytics/utilisation
+
+
+GET
+/tenants/current/analytics/revenue
+
+Reports
+Business reports and data exports.
+
+
+
+POST
+/reports
+
+
+GET
+/reports/{id}
+
+Audit
+Audit logs and activity tracking.
+
+
+
+GET
+/audit-logs
+
+
+GET
+/audit-logs/{auditLogItemId}
+
+Replay Servers
+
+
+GET
+/replay-servers
+
+
+GET
+/replay-servers/available-versions
+
+
+GET
+/replay-servers/branding-assets
+
+
+POST
+/replay-servers/branding-assets
+
+
+PATCH
+/replay-servers/{serverId}/target-version
+
+
+GET
+/replay-servers/pending
+
+
+GET
+/replay-servers/{serverId}/health
+
+
+GET
+/replay-servers/{serverId}/logs
+
+
+GET
+/replay-servers/{serverId}/config
+
+
+PATCH
+/replay-servers/{serverId}/config
+
+
+GET
+/replay-servers/{serverId}/branding
+
+
+GET
+/replay-servers/{serverId}/branding/logo
+
+
+GET
+/replay-servers/{serverId}/branding/postroll
+
+
+GET
+/replay-servers/{serverId}/instant-replay/{cameraId}/branded
+
+
+GET
+/replay-servers/{serverId}/instant-replay/{cameraId}
+
+
+POST
+/replay-servers/{serverId}/snapshot/{cameraId}
+
+
+POST
+/replay-servers/{serverId}/restart
+
+
+GET
+/replay-servers/{serverId}
+
+
+DELETE
+/replay-servers/{serverId}
+
+
+POST
+/replay-servers/approve
+
+Replay Servers - Device Auth
+
+
+POST
+/replay-servers/device
+
+GET
+/replay-servers/device/{serverId}/status
+Screens
+
+
+GET
+/screens
+Get all screens
+
+
+POST
+/screens
+Create a new screen
+
+
+GET
+/screens/{id}
+Get a screen by ID
+
+
+PATCH
+/screens/{id}
+Update a screen
+
+
+DELETE
+/screens/{id}
+Delete a screen
+
+
+POST
+/screens/branding-sync
+Sync branding to all approved replay servers
+
+
+POST
+/screens/sync
+Create screens for all courts with pro-setup (cameraId) that do not have one
+
+
+POST
+/screens/sync/{areaId}
+Create screens for all courts with pro-setup in a specific area
+
+Branding Profiles
+
+
+GET
+/branding-profiles
+Get all branding profiles
+
+
+POST
+/branding-profiles
+Create a new branding profile
+
+
+GET
+/branding-profiles/{id}
+Get a branding profile by ID
+
+
+PATCH
+/branding-profiles/{id}
+Update a branding profile
+
+
+DELETE
+/branding-profiles/{id}
+Delete a branding profile
+
+Admin Replays
+
+
+GET
+/admin/replays
+
+Signup Phone Verifications
+
+
+POST
+/signup/phone-verifications
+Send or verify a phone verification code
+Jobs
+
+
+GET
+/jobs
+List all job schedules (admin read-only)
+
+
+GET
+/jobs/{id}
+Get a job schedule by ID (admin read-only)
+
+
+PATCH
+/jobs/{id}
+Update a job schedule (PODPLAY_ADMIN only)
+
+
+POST
+/jobs/{id}/executions
+Manually trigger a job execution (PODPLAY_ADMIN only)
+
+
+GET
+/jobs/{id}/executions
+List execution records for a specific job (admin read-only)
+
+
+GET
+/jobs/{id}/executions/{executionId}
+Get a single execution record (admin read-only)
+
+
+GET
+/jobs/{jobScheduleId}/activity-logs
+List activity logs for a job schedule (admin read-only)
+
+Custom Emails
+
+
+GET
+/custom-emails/config
+
+
+POST
+/custom-emails
+
+Status
+
+
+GET
+/tenants/current/status/revenue
+
+
+GET
+/tenants/current/status/replays
+
+Templates
+
+
+GET
+/templates
+
+
+POST
+/templates
+
+
+GET
+/templates/{id}
+
+
+PATCH
+/templates/{id}
+
+
+DELETE
+/templates/{id}
+
+
+GET
+/templates/{id}/versions
+
+
+POST
+/templates/{id}/rollback
+
+
+POST
+/templates/from-event/{eventId}
+
+
+POST
+/templates/from-series/{seriesId}
+
+PSP Configuration
+
+
+GET
+/tenants/{tenantId}/integrations/podcredits
+
+
+PATCH
+/tenants/{tenantId}/integrations/podcredits
+
+PSP Callbacks
+
+
+POST
+/psp/callback
+
+Virtual Credits Redemptions
+
+
+POST
+/virtual-credits/redemptions
+
+
+GET
+/virtual-credits/redemptions/pending
+
+
+PATCH
+/virtual-credits/redemptions/{id}/cancel
+
+
+PATCH
+/virtual-credits/redemptions/{id}/sync
+
+Verkada Configuration
+
+
+GET
+/tenants/{tenantId}/integrations/verkada
+
+
+PATCH
+/tenants/{tenantId}/integrations/verkada
+
+GoTab Configuration
+
+
+GET
+/tenants/{tenantId}/integrations/gotab
+
+
+PATCH
+/tenants/{tenantId}/integrations/gotab
+
+GoTab
+
+
+GET
+/gotab/zones
+Get all zones
+
+
+GET
+/gotab/zones/{zoneId}
+Get a zone by ID
+
+
+GET
+/gotab/zones/{zoneId}/spots
+Get all spots by zone ID
+
+Activity Feed
+
+
+GET
+/activity-feed
+
+
+GET
+/activity-feed/{activityFeedId}
+
+UI
+
+
+GET
+/ui/community-events-config
+
+default
+
+
+POST
+/webhooks/events/court-locking
+
+POST
+/webhooks/events/reminder
+
+POST
+/webhooks/events/summary
+
+POST
+/webhooks/users/cleanup
+
+POST
+/webhooks/replays/cleanup
+
+POST
+/webhooks/jobs/executions
+
+Schemas
+UserMembershipSubscriptionSummaryDto
+LinkDto
+LinksDto
+UserMembershipSubscriptionSummaryCollectionDto
+MembershipJobCaptureDto
+ItemRefDto
+MembershipSubscriptionPauseDto
+TaxDto
+FeeDto
+ValidationErrorDto
+MessageDto
+MembershipSubscriptionSummaryDto
+MembershipSubscriptionDto
+MembershipSubscriptionCollectionDto
+PackageItemConstraintsDto
+PackageItemDto
+PackageItemCollectionDto
+PackageItemRedemptionDto
+PackageItemRedemptionCollectionDto
+PackageDto
+PackageCollectionDto
+MembershipSubscriptionPatchableDto
+ErrorDto
+MembershipEnrollmentDto
+MembershipEnrollmentCollectionDto
+MembershipEnrollmentInvitationDto
+MembershipEnrollmentInvitationCollectionDto
+MembershipEnrollmentReactivationSummaryDto
+MembershipEnrollmentReactivationDto
+MembershipEnrollmentCancellationSummaryDto
+MembershipEnrollmentCancellationDto
+MembershipEnrollmentPauseSummaryDto
+MembershipEnrollmentPauseDto
+MembershipEnrollmentUnpauseSummaryDto
+MembershipEnrollmentUnpauseDto
+ItemRefCollectionDto
+UserSignupDto
+CollectionRefDto
+UserDto
+PaginationDto
+UserCollectionDto
+UserPatchableDto
+EventReplayPaginatedCollectionDto
+UserContactDto
+UserContactCollectionDto
+VirtualCreditsTransactionDto
+VirtualCreditsTransactionsPaginatedCollectionDto
+UserPreferencesPatchableDto
+FrontChatDto
+ImageDto
+UserChatDto
+UserChatPatchableDto
+UserQuotasBookingAreaDailyDto
+UserQuotasBookingAreaDailyCollectionDto
+UserQuotasBookingAreaDto
+UserBookingSettingsDto
+UserQuotasBookingPodDto
+UserBookingSettingsPodDto
+UserBookingSettingsPodCollectionDto
+UserKidDto
+UserKidCollectionDto
+EventInvitationDto
+EventInvitationCollectionDto
+UserAgreementDto
+UserAgreementCollectionDto
+FeatureFlagDto
+FeatureFlagsCollectionDto
+UserPhoneNumberDto
+PaymentMethodStripeDto
+PaymentCardStripeDto
+PaymentCardDto
+PaymentBankAccountDto
+PaymentMethodDto
+PaymentMethodStripeEphemeralKeyDto
+PaymentMethodStripeSetupIntentDto
+UserPaymentMethodDeletionWrapperDto
+UserProfileDto
+DeviceDto
+UserRatingsDto
+UserRatingsCollectionDto
+UserNotesDto
+ActivityFeedPaginationContextDto
+ActivityFeedDto
+PaginatedActivityFeedCollectionDto
+AgreementDto
+AgreementCollectionDto
+AssetUploadDto
+AssetDto
+CameraConfigDto
+ReplayServerConfigDto
+ReplayServerDto
+ReplayServerCollectionDto
+VersionDto
+AvailableVersionsResponseDto
+BrandingAssetDto
+BrandingAssetsResponseDto
+BrandingAssetUploadDto
+SetTargetVersionDto
+ApproveReplayServerDto
+RegisterDeviceDto
+RegisterDeviceResponseDto
+PendingUpdateDto
+DeviceStatusResponseDto
+AssetRefDto
+BrandingProfileDto
+ScreenDto
+ScreenCollectionDto
+CreateScreenDto
+PatchableScreenDto
+BrandingProfileCollectionDto
+CreateBrandingProfileDto
+PatchableBrandingProfileDto
+TenantReleaseDto
+TenantDto
+TenantSettingDto
+TenantSettingCollectionDto
+TaxonomyNodeDto
+TenantTaxonomyDto
+TenantPatchableDto
+TenantBranchDto
+TenantBranchCollectionDto
+EventTagsNodeDto
+AppMenuNodeDto
+AdminAppMenuNodeDto
+AdminAppMenuNodeCollectionDto
+PodAddressDto
+TermsDto
+CourtSettingDto
+CourtSettingsCollectionDto
+TableDto
+TableCollectionDto
+TimeDto
+PodClosedTimeOverrideDto
+PodClosedTimeOverrideCollectionDto
+ExtraGuestsDto
+PodGuestsDto
+PodSettingDto
+PodSettingsCollectionDto
+VenueSettingDto
+VenueSettingCollectionDto
+PodDto
+PodCollectionDto
+PdkDeviceDto
+PdkDeviceCollectionDto
+VerkadaDoorDto
+VerkadaDoorCollectionDto
+HolidayScheduleBandPricingDto
+HolidayScheduleBandPricingCollectionDto
+HolidayScheduleDateDto
+HolidayScheduleDateCollectionDto
+HolidayScheduleBandRangeDto
+HolidayScheduleBandRangeCollectionDto
+HolidayScheduleMembershipScheduleDto
+HolidayScheduleMembershipScheduleCollectionDto
+HolidayScheduleSingleDayScheduleDto
+HolidayScheduleDto
+HolidayScheduleCollectionDto
+PatchableHolidayScheduleBandPricingDto
+PatchableHolidayScheduleBandPricingCollectionDto
+PatchableHolidayScheduleDateDto
+PatchableHolidayScheduleDateCollectionDto
+PatchableHolidayScheduleBandRangeDto
+PatchableHolidayScheduleBandRangeCollectionDto
+PatchableHolidayScheduleMembershipScheduleDto
+PatchableHolidayScheduleMembershipScheduleCollectionDto
+PatchableHolidayScheduleSingleDayScheduleDto
+PatchableHolidayScheduleDto
+PodRatesDto
+CourtRefWithPriorityDto
+CourtRefWithPriorityCollectionDto
+CourtPodMigrationDto
+AreaAddressCoordinatesDto
+AreaAddressDto
+CoachRateDto
+CoachProfileDto
+AreaCoachAvailabilityDto
+AreaCoachAvailabilityCollectionDto
+RegionSettingDto
+RegionSettingsCollectionDto
+RegionDto
+AreaSettingDto
+AreaSettingsCollectionDto
+ReplayPricingQuickReplayDto
+ReplayPricingIntervalDto
+ReplayPricingCustomReplayDto
+ReplayPricingEnhancedReplayDto
+ReplayPricingDto
+AreaDto
+AreaCollectionDto
+AreaBrandingSettingDto
+AreaBrandingSettingsCollectionDto
+AccessDto
+LockerRoomDto
+LockerRoomCollectionDto
+CoachTierCancellationPolicyTimeRangeDto
+CoachTierCancellationPolicyDto
+CoachTierDto
+CoachTierCollectionDto
+CoachTierPatchableDto
+PaginatedCoachProfileCollectionDto
+CoachSettingsSwitchCushionDto
+CoachSettingsStudentsListDto
+CoachSettingsDto
+CoachSettingsAreaNoticeCushionDto
+CoachSettingsAreaAvailabilityDto
+CoachSettingsAreaAvailabilityCollectionDto
+CoachSettingsAreaDto
+CoachSettingsAreaCollectionDto
+CoachSettingsAreaPatchableDto
+PaymentsAccountDto
+PaymentStripeOutcomeDto
+PaymentStripeDto
+PaymentDto
+ReverseTransferDto
+TransferDto
+CouponDto
+BaseCollectionDto
+CouponCollectionDto
+CouponSummaryDto
+MembershipPlanDto
+MembershipBenefitDto
+MembershipBenefitsCollectionDto
+MembershipSettingDto
+MembershipSettingsCollectionDto
+OneTimePriceOptionDto
+OneTimePriceOptionsCollectionDto
+MembershipDto
+MembershipCollectionDto
+RegionCollectionDto
+OrderPassDto
+OrderPassCollectionDto
+EventCancellationSummaryRefundDto
+EventCancellationSummaryDto
+EventCancellationDto
+EventNoteDto
+EventNoteCollectionDto
+OpenInvitationDto
+OpenInvitationEmailDto
+OpenInvitationSMSDto
+EventSettlementDetailDto
+EventSettlementDetailCollectionDto
+CoachSettlementDetailDto
+CoachSettlementDetailCollectionDto
+EventSettlementDto
+PaymentCollectionDto
+EventStatsDto
+EventStatsRevenueProceedsDto
+EventStatsRevenueDto
+OrderItemDto
+OrderItemCollectionDto
+ReplayVideoDto
+ReplayChargeOptionPricingDto
+ReplayChargeOptionDto
+ReplaySummaryDto
+ReplayDto
+ReplayCollectionDto
+LikeDto
+LikeCollectionDto
+ReservationSessionDto
+ReservationSessionCollectionDto
+ReservationDto
+ReservationCollectionDto
+EventTableDto
+EventTableCollectionDto
+GuestsDto
+EventAdmissionRatingDto
+PodPassRateDto
+EventAdmissionRateMembershipDto
+EventAdmissionRateMembershipCollectionDto
+EventAdmissionRateDto
+EventAdmissionDateMembershipDto
+EventAdmissionDateMembershipCollectionDto
+EventAdmissionDateDto
+SwishDto
+PodPlayTournamentDto
+TournamentDivisionDto
+EventVisibilityScheduleDto
+EventVisibilityScheduleCollectionDto
+UserProfileCollectionDto
+EventTeamDto
+EventTeamCollectionDto
+EventDto
+EventPaginatedCollectionDto
+OpenInvitationRedeemDto
+EventPatchableDto
+EventTablePatchableDto
+EventCloneDto
+EventChatChannelDto
+EventSignupGuestsOptionDto
+EventSignupGuestsOptionCollectionDto
+EventSignupSummaryRatesDto
+EventSignupSummaryDto
+EventSignupDto
+EventSignupCollectionDto
+EventSignupCancellationDto
+EventAttendeeDto
+EventAttendeeCollectionDto
+EventRescheduleDto
+CoachProfileCollectionDto
+CoachAdditionRateDto
+EventCoachAdditionSummaryDto
+InviteeCheckInDto
+InviteeVaccinationDto
+InvitationInviteeDto
+InvitationDto
+EventCoachAdditionDto
+CreateTournamentDivisionDto
+PatchTournamentDivisionDto
+InvitationCollectionDto
+InvitationInviteePatchDto
+InvitationPatchDto
+InvitationAcceptanceSummaryDto
+InvitationAcceptanceDto
+InviteeVaccinationProofDto
+InviteeMetadataDto
+BookingParticipantDto
+PatchableInAppMessageDto
+AuditLogPaginatedCollectionDto
+AuditLogUserDto
+AuditLogIpAsnDto
+AuditLogIpDto
+AuditLogRequestRouteDto
+AuditLogRequestDto
+AuditLogResponseDto
+AuditLogTagCollectionDto
+AuditLogDto
+TransferCollectionDto
+OrderItemCancellationSummaryDto
+OrderItemCancellationDto
+OrderItemCancellationCollectionDto
+DeprecatedProductPictureDto
+DeprecatedProductDto
+DeprecatedProductCollectionDto
+EventCollectionDto
+OrderDto
+OrderCollectionDto
+OrderItemCreationDto
+OrderCreationDto
+OrderAuthenticationDto
+AmountSummaryDto
+DeprecatedProductOfferingDto
+DeprecatedProductOfferingCollectionDto
+ApiKeyDto
+ApiKeyCollectionDto
+ApiKeyPatchableDto
+ApiKeysConfigDto
+ApiKeysConfigStatusDto
+ApiKeysConfigPatchDto
+ApiKeysChangeSourceDto
+UserPaymentElementCollectionDto
+UserPaymentElementDto
+UserPaymentElementContextAvailabilityCollectionDto
+UserPaymentElementContextAvailabilityPatchableDto
+UserPaymentElementContextAvailabilityDto
+SegmentSourceInfoDto
+SegmentConfigurationDto
+SegmentConfigurationPatchDto
+CreateSegmentSourceDto
+AdminReplayPaginatedCollectionDto
+ReplayEnhancementDto
+WaitlistedUserDto
+WaitlistedUserCollectionDto
+CreateWaitlistedUserDto
+TerminalDto
+TerminalCollectionDto
+DiscourseConfigDto
+DiscourseConfigPatchDto
+SignupPhoneVerificationDto
+SignupPhoneVerificationSessionDto
+PatchablePackageDto
+PatchablePackageItemDto
+PackageTemplateGrantPreviewMembershipDto
+PackageTemplateGrantPreviewDto
+PackageTemplateGrantResultDto
+PackageTemplateItemDto
+PackageTemplateItemCollectionDto
+PackageTemplateDto
+PackageTemplateCollectionDto
+PackageTemplatePatchableDto
+PackageTemplateGrantDto
+PackageHistoryDto
+PackageHistoryCollectionDto
+RefundDto
+SeriesMembershipPriceOverrideItemDto
+SeriesMembershipPriceOverridesCollectionDto
+SeriesPriceSettingsMembersDto
+SeriesPriceSettingsNonMembersDto
+SeriesPriceSettingsItemDto
+SeriesPriceSettingsDto
+SeriesDto
+SeriesSettlementDetailCollectionDto
+SeriesSettlementDto
+SeriesNoteDto
+SeriesNoteCollectionDto
+TournamentFormatsResponseDto
+TournamentWebviewTokenDto
+SwishConfigurationDto
+SwishConfigurationPatchDto
+EventsRecurrenceDto
+RecurrencePatchableEventDto
+ProductCategoryDto
+PaginatedProductCategoryCollectionDto
+ProductCategoryPatchableDto
+ProductCategoryCollectionPatchableDto
+ProductCategoryCollectionDto
+TaxCategoryAssignmentDto
+ProductSubcategoryDto
+PaginatedProductSubcategoryCollectionDto
+ProductSubcategoryPatchableDto
+ProductSubcategoryCollectionPatchableDto
+ProductSubcategoryCollectionDto
+ProductDto
+PaginatedProductCollectionDto
+ProductImportSummaryDto
+ProductOfferingSettingsDto
+ProductOfferingDiscountDto
+ProductOfferingDto
+PaginatedProductOfferingCollectionDto
+ProductOfferingCollectionDto
+ProductOfferingCollectionPatchableDto
+ProductOfferingStockTransactionDto
+ProductOfferingStockTransactionsPaginatedCollectionDto
+TaxCategoryDto
+TaxCategoryCollectionDto
+AnalyticsUsersStatsDto
+AnalyticsUserMonthlyStatsDto
+AnalyticsUserMonthlyStatsCollectionDto
+AnalyticsPodUtilisationStatsDto
+AnalyticsPodUtilisationStatsCollectionDto
+AnalyticsPodRevenueStatsDto
+AnalyticsPodRevenueStatsCollectionDto
+OutboundWebhookEventDto
+OutboundWebhookEventCollectionDto
+OutboundWebhookDto
+OutboundWebhookCollectionDto
+OutboundWebhookPatchableDto
+ProximityLoginRequestDto
+ScramCredentialsDto
+ProximityLoginResponseDto
+ProximitySyncUserJobDto
+ProximitySyncOperationLineDto
+ProximitySyncUserJobResultDto
+BookingAdmissionRateDto
+BookingAdmissionDateDto
+BookingAdmissionRatingDto
+BookingItemReservationSessionDto
+BookingSummaryItemReservationDto
+BookingSummaryDto
+BookingRecurrenceDto
+BookingDto
+SessionGuestsDto
+BookingGuestModificationAmountDto
+BookingGuestModificationSummaryDto
+BookingGuestModificationDto
+BookingCollectionDto
+RecurrentBookingDto
+RecurrentBookingTaskDto
+SessionGuestsCollectionDto
+SessionTableDto
+SessionTableCollectionDto
+SessionDto
+SessionCollectionDto
+SessionCoachDto
+SessionCoachCollectionDto
+CoachTransferDto
+JobScheduleCollectionDto
+JobExecutionCollectionDto
+JobScheduleDto
+JobSchedulePatchableDto
+JobExecutionCreatableDto
+JobExecutionDto
+JobScheduleActivityLogCollectionDto
+CustomersExportUsersFiltersDto
+ReportDto
+SettlementFinancialsDto
+SettlementLineItemDto
+SettlementLineItemCollectionDto
+SettlementDto
+SettlementCollectionDto
+CustomerSettlementSummaryDto
+CustomerSettlementLineItemDto
+CustomerSettlementLineItemCollectionDto
+CustomerSettlementDto
+CustomerSettlementCollectionDto
+PayoutStatusDto
+PayoutDto
+PayoutCollectionDto
+ReconciliationIssuesSummaryDto
+UnmatchedTransactionDto
+PayoutReconciliationSummaryDto
+PayoutSyncErrorDto
+PayoutSyncResponseDto
+ReconciliationErrorDto
+ReconciliationStatsDto
+PayoutReconciliationDto
+CustomEmailConfigDto
+CustomEmailContextDto
+CustomEmailDto
+OAuth2AccessTokenRequestPasswordDto
+OAuth2AccessTokenRequestRefreshTokenDto
+OAuth2AccessTokenRequestAuthorizationCodeDto
+OAuth2AccessTokenRequestMagicLinkDto
+OAuth2AccessTokenRequestOtpDto
+OAuth2AccessTokenRequestSignUpDto
+OAuth2AccessTokenRequestSwaggerExampleDto
+OAuth2AccessTokenDto
+OAuth2AccessTokenErrorDto
+OAuth2AccessTokenRequestWebviewAuthDto
+SSOAuthorizationDiscourseConnectDto
+SSOAuthorizationOauth2AuthorizationCodeDto
+UserCredentialsPatchableDto
+OpenGraphEventDto
+OpenGraphDto
+OrderExpenseReportDto
+RevenueStatsDto
+RevenueStatsCollectionDto
+SuspendedEventDto
+SuspendedEventCollectionDto
+SuspensionDto
+SuspensionPaginatedCollectionDto
+SuspendedEventPaginatedCollectionDto
+PatchableSuspensionDto
+SuspensionCollectionDto
+ScopeItemCollectionDto
+TemplateDto
+TemplateCollectionDto
+TemplateCreatableDto
+TemplatePatchableDto
+TemplateVersionDto
+TemplateVersionCollectionDto
+TemplateRollbackDto
+TemplateFromSourceDto
+GiftCardDto
+GiftCardRedeemRequestDto
+GiftCardConfigDto
+GiftCardConfigPatchDto
+PodCreditsTokenStatusDto
+PodCreditsConfigDto
+PodCreditsConfigPatchDto
+PSPCallbackRequestDto
+PSPCallbackResponseDto
+CreateVirtualCreditsRedemptionDto
+VirtualCreditsRedemptionRedirectUrlResponseDto
+VirtualCreditsRedemptionBaseResponseDto
+VerkadaConfigDto
+VerkadaConfigPatchDto
+VoiceMessageDto
+VoiceMessageCollectionDto
+VoiceDownDto
+ReplayGenerationClientRequestDto
+ReplayCleanupResponseDto
+DiscourseNotificationRequestDto
+GoTabConfigResponseDto
+GoTabConfigPatchDto
+GoTabSpotDto
+GoTabZoneDto
+GoTabZoneCollectionDto
+GoTabSpotCollectionDto
+EventQuickFiltersNodeDto
+EventDiscoveryConfigDto
+PodplayTriggerHeaders
+PodplayTriggerUserCreatedPayload
+PodplayTriggerUserUpdatedPayload
+PodplayTriggerPurchaseCreatedPayload
+PodplayTriggerBookingCreatedPayload
+PodplayTriggerMembershipEnrollmentCreatedPayload
+PodplayTriggerEventCreatedPayload
+PodplayTriggerEventSignupCreatedPayload
+PodplayTriggerEventUpdatedPayload
+PodplayTriggerEventSignupCanceledPayload
