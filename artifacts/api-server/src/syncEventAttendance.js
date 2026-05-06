@@ -139,6 +139,11 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   return true;
 }
 
+// Signup statuses that represent actual confirmed attendance.
+// INVALID = dropped/rejected registration; DRAFT = not yet confirmed.
+// Anything not in this set is excluded from the attendance record.
+const VALID_SIGNUP_STATUSES = new Set(["CONFIRMED", "CHECKED_IN"]);
+
 // ─── Main sync ────────────────────────────────────────────────────────────────
 
 export async function syncEventAttendance(log = console.log, isCancelled = () => false, sinceDays = 0) {
@@ -271,6 +276,14 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
         const player = playerMap.get(externalId);
         if (!player) { unmatched++; continue; }
+
+        // Skip signups that aren't confirmed attendance — INVALID means canceled
+        // or rejected registration; DRAFT means not yet confirmed.
+        const signupStatus = (signup.status ?? "").toUpperCase();
+        if (signupStatus && !VALID_SIGNUP_STATUSES.has(signupStatus)) {
+          unmatched++;
+          continue;
+        }
 
         matched++;
         const attendedAt = toLocalDateString(event.startTime, clubTimezone);
