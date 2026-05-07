@@ -1,0 +1,49 @@
+DBA AUDIT — TRANCHE 3: SYNC, SCHEDULER, JOBSTORE
+Please export the following three files in full. No truncation, no summaries — paste the complete contents of each file with clear section headers between them.
+SECTION 1 — artifacts/api-server/src/lib/syncEventAttendance.js (or .ts)
+The full file. This is the highest-volume write path against the database — pulls events and signups from PodPlay and writes to the attendances table. I need to see:
+
+The PodPlay API call structure (which endpoints, what params, what headers)
+The pagination / batching approach
+The signup status filter (VALID_SIGNUP_STATUSES)
+The attendance write strategy (insert? upsert? on conflict?)
+The rate limiting approach (delay between calls? retry on 429?)
+Error handling (what happens on a single record failure? does the whole sync abort?)
+How booked_at, attended_at, program_type, event_id, level, session_type get extracted from the PodPlay payload
+
+If there is a sibling file syncPlayerAttendance.js that was also recently modified (per the handoff, it was "gutted"), include that too as a sub-section.
+SECTION 2 — artifacts/api-server/src/lib/scheduler.ts
+The full file. This is the nightly orchestrator. I need to see:
+
+All scheduler steps in order (the full chain)
+How each step is invoked (direct function call? job queue? subprocess?)
+How the chain handles a single-step failure (does step 4 still run if step 3 errors?)
+How cancellation propagates (the isCancelled() check)
+The 30-minute feedback poller (separate loop? same scheduler?)
+Timezone handling for clubs.scheduled_sync_time (where is the wall-clock-to-UTC conversion?)
+Any reference to pending_sends (this determines whether we can drop the table)
+
+SECTION 3 — artifacts/api-server/src/lib/jobStore.ts
+The full file. This is the contract every long-running job uses for state. I need to see:
+
+startJob, finishJob, appendJobLog, getJob, isCancelled — the full signatures and bodies
+Whether appendJobLog currently rewrites the entire jobs.logs jsonb array (the write-amp problem) or has been changed
+What happens on concurrent log writes (race condition handling, if any)
+Error handling for the database calls themselves
+
+SECTION 4 — Supporting context (small, just paste what's there)
+Also include:
+
+artifacts/api-server/src/lib/supabaseClient.ts — the shared client singleton. Should be small.
+artifacts/api-server/src/lib/logger.ts — the pino setup. Should be small.
+The exact line in index.ts that calls startScheduler() — just that section, not the whole file.
+Output of: grep -rn "from('messages').insert" artifacts/api-server/src so I can see every place messages get inserted (relevant to the player_id NOT NULL change from yesterday's migration).
+
+Format
+Wrap each file in clear delimiters like:
+═══ FILE: artifacts/api-server/src/lib/syncEventAttendance.js ═══
+[full file contents]
+═══ END FILE ═══
+Don't redact secrets — none of these files should contain any.
+Don't add commentary or summaries between files — I want to read the code as it is, not your interpretation of it.
+If a file doesn't exist, say so explicitly rather than guessing or substituting a similar one.
