@@ -78,6 +78,12 @@ LINK STRATEGY RULE — you will receive a link_strategy value in the player cont
   "ask" — do not include a link. End with one question asking if they want details or the signup link. One question only.
   "soft" — mention the program briefly as something they might find interesting. No link, no ask. Informational only.
 
+FAMILIARITY RULE — you will receive a program_familiarity value for each available program:
+  "regular" — player has done this 5+ times. Never explain what the program is. Never say "you might enjoy" or "this is a great option for". Reference it as something they already know. Example: "The 60&60 is back Thursday — you've been doing well in it lately."
+  "familiar" — player has done this 2-4 times. Skip the description. Acknowledge they know it and add one new piece of information (a date, a spot opening, a relevant detail). Example: "Advanced Beginner Open Play has a good group this Wednesday if you want to get some reps in."
+  "tried_once" — player has done this once. Light context is fine. One sentence max on what it is, then the ask.
+  "new" — player has never done this. Introduce it properly but briefly. Still 1-3 sentences total.
+
 ENGAGEMENT STATE OPENERS — vary the opener based on state passed in the player context:
   active: get straight to the recommendation. They're engaged — no re-engagement framing needed.
   lapsing: acknowledge the gap naturally without making it awkward. "Haven't seen you in a bit" is fine. "We've missed you" is not.
@@ -147,6 +153,22 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   const programs_attended: string[] = [
     ...new Set(sortedAttendance.map((a: any) => a.program_name).filter(Boolean)),
   ] as string[];
+
+  // Build program familiarity map from existing attendance records (no extra query needed)
+  const attendanceCountMap = new Map<string, number>();
+  for (const row of attendance) {
+    if (!row.program_name) continue;
+    const key = (row.program_name as string).trim().toLowerCase();
+    attendanceCountMap.set(key, (attendanceCountMap.get(key) ?? 0) + 1);
+  }
+
+  function getProgramFamiliarity(programName: string): "regular" | "familiar" | "tried_once" | "new" {
+    const count = attendanceCountMap.get(programName.trim().toLowerCase()) ?? 0;
+    if (count >= 5) return "regular";
+    if (count >= 2) return "familiar";
+    if (count === 1) return "tried_once";
+    return "new";
+  }
 
   // Compute engagement state before calling Claude so we can store it on the conversation
   const engagement_state = computeEngagementState(last_visit_date);
@@ -348,10 +370,16 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     .filter(Boolean)
     .join("\n");
 
+  // Annotate each program with familiarity so Claude applies the FAMILIARITY RULE
+  const programsWithFamiliarity = programsForAgent.map((p: any) => ({
+    ...p,
+    program_familiarity: getProgramFamiliarity(p.name ?? ""),
+  }));
+
   const userMessage = [
     `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}`,
     linkStrategyBlock,
-    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsForAgent, null, 2)}`,
+    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsWithFamiliarity, null, 2)}`,
     socialContext,
   ].filter(Boolean).join("\n\n");
 

@@ -1,0 +1,67 @@
+Update POST /api/agent/run in agent.ts.
+
+When building the player context block that gets 
+passed to Claude, add a program familiarity map 
+derived from the player's attendance history.
+
+STEP 1 — Query attendance counts
+Before calling Claude, run this query for the player:
+
+  SELECT program_name, COUNT(*) as times_attended
+  FROM attendances
+  WHERE player_id = $playerId
+  GROUP BY program_name
+
+Build a map: { [program_name]: times_attended }
+
+STEP 2 — For each recommended program, look up 
+familiarity by matching program name (case-insensitive, 
+trim whitespace). Assign a familiarity label:
+
+  times_attended >= 5  → "regular"
+  times_attended 2–4   → "familiar"  
+  times_attended 1     → "tried_once"
+  times_attended 0 
+  or not in map        → "new"
+
+STEP 3 — Add to the Claude prompt context block:
+
+  program_familiarity: "regular" | "familiar" | 
+                       "tried_once" | "new"
+
+STEP 4 — Add these rules to the SYSTEM_PROMPT 
+after the LINK STRATEGY RULE section:
+
+FAMILIARITY RULE — you will receive a 
+program_familiarity value for the recommended program:
+
+  "regular" — player has done this 5+ times. 
+    Never explain what the program is. Never say 
+    "you might enjoy" or "this is a great option for". 
+    Reference it as something they already know. 
+    Example: "The 60&60 is back Thursday — you've 
+    been doing well in it lately."
+
+  "familiar" — player has done this 2-4 times. 
+    Skip the description. Acknowledge they know it 
+    and add one new piece of information (a date, 
+    a spot opening, a relevant detail).
+    Example: "Advanced Beginner Open Play has a 
+    good group this Wednesday if you want to get 
+    some reps in."
+
+  "tried_once" — player has done this once. 
+    Light context is fine. One sentence max 
+    on what it is, then the ask.
+
+  "new" — player has never done this. 
+    Introduce it properly but briefly. 
+    Still 1-3 sentences total.
+
+Do not change anything else in agent.ts.
+
+After updating, run POST /api/agent/run with 
+Kerrie's player_id and paste the message field.
+Expected: the message should reference the 60&60 
+or Advanced Beginner Open Play as something she 
+already knows — no explanation, no "you might enjoy".
