@@ -210,6 +210,7 @@ async function persistMilestone(
     .from("messages")
     .insert({
       conversation_id: conv.id,
+      player_id: playerId,
       body: messageBody,
       direction: "outbound",
       sent_by: "agent",
