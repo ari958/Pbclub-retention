@@ -203,6 +203,7 @@ Make it feel warm and personal. Reference their court partners by first name and
     .from("messages")
     .insert({
       conversation_id: conv.id,
+      player_id: playerId,
       body: messageBody,
       direction: "outbound",
       sent_by: "agent",
