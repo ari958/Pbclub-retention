@@ -1,0 +1,56 @@
+13 seconds is too slow, and we don't yet know why
+The report says "the 13s total is now dominated by the Claude API call and PodPlay I/O." That's a confident assertion without measurement to back it up. We don't actually know where those 13 seconds went. It might be Claude. It might be PodPlay. It might be something else entirely. Without a baseline measurement from before the change, we can't say what the consolidation saved.
+A Claude Sonnet call typically returns in 2-4 seconds for this prompt size. PodPlay calls with our 250ms throttle on 10 events should be ~1.5 seconds (4 batches × 250ms throttle + ~200ms per call in parallel batches of 3). Total expected from those two sources: ~4-6 seconds. That leaves 7-9 seconds unaccounted for.
+Possibilities:
+
+The new player you tested has 0 attendance records, so assembleProfile returned fast — but fetchAvailablePrograms() might be slow. We've never reviewed that file.
+The Anthropic call had no timeout previously and might be hitting tail latency we didn't notice.
+There's another DB query somewhere in the cascade adding hundreds of ms.
+Cold-start effects — first request after a server restart is always slower.
+
+Don't guess. Measure.
+Run this, then we know
+Get me the timing breakdown. Three tests in sequence:
+Test 1 — warm-cache run on a player with rich history
+Pick a player who has attendances and message history (not a brand-new one — Angel got the new-player branch and skipped most of the warm score logic). The dashboard should show some test players with conversation history.
+bash# warm up the server
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<HISTORICAL_PLAYER_ID>"}' > /dev/null
+
+# now time it
+time curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<HISTORICAL_PLAYER_ID>"}' > /tmp/agent_response.json
+Report the time output and paste the response.
+Test 2 — same call, second time (everything cached)
+bashtime curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<HISTORICAL_PLAYER_ID>"}' > /dev/null
+warm_score should be cached now (24h cache hit). PodPlay events list might be fresh. Claude is the same. This isolates the caching wins.
+Test 3 — pull the actual log lines from the server during one agent run
+In the Replit shell, tail the server logs while you fire one agent request. We have req.log.info calls scattered throughout the route. The structured pino logs include timestamps. Grab everything from when the request hit /api/agent/run until the response was sent.
+Specifically I want to see the timestamps on these log lines:
+
+[agent] filtered already-registered events from available programs (or absence of it)
+[agent] warm score computed
+[agent] scheduled send computed
+Plus anything from pino HTTP logging that shows total request time
+
+The deltas between those timestamps will tell us what's actually slow.
+If pino isn't doing HTTP request timing automatically, add ad-hoc instrumentation. Drop these three lines into agent.ts (don't commit; just for measurement):
+typescript// At the very top of the route handler:
+const t0 = Date.now();
+// After the initial Promise.all (after `levelConfidenceRows = ...`):
+req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] data fetch complete");
+// After getPlayerSocialContext returns:
+req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] social context complete");
+// After the Anthropic call returns (after `agentResponse = JSON.parse(raw);`):
+req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] claude complete");
+// Right before res.json():
+req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] response ready");
+Run one agent call, paste the four timing log lines back. We'll know exactly where the 13 seconds go.
+Why I'm pushing on this
+We've done good work. The schema is clean, the writes are routed correctly, the highest-volume sync path is sharp, and now the social graph isn't doing duplicate PodPlay work. But "we made it faster" without a measurement is the kind of claim that comes back to bite. If we ship this and operators report slow agent responses, we'll have no instrumented baseline to debug against.
+Five minutes of measurement now saves an hour of speculation later.
+Run the three tests, paste back the numbers and the log timings. Then we decide whether the agent route is good enough to ship or whether there's one more bottleneck worth fixing.

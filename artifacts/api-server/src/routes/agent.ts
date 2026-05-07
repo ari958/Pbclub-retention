@@ -108,6 +108,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     return;
   }
   const { player_id } = parsed.data;
+  const t0 = Date.now();
 
   // Fetch player profile, live programs, and level confidence in parallel
   let assembled: any;
@@ -125,6 +126,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     assembled = assembledResult;
     available_programs = programsResult;
     levelConfidenceRows = confidenceResult.data ?? [];
+    req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] data fetch complete");
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     const supabaseError = (err as any)?.supabaseError;
@@ -297,6 +299,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   } catch (err) {
     req.log.info({ err }, "Social context fetch skipped (non-fatal)");
   }
+  req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] social context complete");
 
   // ── Warm score + link strategy ────────────────────────────────────────────
   // Pick the top program heuristically (before Claude runs) — prefer level match,
@@ -377,6 +380,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     }
     const raw = text.slice(start, end + 1);
     agentResponse = JSON.parse(raw);
+    req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] claude complete");
   } catch (err: unknown) {
     req.log.error({ err }, "Anthropic API call or JSON parse failed in agent/run");
     res.status(502).json({ error: "Agent call failed", detail: err instanceof Error ? err.message : "Unknown error" });
@@ -464,6 +468,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   };
   if (skip_reason) responseBody.skip_reason = skip_reason;
 
+  req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] response ready");
   res.json(responseBody);
 });
 
