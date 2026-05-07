@@ -1,0 +1,93 @@
+ANTHROPIC CALL HARDENING — three small fixes
+Three changes to the Anthropic call in agent.ts. No new files, no refactors. Make exactly these changes and stop.
+
+FIX 1 — Drop max_tokens from 4096 to 512
+File: artifacts/api-server/src/routes/agent.ts
+In the anthropic.messages.create({ ... }) call, change:
+typescriptmax_tokens: 4096,
+to:
+typescriptmax_tokens: 512,
+The actual response is always under 300 tokens (1–3 sentence SMS plus three small JSON fields). 512 leaves headroom without inflating the budget.
+
+FIX 2 — Add a 30-second timeout
+Same call. Add an AbortSignal so a slow Anthropic response doesn't hang the agent route indefinitely.
+The Anthropic SDK accepts request options as a second argument. Change:
+typescriptconst completion = await anthropic.messages.create({
+  model: "claude-sonnet-4-6",
+  max_tokens: 512,
+  system: SYSTEM_PROMPT,
+  messages: [{ role: "user", content: userMessage }],
+});
+To:
+typescriptconst completion = await anthropic.messages.create(
+  {
+    model: "claude-sonnet-4-6",
+    max_tokens: 512,
+    system: SYSTEM_PROMPT,
+    messages: [{ role: "user", content: userMessage }],
+  },
+  {
+    timeout: 30_000, // 30s ceiling — measured p50 is ~10-11s
+  },
+);
+The Anthropic SDK exposes timeout (in ms) as a per-request option that propagates an AbortSignal internally. Verify the SDK version supports this — if @anthropic-ai/sdk version is older than ~0.20, switch to passing signal: AbortSignal.timeout(30_000) instead.
+If the timeout fires, the SDK throws — the existing try { ... } catch { ... } block already handles that path and returns 502. No additional error handling needed.
+
+FIX 3 — Log Anthropic usage tokens
+Same try block. After the JSON parse succeeds and before the route continues, add a log line capturing the usage data the SDK returns. The completion object has a usage field with input_tokens and output_tokens.
+Find:
+typescript    const raw = text.slice(start, end + 1);
+    agentResponse = JSON.parse(raw);
+  } catch (err: unknown) {
+Insert one line just before the } catch:
+typescript    const raw = text.slice(start, end + 1);
+    agentResponse = JSON.parse(raw);
+    req.log.info(
+      {
+        input_tokens: completion.usage?.input_tokens,
+        output_tokens: completion.usage?.output_tokens,
+        model: completion.model,
+      },
+      "[agent] anthropic usage",
+    );
+  } catch (err: unknown) {
+This gives us the actual input/output token counts on every agent run. Once we see the numbers across a few runs we'll know whether input size is the latency driver or whether Claude is just slow today.
+
+Verification
+
+Build: pnpm -C artifacts/api-server build. Confirm exit 0.
+Restart the dev server. Confirm clean boot.
+Run the same warm-cache timing test as the previous round on the same player (Geoff McKay). Two runs back-to-back:
+
+bash# warmup
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /dev/null
+
+# timed
+time curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /dev/null
+
+# again
+time curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /dev/null
+
+Pull the two [agent] anthropic usage log lines from the server logs. Report:
+
+Wall-clock time for each run
+input_tokens and output_tokens from each run
+
+
+Leave the timing instrumentation from the prior round in place — we want it for this comparison.
+
+That's it. Don't touch other files, don't change the prompt content, don't refactor.
+
+Report back:
+
+The three modified hunks (file + line range)
+Build result
+Server boot result
+Both wall-clock timings
+Both pairs of input/output token counts

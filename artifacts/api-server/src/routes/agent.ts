@@ -364,12 +364,17 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   let agentResponse: any;
   try {
-    const completion = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",
-      max_tokens: 4096,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userMessage }],
-    });
+    const completion = await anthropic.messages.create(
+      {
+        model: "claude-sonnet-4-6",
+        max_tokens: 512,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: "user", content: userMessage }],
+      },
+      {
+        timeout: 30_000, // 30s ceiling — measured p50 is ~10-11s
+      },
+    );
 
     const text = (completion.content[0] as { type: string; text: string }).text;
     const start = text.indexOf("{");
@@ -380,6 +385,14 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     }
     const raw = text.slice(start, end + 1);
     agentResponse = JSON.parse(raw);
+    req.log.info(
+      {
+        input_tokens: completion.usage?.input_tokens,
+        output_tokens: completion.usage?.output_tokens,
+        model: completion.model,
+      },
+      "[agent] anthropic usage",
+    );
     req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] claude complete");
   } catch (err: unknown) {
     req.log.error({ err }, "Anthropic API call or JSON parse failed in agent/run");
