@@ -15,7 +15,7 @@ const JOB_IMPORT_DUPR    = "import_dupr";
 // ─── Player import ────────────────────────────────────────────────────────────
 
 router.post("/import/players", async (req, res) => {
-  const current = await getJob(JOB_IMPORT_PLAYERS);
+  const current = await getJob(JOB_IMPORT_PLAYERS, { withLogs: true });
 
   if (current.status === "running") {
     res.status(409).json({
@@ -93,7 +93,7 @@ router.post("/import/cancel", async (_req, res) => {
 });
 
 router.get("/import/status", async (_req, res) => {
-  const job = await getJob(JOB_IMPORT_PLAYERS);
+  const job = await getJob(JOB_IMPORT_PLAYERS, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -107,7 +107,7 @@ router.get("/import/status", async (_req, res) => {
 // ─── Phone number import ──────────────────────────────────────────────────────
 
 router.post("/import/phone-numbers", async (_req, res) => {
-  const current = await getJob(JOB_IMPORT_PHONES);
+  const current = await getJob(JOB_IMPORT_PHONES, { withLogs: true });
 
   if (current.status === "running") {
     res.status(409).json({
@@ -147,7 +147,7 @@ router.post("/import/phone-numbers", async (_req, res) => {
 });
 
 router.get("/import/phone-numbers/status", async (_req, res) => {
-  const job = await getJob(JOB_IMPORT_PHONES);
+  const job = await getJob(JOB_IMPORT_PHONES, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -177,7 +177,7 @@ router.post("/import/phone-numbers/cancel", async (_req, res) => {
 // ─── DUPR ratings sync ────────────────────────────────────────────────────────
 
 router.post("/import/dupr", async (_req, res) => {
-  const current = await getJob(JOB_IMPORT_DUPR);
+  const current = await getJob(JOB_IMPORT_DUPR, { withLogs: true });
 
   if (current.status === "running") {
     res.status(409).json({
@@ -218,7 +218,7 @@ router.post("/import/dupr", async (_req, res) => {
 });
 
 router.get("/import/dupr/status", async (_req, res) => {
-  const job = await getJob(JOB_IMPORT_DUPR);
+  const job = await getJob(JOB_IMPORT_DUPR, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,

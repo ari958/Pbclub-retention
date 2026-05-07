@@ -328,6 +328,7 @@ router.post("/messages/bulk", async (req, res) => {
     // Insert message record
     await supabase.from("messages").insert({
       conversation_id,
+      player_id: player.id,
       body: interpolated,
       direction: "outbound",
       sent_by: "operator",
@@ -509,6 +510,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
 
       await supabase.from("messages").insert({
         conversation_id: conversationId,
+        player_id: player.id,
         body: Body,
         direction: "inbound",
         sent_by: "player",
@@ -526,6 +528,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
           const sid = await sendViaTwilio(From, retryMsg);
           await supabase.from("messages").insert({
             conversation_id: conversationId,
+            player_id: player.id,
             body: retryMsg,
             direction: "outbound",
             sent_by: "system",
@@ -566,6 +569,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
         const sentAt = new Date().toISOString();
         await supabase.from("messages").insert({
           conversation_id: conversationId,
+          player_id: player.id,
           body: thanksMsg,
           direction: "outbound",
           sent_by: "system",
@@ -610,6 +614,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
 
   await supabase.from("messages").insert({
     conversation_id: conversationId,
+    player_id: player.id,
     body: Body,
     direction: "inbound",
     sent_by: "player",

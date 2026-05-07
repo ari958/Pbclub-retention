@@ -40,7 +40,7 @@ router.post("/recap/monthly", async (req, res) => {
 });
 
 router.get("/recap/monthly/status", async (_req, res) => {
-  const job = await getJob("monthly_recap");
+  const job = await getJob("monthly_recap", { withLogs: true });
   res.json(job);
 });
 
@@ -79,7 +79,7 @@ router.post("/recap/milestones", async (req, res) => {
 });
 
 router.get("/recap/milestones/status", async (_req, res) => {
-  const job = await getJob("milestone_check");
+  const job = await getJob("milestone_check", { withLogs: true });
   res.json(job);
 });
 

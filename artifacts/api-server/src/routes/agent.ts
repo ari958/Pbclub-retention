@@ -455,6 +455,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   {
     const payload: Record<string, unknown> = {
       conversation_id,
+      player_id,
       body: agentResponse.message,
       direction: "outbound",
       sent_by: "agent",

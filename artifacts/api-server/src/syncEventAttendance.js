@@ -212,7 +212,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       const { error } = await getSupabase()
         .from("attendances")
         .upsert(batch, {
-          onConflict: "player_id,program_name,attended_at",
+          onConflict: "player_id,event_id",
           ignoreDuplicates: true,
         });
       if (error) {
@@ -286,7 +286,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         }
 
         matched++;
-        const attendedAt = toLocalDateString(event.startTime, clubTimezone);
+        const attendedAt = event.startTime; // Full ISO timestamp; preserves time-of-day for playerTiming
 
         // Map session type from structured PodPlay field (not from tags/program name)
         const rawSessionType = event.sessionType ?? null;
@@ -354,9 +354,11 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       .maybeSingle();
 
     if (latest?.attended_at) {
+      // last_visit_date is a date column — project the timestamp to a local calendar date
+      const localDate = toLocalDateString(latest.attended_at, clubTimezone);
       await getSupabase()
         .from("players")
-        .update({ last_visit_date: latest.attended_at })
+        .update({ last_visit_date: localDate })
         .eq("id", player.id);
       visitUpdates++;
 

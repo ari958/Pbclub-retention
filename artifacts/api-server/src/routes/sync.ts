@@ -159,7 +159,7 @@ router.post("/sync/player", async (req, res) => {
 });
 
 router.post("/sync/all", async (_req, res) => {
-  const current = await getJob(JOB_SYNC_ALL);
+  const current = await getJob(JOB_SYNC_ALL, { withLogs: true });
 
   if (current.status === "running") {
     res.status(409).json({
@@ -216,7 +216,7 @@ router.post("/sync/cancel", async (_req, res) => {
 });
 
 router.get("/sync/status", async (_req, res) => {
-  const job = await getJob(JOB_SYNC_ALL);
+  const job = await getJob(JOB_SYNC_ALL, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -263,7 +263,7 @@ router.post("/sync/events", async (_req, res) => {
 });
 
 router.get("/sync/events/status", async (_req, res) => {
-  const job = await getJob(JOB_SYNC_EVENTS);
+  const job = await getJob(JOB_SYNC_EVENTS, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -303,7 +303,7 @@ router.post("/sync/nightly", async (_req, res) => {
 });
 
 router.get("/sync/nightly/status", async (_req, res) => {
-  const job = await getJob(JOB_NIGHTLY);
+  const job = await getJob(JOB_NIGHTLY, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -364,7 +364,7 @@ router.post("/sync/level-confidence", async (_req, res) => {
 });
 
 router.get("/sync/level-confidence/status", async (_req, res) => {
-  const job = await getJob(JOB_CONFIDENCE);
+  const job = await getJob(JOB_CONFIDENCE, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,
@@ -432,7 +432,7 @@ router.post("/sync/churn-scores", async (_req, res) => {
 });
 
 router.get("/sync/churn-scores/status", async (_req, res) => {
-  const job = await getJob(JOB_CHURN);
+  const job = await getJob(JOB_CHURN, { withLogs: true });
   res.json({
     status: job.status,
     startedAt: job.started_at,

@@ -1,11 +1,8 @@
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_ANON_KEY!
-);
+import { supabase } from "./supabaseClient";
 
 export type JobStatus = "idle" | "running" | "cancelled" | "done" | "error";
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface JobState {
   id: string;
@@ -17,17 +14,50 @@ export interface JobState {
   logs: string[];
 }
 
-const MAX_LOGS = 200;
+const DEFAULT_LOG_LIMIT = 200;
 
-export async function getJob(id: string): Promise<JobState> {
+/**
+ * Get current state of a job. By default does NOT fetch logs (cheap).
+ * Pass { withLogs: true } to fetch recent log lines from job_logs table.
+ */
+export async function getJob(
+  id: string,
+  options: { withLogs?: boolean; logLimit?: number } = {}
+): Promise<JobState> {
   const { data } = await supabase
     .from("jobs")
     .select("*")
     .eq("id", id)
     .single();
 
+  let logs: string[] = [];
+  if (options.withLogs) {
+    const { data: logRows, error: logErr } = await supabase
+      .from("job_logs")
+      .select("logged_at, level, message")
+      .eq("job_id", id)
+      .order("logged_at", { ascending: false })
+      .limit(options.logLimit ?? DEFAULT_LOG_LIMIT);
+    if (logErr) {
+      console.error(`[jobStore] getJob logs fetch failed for ${id}:`, logErr.message);
+    } else if (logRows) {
+      logs = logRows
+        .slice()
+        .reverse()
+        .map((r: any) => `[${r.logged_at}] ${r.message}`);
+    }
+  }
+
   if (!data) {
-    return { id, status: "idle", started_at: null, finished_at: null, stats: null, error: null, logs: [] };
+    return {
+      id,
+      status: "idle",
+      started_at: null,
+      finished_at: null,
+      stats: null,
+      error: null,
+      logs,
+    };
   }
 
   return {
@@ -37,7 +67,7 @@ export async function getJob(id: string): Promise<JobState> {
     finished_at: data.finished_at,
     stats: data.stats,
     error: data.error,
-    logs: Array.isArray(data.logs) ? data.logs : [],
+    logs,
   };
 }
 
@@ -50,41 +80,35 @@ export async function startJob(id: string): Promise<void> {
       finished_at: null,
       stats: null,
       error: null,
-      logs: [],
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
-
   if (error) {
     console.error(`[jobStore] startJob failed for ${id}:`, error.message);
   }
 }
 
-export async function appendJobLog(id: string, message: string): Promise<void> {
-  const line = `[${new Date().toISOString()}] ${message}`;
-  console.log(line);
+/**
+ * Append a log line for a job. Single INSERT to job_logs — no read-modify-write.
+ * Safe under concurrent writers.
+ */
+export async function appendJobLog(
+  id: string,
+  message: string,
+  level: LogLevel = "info",
+  context?: Record<string, unknown>
+): Promise<void> {
+  console.log(`[${new Date().toISOString()}] [${id}] ${message}`);
 
-  const { data, error: fetchErr } = await supabase
-    .from("jobs")
-    .select("logs")
-    .eq("id", id)
-    .single();
+  const { error } = await supabase.from("job_logs").insert({
+    job_id: id,
+    level,
+    message,
+    context: context ?? null,
+  });
 
-  if (fetchErr) {
-    console.error(`[jobStore] appendJobLog fetch failed for ${id}:`, fetchErr.message);
-    return;
-  }
-
-  const current: string[] = Array.isArray(data?.logs) ? data.logs : [];
-  const updated = [...current, line].slice(-MAX_LOGS);
-
-  const { error: updateErr } = await supabase
-    .from("jobs")
-    .update({ logs: updated, updated_at: new Date().toISOString() })
-    .eq("id", id);
-
-  if (updateErr) {
-    console.error(`[jobStore] appendJobLog update failed for ${id}:`, updateErr.message);
+  if (error) {
+    console.error(`[jobStore] appendJobLog insert failed for ${id}:`, error.message);
   }
 }
 
@@ -104,7 +128,6 @@ export async function finishJob(
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
-
   if (updateErr) {
     console.error(`[jobStore] finishJob failed for ${id}:`, updateErr.message);
   }
@@ -127,7 +150,6 @@ export async function requestCancel(id: string): Promise<void> {
       updated_at: new Date().toISOString(),
     })
     .eq("id", id);
-
   if (error) {
     console.error(`[jobStore] requestCancel failed for ${id}:`, error.message);
   }

@@ -1,0 +1,244 @@
+CRITICAL FIXES — schema follow-up + sync correctness + jobStore rewrite
+Yesterday's database migrations added several constraints and tables that the application code does not yet honor. Without these code changes, the next sync will fail and the next outbound message will throw NOT NULL violations. Implement all of the following in one pass.
+There are five fixes. Do them in this order. After each, list the file changed and the exact lines.
+
+FIX 1 — syncEventAttendance.js: change the onConflict key on the attendances upsert
+The unique index attendances_unique_attendance on (player_id, program_name, attended_at) was dropped. The remaining unique index is attendances_player_event_unique on (player_id, event_id) WHERE event_id IS NOT NULL.
+In artifacts/api-server/src/syncEventAttendance.js, inside the flushUpserts function, change:
+javascript.upsert(batch, {
+  onConflict: "player_id,program_name,attended_at",
+  ignoreDuplicates: true,
+});
+to:
+javascript.upsert(batch, {
+  onConflict: "player_id,event_id",
+  ignoreDuplicates: true,
+});
+
+FIX 2 — syncEventAttendance.js: write the full event timestamp to attended_at, not a local date string
+The attendances.attended_at column was converted from date to timestamptz. The sync is currently truncating the time-of-day. Restore it.
+In artifacts/api-server/src/syncEventAttendance.js, inside the inner signup loop, find:
+javascriptconst attendedAt = toLocalDateString(event.startTime, clubTimezone);
+Change it to:
+javascriptconst attendedAt = event.startTime; // Full ISO timestamp; preserves time-of-day for playerTiming
+Then, in Step 3 of the same file (the loop that updates last_visit_date), find the block:
+javascriptif (latest?.attended_at) {
+  await getSupabase()
+    .from("players")
+    .update({ last_visit_date: latest.attended_at })
+    .eq("id", player.id);
+Change it to:
+javascriptif (latest?.attended_at) {
+  // last_visit_date is a date column — project the timestamp to a local calendar date
+  const localDate = toLocalDateString(latest.attended_at, clubTimezone);
+  await getSupabase()
+    .from("players")
+    .update({ last_visit_date: localDate })
+    .eq("id", player.id);
+Do not remove the toLocalDateString helper — it is still used here.
+
+FIX 3 — verify and fix messages.player_id population at every insert site
+Yesterday's migration added messages.player_id uuid NOT NULL REFERENCES players(id). Every existing INSERT into messages must populate this column. There are 8 call sites:
+artifacts/api-server/src/routes/messages.ts:329
+artifacts/api-server/src/routes/messages.ts:510
+artifacts/api-server/src/routes/messages.ts:527
+artifacts/api-server/src/routes/messages.ts:567
+artifacts/api-server/src/routes/messages.ts:611
+artifacts/api-server/src/routes/agent.ts:467
+artifacts/api-server/src/routes/agent.ts:473
+artifacts/api-server/src/lib/postSessionFeedback.ts:198
+For each one:
+
+Read the surrounding context.
+Confirm the payload object passed to .insert(...) includes a player_id field.
+If player_id is missing, source it from whatever object the function already has — usually one of:
+
+conversation.player_id (look up the conversation by its id first if needed)
+player.id from a player object already in scope
+A path-param or body field (e.g. req.params.playerId)
+
+
+Add it to the insert payload.
+
+For the inbound Twilio webhook at messages.ts:329, the player is identified by phone number. There should already be a player lookup earlier in the handler — pull player.id from there.
+For postSessionFeedback.ts:198, the function loops over players when sending feedback texts — player.id is in scope.
+After making changes, list every modified site with: filename, line number, exact line that was changed, and where player_id came from. If any site cannot be fixed because the player context isn't available, stop and report that site explicitly — do not guess.
+
+FIX 4 — jobStore.ts: complete rewrite using job_logs table and shared Supabase client
+Two problems with the current jobStore.ts:
+
+Creates its own Supabase client inline (violates the shared-client rule)
+appendJobLog does a SELECT + UPDATE on every log line, rewriting the entire jobs.logs jsonb array each time — O(n²) write amplification, plus a read-modify-write race
+
+Replace the entire contents of artifacts/api-server/src/lib/jobStore.ts with this:
+typescriptimport { supabase } from "./supabaseClient";
+
+export type JobStatus = "idle" | "running" | "cancelled" | "done" | "error";
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+export interface JobState {
+  id: string;
+  status: JobStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  stats: Record<string, number> | null;
+  error: string | null;
+  logs: string[];
+}
+
+const DEFAULT_LOG_LIMIT = 200;
+
+/**
+ * Get current state of a job. By default does NOT fetch logs (cheap).
+ * Pass { withLogs: true } to fetch recent log lines from job_logs table.
+ */
+export async function getJob(
+  id: string,
+  options: { withLogs?: boolean; logLimit?: number } = {}
+): Promise<JobState> {
+  const { data } = await supabase
+    .from("jobs")
+    .select("*")
+    .eq("id", id)
+    .single();
+
+  let logs: string[] = [];
+  if (options.withLogs) {
+    const { data: logRows, error: logErr } = await supabase
+      .from("job_logs")
+      .select("logged_at, level, message")
+      .eq("job_id", id)
+      .order("logged_at", { ascending: false })
+      .limit(options.logLimit ?? DEFAULT_LOG_LIMIT);
+    if (logErr) {
+      console.error(`[jobStore] getJob logs fetch failed for ${id}:`, logErr.message);
+    } else if (logRows) {
+      // reverse so oldest -> newest for display
+      logs = logRows
+        .slice()
+        .reverse()
+        .map((r: any) => `[${r.logged_at}] ${r.message}`);
+    }
+  }
+
+  if (!data) {
+    return {
+      id,
+      status: "idle",
+      started_at: null,
+      finished_at: null,
+      stats: null,
+      error: null,
+      logs,
+    };
+  }
+
+  return {
+    id: data.id,
+    status: data.status,
+    started_at: data.started_at,
+    finished_at: data.finished_at,
+    stats: data.stats,
+    error: data.error,
+    logs,
+  };
+}
+
+export async function startJob(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("jobs")
+    .update({
+      status: "running",
+      started_at: new Date().toISOString(),
+      finished_at: null,
+      stats: null,
+      error: null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) {
+    console.error(`[jobStore] startJob failed for ${id}:`, error.message);
+  }
+}
+
+/**
+ * Append a log line for a job. Single INSERT to job_logs — no read-modify-write.
+ * Safe under concurrent writers.
+ */
+export async function appendJobLog(
+  id: string,
+  message: string,
+  level: LogLevel = "info",
+  context?: Record<string, unknown>
+): Promise<void> {
+  // Always echo to stdout so pino picks it up
+  console.log(`[${new Date().toISOString()}] [${id}] ${message}`);
+
+  const { error } = await supabase.from("job_logs").insert({
+    job_id: id,
+    level,
+    message,
+    context: context ?? null,
+  });
+
+  if (error) {
+    console.error(`[jobStore] appendJobLog insert failed for ${id}:`, error.message);
+  }
+}
+
+export async function finishJob(
+  id: string,
+  status: "done" | "cancelled" | "error",
+  stats?: Record<string, number>,
+  error?: string
+): Promise<void> {
+  const { error: updateErr } = await supabase
+    .from("jobs")
+    .update({
+      status,
+      finished_at: new Date().toISOString(),
+      ...(stats ? { stats } : {}),
+      ...(error ? { error } : {}),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (updateErr) {
+    console.error(`[jobStore] finishJob failed for ${id}:`, updateErr.message);
+  }
+}
+
+export async function isCancelled(id: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("jobs")
+    .select("status")
+    .eq("id", id)
+    .single();
+  return data?.status === "cancelled";
+}
+
+export async function requestCancel(id: string): Promise<void> {
+  const { error } = await supabase
+    .from("jobs")
+    .update({
+      status: "cancelled",
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", id);
+  if (error) {
+    console.error(`[jobStore] requestCancel failed for ${id}:`, error.message);
+  }
+}
+Note the changes vs current:
+
+Imports supabase from ./supabaseClient (no inline createClient)
+appendJobLog does a single INSERT into job_logs instead of SELECT+UPDATE on jobs.logs
+getJob no longer auto-fetches logs (callers must pass withLogs: true); this avoids unnecessary log fetches on hot paths like the scheduler tick that only checks status
+JobState.logs now comes from job_logs via the new query
+MAX_LOGS constant removed; logLimit is now a per-call parameter, default 200
+The ?? process.env.SUPABASE_ANON_KEY fallback is gone — the shared client uses service_role only
+
+
+FIX 5 — Update getJob callers in scheduler.ts to pass withLogs only when needed
+In artifacts/api-server/src/lib/scheduler.ts, find the scheduler tick that does:
+typescript

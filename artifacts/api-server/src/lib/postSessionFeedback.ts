@@ -197,6 +197,7 @@ export async function sendFeedbackForEvent(
       // Record the outbound message
       await supabase.from("messages").insert({
         conversation_id: conv.id,
+        player_id: player.id,
         body: messageBody,
         direction: "outbound",
         sent_by: "system",
