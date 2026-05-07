@@ -1,0 +1,35 @@
+The test set
+Here's who I'd pick, with reasoning:
+#TierPlayerIDWhy1Active regularJohn Sagan0c48e1a9-a19a-4588-aee0-b49956e4dfb111 attendances at Half Price Early Open Play, last visit 5 days ago. Familiarity will hit "regular" cleanly.2LapsingCarolyn Krasinski7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c15 days since visit — right at the lapsing threshold. Note her name has trailing whitespace; if the message comes back addressing "Carolyn " (with extra space), we found a separate trim bug.3DormantJayesh Maire997b2c9-3210-46c7-aa78-78d2499d89aa31 days — right at the dormant threshold. Tone test for "low pressure, no guilt."4High engagementSkip—Untestable with current data per above.5SocialCarlota Digon4703d133-9a5b-49e4-a2e7-a3953087eb0a17 buddy pairs is the most by a wide margin. Best chance of producing a non-empty social context block.
+That's four runs. Plus Geoff from yesterday gives us a fifth comparison data point — same player across two days lets us check stability of warm score and message quality.
+What to run
+For each of the four players, fire one agent call and capture the output:
+bash# Tier 1 — John Sagan (active regular)
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"0c48e1a9-a19a-4588-aee0-b49956e4dfb1"}' > /tmp/tier_1_sagan.json
+
+# Tier 2 — Carolyn Krasinski (lapsing)
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c"}' > /tmp/tier_2_krasinski.json
+
+# Tier 3 — Jayesh Mair (dormant)
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"e997b2c9-3210-46c7-aa78-78d2499d89aa"}' > /tmp/tier_3_mair.json
+
+# Tier 5 — Carlota Digon (social)
+curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"4703d133-9a5b-49e4-a2e7-a3953087eb0a"}' > /tmp/tier_5_digon.json
+For each, paste back exactly:
+TIER N — <player name>
+engagement_state: <value>
+warm_score: <value>
+link_strategy: <value>
+recommended_programs: <array>
+message: "<full text>"
+reasoning: "<full text>"
+Don't editorialize. Just paste the raw values. I'll work through them with you when they're all in.
+One thing to watch for as you run — the [agent] anthropic usage log lines. If any input_token count is dramatically higher than the ~4,000 we measured for Geoff yesterday, that's a signal that one of these players triggered a different code path that bloated the prompt (likely the social context block for Carlota). Note any input_tokens above ~5,000 and which player triggered it.
