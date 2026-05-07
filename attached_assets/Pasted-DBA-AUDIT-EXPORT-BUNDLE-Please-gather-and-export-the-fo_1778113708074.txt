@@ -1,0 +1,73 @@
+DBA AUDIT — EXPORT BUNDLE
+Please gather and export the following files and schema snapshots. Organize them as a single text block with clear section headers. This will be sent to a database architect for a full efficiency and scalability review.
+SECTION 1 — DATABASE SCHEMA
+	1.	Full schema dump (all tables, columns, types, constraints, indexes, RLS policies):
+	∙	Run: pg_dump --schema-only or export from Supabase SQL editor
+	∙	Or manually select from information_schema.tables and information_schema.columns
+	∙	Include: Column names, types, defaults, NOT NULL constraints, UNIQUE constraints, PRIMARY KEYs, FOREIGN KEYs
+	∙	Include: All indexes (name, columns, uniqueness)
+	∙	Include: Row-level security policies (if any)
+	2.	Table sizes and row counts:
+	∙	For each table: SELECT schemaname, tablename, pg_size_pretty(pg_total_relation_size(schemaname||'.'||tablename)) FROM pg_tables
+	∙	For each table: SELECT COUNT(*) FROM [table_name]
+	3.	Current materialized views or views (if any):
+	∙	List name, definition, refresh strategy
+SECTION 2 — DATA INGEST & SYNC CODE
+	1.	artifacts/api-server/src/lib/syncEventAttendance.js (or .ts)
+	∙	Full file, including: API calls to PodPlay, filtering logic, write strategy, error handling
+	2.	artifacts/api-server/src/lib/syncPlayerAttendance.js (or .ts)
+	∙	Full file, same detail level
+	3.	artifacts/api-server/src/lib/importAllPlayers.js (or .ts)
+	∙	Full file, including: pagination, rate limiting, transforms, writes
+	4.	Any other sync/import file (syncWarmScore.js, syncDupr.js, etc.)
+	∙	List names and paste full content
+	5.	artifacts/api-server/src/lib/scheduler.ts or equivalent
+	∙	Show: What runs nightly? In what order? Execution times? Error handling?
+SECTION 3 — AGENT REQUEST PATH
+	1.	artifacts/api-server/src/routes/agent.ts (or equivalent route file)
+	∙	Full file: How is player context built? What queries run? In what order?
+	2.	artifacts/api-server/src/lib/warmScore.ts (or equivalent)
+	∙	Full file: Query logic, transformations, caching strategy
+	3.	artifacts/api-server/src/lib/playerTiming.ts (or equivalent)
+	∙	Full file: Same detail
+	4.	Any other lib file called during agent request (levelConfidence.ts, etc.)
+	∙	Paste full content
+SECTION 4 — OBSERVABILITY & ERROR HANDLING
+	1.	Logging strategy:
+	∙	Where do logs land? (Console? File? Sentry? Datadog?)
+	∙	Show: A sample of what a successful API call logs. A sample of what an error logs.
+	∙	Search codebase for: console.log, console.error, sentry.captureException, logger.info, etc.
+	∙	Paste representative examples
+	2.	Error handling:
+	∙	Show: How are PodPlay API errors handled? (Retry? Fail fast? Dead letter queue?)
+	∙	Show: How are database errors handled?
+	∙	Show: How are rate limit 429 responses handled?
+	3.	Monitoring:
+	∙	Are there any health check endpoints?
+	∙	Are there any dashboards or alerts configured?
+SECTION 5 — FRONTEND DATA FLOW
+	1.	artifacts/dashboard/src/pages/Players.tsx (or equivalent)
+	∙	Show: What API calls fire on page load? What data is fetched? How is it used?
+	2.	artifacts/dashboard/src/hooks/usePlayer.ts (or equivalent data-fetching hook)
+	∙	Show: Query logic, caching strategy, refetch triggers
+	3.	Any real-time subscription or polling logic
+	∙	Paste full content
+SECTION 6 — DEPLOYMENT & INFRASTRUCTURE
+	1.	vercel.json or equivalent deployment config
+	∙	Show: Environment variables, build settings, function timeouts
+	2.	.env.example or .env (scrubbed of secrets)
+	∙	Show: What env vars exist? What are their purposes?
+	3.	Dockerfile or package.json scripts
+	∙	Show: Build process, start process, any pre-deployment steps
+SECTION 7 — DATABASE QUERIES (HOTSPOTS)
+For each of the following, find and paste the actual query (whether it’s raw SQL, Supabase .select(), or ORM):
+	1.	Player context query (used in agent request)
+	2.	Available programs query (used in agent request)
+	3.	Attendance history query (used for warm score)
+	4.	Message inbox query (used in dashboard)
+	5.	Any paginated query (how is pagination handled?)
+If they’re in TypeScript, paste the Supabase method calls. If they’re raw SQL, paste the SQL.
+SECTION 8 — KNOWN ISSUES & GAPS
+From the May 6 handoff, list any open issues, TODOs, or FIXMEs in the code:
+	∙	Search for: TODO, FIXME, XXX, HACK, BUG
+	∙	Paste each one with file location and line number
