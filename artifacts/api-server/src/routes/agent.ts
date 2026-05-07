@@ -349,16 +349,33 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     .filter(Boolean)
     .join("\n");
 
-  // Annotate each program with familiarity so Claude applies the FAMILIARITY RULE
-  const programsWithFamiliarity = programsForAgent.map((p: any) => ({
-    ...p,
-    program_familiarity: getProgramFamiliarity(p.name ?? ""),
-  }));
+  // Annotate familiarity, then build a slim view for Claude.
+  // Cap at the next 10 programs by start time. Drop description unless
+  // familiarity is "new" or "tried_once" (the FAMILIARITY_RULE says regulars
+  // and familiars don't need the description). Use compact field names.
+  const programsForClaude = programsForAgent
+    .slice(0, 10)
+    .map((p: any) => {
+      const familiarity = getProgramFamiliarity(p.name ?? "");
+      const slim: Record<string, unknown> = {
+        name: p.name,
+        type: p.program_type ?? null,
+        level: p.skill_level ?? null,
+        spots: p.spots_remaining ?? null,
+        when: p.start_time ?? null,
+        familiarity,
+      };
+      // Only include description when Claude actually needs it
+      if ((familiarity === "new" || familiarity === "tried_once") && p.description) {
+        slim.description = p.description;
+      }
+      return slim;
+    });
 
   const userMessage = [
-    `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}`,
+    `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent)}`,
     linkStrategyBlock,
-    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsWithFamiliarity, null, 2)}`,
+    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsForClaude)}`,
     socialContext,
   ].filter(Boolean).join("\n\n");
 

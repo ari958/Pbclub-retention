@@ -1,0 +1,97 @@
+TRIM AGENT PROMPT — slim program payload to Claude
+The agent route currently sends Claude a 14k-token list of available programs in pretty-printed JSON with full descriptions and tags. Replace this with a slim, compact view containing only what Claude actually uses, capped at the next 10 programs by start time.
+This change touches only artifacts/api-server/src/routes/agent.ts. Do not modify fetchAvailablePrograms.js — other callers may depend on the full return shape.
+
+FIX 1 — Trim and reshape programsWithFamiliarity before serialization
+In artifacts/api-server/src/routes/agent.ts, find the existing block that builds programsWithFamiliarity:
+typescript  // Annotate each program with familiarity so Claude applies the FAMILIARITY RULE
+  const programsWithFamiliarity = programsForAgent.map((p: any) => ({
+    ...p,
+    program_familiarity: getProgramFamiliarity(p.name ?? ""),
+  }));
+Replace it with:
+typescript  // Annotate familiarity, then build a slim view for Claude.
+  // Cap at the next 10 programs by start time. Drop description unless
+  // familiarity is "new" or "tried_once" (the FAMILIARITY_RULE says regulars
+  // and familiars don't need the description). Use compact field names.
+  const programsForClaude = programsForAgent
+    .slice(0, 10)
+    .map((p: any) => {
+      const familiarity = getProgramFamiliarity(p.name ?? "");
+      const slim: Record<string, unknown> = {
+        name: p.name,
+        type: p.program_type ?? null,
+        level: p.skill_level ?? null,
+        spots: p.spots_remaining ?? null,
+        when: p.start_time ?? null,
+        familiarity,
+      };
+      // Only include description when Claude actually needs it
+      if ((familiarity === "new" || familiarity === "tried_once") && p.description) {
+        slim.description = p.description;
+      }
+      return slim;
+    });
+programsForAgent is already sorted ascending by start time (from fetchAvailablePrograms's sort), so .slice(0, 10) correctly takes the next 10 by start time.
+
+FIX 2 — Use the slim list and compact JSON in the user message
+Find the existing userMessage construction:
+typescript  const userMessage = [
+    `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent, null, 2)}`,
+    linkStrategyBlock,
+    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsWithFamiliarity, null, 2)}`,
+    socialContext,
+  ].filter(Boolean).join("\n\n");
+Replace with:
+typescript  const userMessage = [
+    `PLAYER PROFILE:\n${JSON.stringify(playerProfileForAgent)}`,
+    linkStrategyBlock,
+    `AVAILABLE PROGRAMS:\n${JSON.stringify(programsForClaude)}`,
+    socialContext,
+  ].filter(Boolean).join("\n\n");
+Two changes: removed pretty-printing (no more null, 2) and switched the variable name to programsForClaude.
+The old variable name programsWithFamiliarity is no longer referenced anywhere. The replaced block above already removed its assignment.
+
+FIX 3 — Verify downstream code still uses available_programs, not the slim list, for matching the recommended program
+This is a verification step, not a change. The existing code below the user message construction does:
+typescriptconst matchedProgram = firstRecommendedName
+  ? available_programs.find((p: any) => p.name === firstRecommendedName)
+  : null;
+Confirm available_programs (full, untrimmed) is still used here. If it's been changed to programsForClaude, revert it — the matching logic must work against the full list, since Claude can recommend any program by name and we need the full record (including signup_url and start_time_iso) for downstream scheduling.
+Do not modify available_programs references. Just confirm none of them got accidentally swapped.
+
+Verification
+
+Build: pnpm -C artifacts/api-server build. Confirm exit 0.
+Restart the dev server.
+Run the same warm-cache timing test against Geoff McKay (the player from the prior round). Two runs back-to-back:
+
+bashcurl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /dev/null
+
+time curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /tmp/agent_response.json
+
+time curl -X POST http://localhost:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"player_id":"<GEOFF_ID>"}' > /dev/null
+
+Pull the [agent] anthropic usage log lines from the two timed runs. Report:
+
+Wall-clock time for each
+input_tokens and output_tokens for each
+
+
+Inspect /tmp/agent_response.json and confirm the response shape is unchanged (message, reasoning, recommended_programs, engagement_state all present and sensible).
+
+That's it. Don't touch other files. Don't run other tests.
+
+Report back:
+
+Both modified hunks (file + line range)
+Build result
+Both wall-clock timings
+Both pairs of input/output token counts
+The recommended_programs and engagement_state values from the response
