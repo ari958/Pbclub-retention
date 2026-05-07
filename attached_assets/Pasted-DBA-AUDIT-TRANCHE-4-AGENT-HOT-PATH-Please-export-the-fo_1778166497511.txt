@@ -1,0 +1,50 @@
+DBA AUDIT — TRANCHE 4: AGENT HOT PATH
+Please export the following three files in full, plus one quick database query result. Bundle as a single text block with clear delimiters between sections.
+SECTION 1 — artifacts/api-server/src/routes/agent.ts
+The full file. This is the per-request hot path that every outbound message goes through. I need to see:
+
+All Supabase queries (which tables, which columns, which filters)
+The order of operations: when context is loaded, when warm score is computed, when player timing is computed, when Claude is called, when messages are inserted
+Any caching strategy or short-circuits
+How the player profile is assembled — N+1 patterns, parallel fetches, joins
+The Claude API call itself: model, system prompt construction, max_tokens, temperature
+Error handling: what happens on a Claude API timeout, a Supabase error, a cancelled request
+How program_familiarity, link_strategy, warm_score get computed and passed to Claude
+The two messages.insert calls and the fallback retry logic
+
+SECTION 2 — artifacts/api-server/src/lib/warmScore.ts
+The full file. This is called per agent request. I need to see:
+
+The computeWarmScore function signature and full body
+All Supabase queries it makes (count them — this is where N+1 lives)
+The cache check on players.warm_score_updated_at
+The decay multiplier logic
+The edge case overrides (force warm / force cold / ask first)
+How positive and negative signals are summed
+
+SECTION 3 — artifacts/api-server/src/lib/playerTiming.ts
+The full file. This is called both per-request (during agent run) and per-player (during nightly sync). I need to see:
+
+The computePlayerTiming function signature and full body
+All Supabase queries
+The archetype derivation logic (late, mid, early, planner)
+The sanitizeScheduledSendAt function (TCPA window enforcement)
+How avg_booking_lead_days, preferred_booking_hour, preferred_booking_dow are derived
+Any caching on players.timing_computed_at
+
+SECTION 4 — Job stats from yesterday's smoke test runs
+Run this SQL query in the Supabase SQL Editor and paste the result:
+sqlSELECT id, status, started_at, finished_at, stats, error
+FROM jobs
+ORDER BY started_at DESC NULLS LAST
+LIMIT 10;
+This gives me the final counts from the level confidence, churn, and milestone batches we ran — specifically how many milestones actually triggered after the persistMilestone fix.
+Format
+Wrap each file in clear delimiters:
+═══ FILE: [path] ═══
+[full file contents — no truncation]
+═══ END FILE ═══
+Don't redact secrets — none of these files should contain any.
+Don't summarize or paraphrase — paste the exact code.
+If a file is unexpectedly large (over ~800 lines), still paste it in full, but flag the line count at the top so I know.
+If a file doesn't exist or has been renamed, say so explicitly rather than guessing.
