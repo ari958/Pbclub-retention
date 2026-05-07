@@ -9,6 +9,7 @@ import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { supabase } from "../lib/supabaseClient";
 import { computeWarmScore, scorToLinkStrategy } from "../lib/warmScore";
 import { computeScheduledSendAt } from "../lib/playerTiming";
+import { getPlayerSocialContext } from "../lib/socialGraph";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
@@ -219,35 +220,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     level_confidence: levelConfidenceForAgent,
   };
 
-  // Social context (non-fatal — skip if social graph is unavailable or too slow)
+  // Social context (non-fatal — uses consolidated lib function, no localhost self-fetch)
   let socialContext: string | null = null;
   let programsForAgent: any[] = available_programs; // overridden below if registrations succeed
   try {
-    const port = process.env.PORT ?? "8080";
-    // All three fetches run in parallel. Bodies are consumed inline (.then(r => r.json()))
-    // so AbortSignal timeouts on faster fetches don't cancel body reads.
-    const [buddiesResult, upcomingResult, registrationsResult] = await Promise.allSettled([
-      fetch(`http://localhost:${port}/api/social-graph/player/${player_id}/buddies`, {
-        signal: AbortSignal.timeout(8_000),
-      }).then((r) => r.ok ? (r.json() as Promise<{ buddies: any[] }>) : Promise.reject(new Error(`buddies ${r.status}`))),
-      fetch(`http://localhost:${port}/api/social-graph/upcoming-with-buddies/${player_id}`, {
-        signal: AbortSignal.timeout(15_000),
-      }).then((r) => r.ok ? (r.json() as Promise<{ upcoming: any[] }>) : Promise.reject(new Error(`upcoming ${r.status}`))),
-      fetch(`http://localhost:${port}/api/social-graph/player/${player_id}/registrations`, {
-        signal: AbortSignal.timeout(15_000),
-      }).then((r) => r.ok ? (r.json() as Promise<{ registrations: { event_id: string; event_name: string; start_time: string }[] }>) : Promise.reject(new Error(`registrations ${r.status}`))),
-    ]);
-
-    const buddies: any[] =
-      buddiesResult.status === "fulfilled" ? (buddiesResult.value.buddies ?? []) : [];
-    const upcoming: any[] =
-      upcomingResult.status === "fulfilled" ? (upcomingResult.value.upcoming ?? []) : [];
-    const registrations =
-      registrationsResult.status === "fulfilled" ? (registrationsResult.value.registrations ?? []) : [];
-
-    if (upcomingResult.status === "rejected") {
-      req.log.warn({ err: (upcomingResult.reason as Error)?.message }, "[agent] upcoming-with-buddies fetch failed");
-    }
+    const { buddies, upcoming, registrations } = await getPlayerSocialContext(player_id, {
+      logger: req.log as any,
+    });
 
     // Build registered event ID set and filter available programs
     const registeredEventIds = new Set(registrations.map((r) => r.event_id));
@@ -263,8 +242,8 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     }
 
     // Split upcoming buddy sessions: already registered vs still open
-    const alreadyBooked = upcoming.filter((ev: any) => registeredEventIds.has(ev.event_id));
-    const openWithBuddies = upcoming.filter((ev: any) => !registeredEventIds.has(ev.event_id));
+    const alreadyBooked = upcoming.filter((ev) => registeredEventIds.has(ev.event_id));
+    const openWithBuddies = upcoming.filter((ev) => !registeredEventIds.has(ev.event_id));
 
     const etFmt = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York",
@@ -280,19 +259,17 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     if (buddies.length > 0 || alreadyBooked.length > 0 || openWithBuddies.length > 0) {
       const lines: string[] = ["SOCIAL CONTEXT:"];
 
-      // Buddy list
       if (buddies.length > 0) {
         const buddyList = buddies.slice(0, 5)
-          .map((b: any) => `${shortName(b.name as string)} (${b.shared_sessions} sessions together)`)
+          .map((b) => `${shortName(b.name)} (${b.shared_sessions} sessions together)`)
           .join(", ");
         lines.push(`Players this player knows from past sessions (3+ shared courts): ${buddyList}`);
       }
 
-      // Sessions the player is ALREADY registered for that also have buddies
       if (alreadyBooked.length > 0) {
-        const bookedLines = (alreadyBooked as any[]).map((ev: any) => {
+        const bookedLines = alreadyBooked.map((ev) => {
           const dateStr = etFmt.format(new Date(ev.start_time));
-          const names = (ev.buddies_signed_up as any[]).map((b: any) => shortName(b.name as string));
+          const names = ev.buddies_signed_up.map((b) => shortName(b.name));
           return `- ${dateStr}: ${ev.program_name} with ${names.join(" and ")}`;
         });
         lines.push(
@@ -300,13 +277,12 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
         );
       }
 
-      // Sessions with buddies the player has NOT yet registered for
       if (openWithBuddies.length > 0) {
         lines.push("Upcoming sessions where their court buddies are already signed up (player NOT yet registered):");
-        for (const ev of openWithBuddies.slice(0, 5) as any[]) {
+        for (const ev of openWithBuddies.slice(0, 5)) {
           const dateStr = etFmt.format(new Date(ev.start_time));
           const level = ev.level ? ` · ${ev.level}` : "";
-          const names = (ev.buddies_signed_up as any[]).map((b: any) => shortName(b.name as string));
+          const names = ev.buddies_signed_up.map((b) => shortName(b.name));
           const nameStr = names.length === 1 ? `${names[0]} is` : `${names.join(" and ")} are`;
           lines.push(`${dateStr}${level} · ${nameStr} registered for ${ev.program_name}`);
         }
@@ -315,6 +291,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       lines.push(
         "Use this information to personalize your outreach. Only mention players who are confirmed registered — never guess. For ALREADY BOOKED sessions, acknowledge the upcoming court time; do not re-recommend those sessions."
       );
+
       socialContext = lines.join("\n");
     }
   } catch (err) {

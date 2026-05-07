@@ -1,0 +1,367 @@
+SOCIAL GRAPH CONSOLIDATION — single hot-path function for agent context
+The agent route fires three fetch calls to localhost:8080 (buddies, upcoming-with-buddies, registrations). The latter two independently call the same PodPlay /events endpoint and the same /events/{id}/signups endpoints, doubling the PodPlay rate-limited work.
+Consolidate into one function. The three existing routes stay as-is (other consumers may depend on them; they're useful for testing). Only agent.ts switches to the new function.
+Make exactly the changes below. No additional refactors, no test additions, no smoke tests beyond the one specified at the end.
+
+STEP 1 — Create new file artifacts/api-server/src/lib/socialGraph.ts
+This file does not exist yet. Create it with the contents below.
+typescriptimport { supabase } from "./supabaseClient";
+import { extractSkillLevel } from "./skillLevel";
+import { logger as defaultLogger } from "./logger";
+
+const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+export interface BuddyEntry {
+  player_id: string;
+  name: string;
+  shared_sessions: number;
+  last_shared_at: string | null;
+  opt_in_notifications: boolean;
+}
+
+export interface UpcomingWithBuddies {
+  event_id: string;
+  program_name: string;
+  level: string | null;
+  start_time: string;
+  buddies_signed_up: { player_id: string; name: string; shared_sessions: number }[];
+}
+
+export interface Registration {
+  event_id: string;
+  event_name: string;
+  start_time: string;
+}
+
+export interface PlayerSocialContext {
+  buddies: BuddyEntry[];
+  upcoming: UpcomingWithBuddies[];
+  registrations: Registration[];
+}
+
+interface ContextOptions {
+  logger?: { warn: Function; info: Function; error: Function };
+  daysAhead?: number;
+  maxEvents?: number;
+}
+
+// ─── PodPlay helpers (private) ────────────────────────────────────────────────
+async function fetchUpcomingEventsRaw(daysAhead: number): Promise<any[]> {
+  const now = new Date().toISOString();
+  const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
+  const url = `${PODPLAY_BASE}/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
+  const data = await res.json() as any;
+  return (data.items ?? []).filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
+}
+
+async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
+  const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return [];
+  }
+  if (res.status === 404) return [];
+  if (res.status === 429) {
+    await sleep(3_000);
+    try {
+      const retry = await fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" } });
+      if (!retry.ok) return [];
+      const d = await retry.json() as any;
+      return (d.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+    } catch {
+      return [];
+    }
+  }
+  if (!res.ok) return [];
+  const data = await res.json() as any;
+  return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+}
+
+// ─── Main entry point ─────────────────────────────────────────────────────────
+/**
+ * Single consolidated fetch for the agent's social context. Returns buddies,
+ * upcoming-with-buddies, and registrations from one PodPlay events sweep,
+ * eliminating the duplicate work that the three /api/social-graph routes
+ * would otherwise do when called in parallel.
+ *
+ * Failure mode: returns empty arrays for any portion that fails. Never throws —
+ * the agent route should treat social context as enrichment, not requirement.
+ */
+export async function getPlayerSocialContext(
+  playerId: string,
+  options: ContextOptions = {},
+): Promise<PlayerSocialContext> {
+  const log = options.logger ?? defaultLogger;
+  const daysAhead = options.daysAhead ?? 7;
+  const maxEvents = options.maxEvents ?? 10;
+
+  const empty: PlayerSocialContext = { buddies: [], upcoming: [], registrations: [] };
+
+  // ── 1. Fetch buddy pairs + player external_id in parallel ───────────────
+  const [pairsResult, playerResult] = await Promise.all([
+    supabase
+      .from("buddy_pairs")
+      .select("player_a, player_b, shared_sessions, last_shared_at, opt_in_notifications")
+      .or(`player_a.eq.${playerId},player_b.eq.${playerId}`)
+      .order("shared_sessions", { ascending: false })
+      .limit(50),
+    supabase
+      .from("players")
+      .select("external_id")
+      .eq("id", playerId)
+      .maybeSingle(),
+  ]);
+
+  if (pairsResult.error) {
+    (log as any).warn?.({ err: pairsResult.error.message }, "[socialGraph] buddy_pairs query failed");
+  }
+  const pairs = pairsResult.data ?? [];
+
+  // Build buddy ID list and shared_sessions map
+  const buddyIds = pairs.map((p: any) => (p.player_a === playerId ? p.player_b : p.player_a));
+  const sharedSessionsByBuddy = new Map<string, number>();
+  const buddyPairMeta = new Map<string, { last_shared_at: string | null; opt_in: boolean }>();
+  for (const p of pairs as any[]) {
+    const otherId = p.player_a === playerId ? p.player_b : p.player_a;
+    sharedSessionsByBuddy.set(otherId, p.shared_sessions);
+    buddyPairMeta.set(otherId, {
+      last_shared_at: p.last_shared_at ?? null,
+      opt_in: p.opt_in_notifications ?? false,
+    });
+  }
+
+  // ── 2. Fetch buddy player rows (one query) ──────────────────────────────
+  let buddyPlayers: { id: string; name: string; external_id: string | null }[] = [];
+  if (buddyIds.length > 0) {
+    const { data, error } = await supabase
+      .from("players")
+      .select("id, name, external_id")
+      .in("id", buddyIds);
+    if (error) {
+      (log as any).warn?.({ err: error.message }, "[socialGraph] buddy player lookup failed");
+    } else {
+      buddyPlayers = (data ?? []) as any[];
+    }
+  }
+
+  // Build buddies output (top 10, sorted by shared_sessions desc — already sorted from query)
+  const buddyById = new Map(buddyPlayers.map((p) => [p.id, p]));
+  const buddies: BuddyEntry[] = pairs
+    .slice(0, 10)
+    .map((p: any) => {
+      const otherId = p.player_a === playerId ? p.player_b : p.player_a;
+      const player = buddyById.get(otherId);
+      return {
+        player_id: otherId,
+        name: player?.name ?? "Unknown",
+        shared_sessions: p.shared_sessions,
+        last_shared_at: p.last_shared_at ?? null,
+        opt_in_notifications: p.opt_in_notifications ?? false,
+      };
+    });
+
+  // Build buddy-by-external-id map for upcoming-with-buddies lookup
+  const buddyByExternalId = new Map<string, { id: string; name: string; shared_sessions: number }>();
+  for (const p of buddyPlayers) {
+    if (p.external_id) {
+      buddyByExternalId.set(p.external_id, {
+        id: p.id,
+        name: p.name,
+        shared_sessions: sharedSessionsByBuddy.get(p.id) ?? 0,
+      });
+    }
+  }
+
+  // ── 3. Fetch upcoming events ONCE ───────────────────────────────────────
+  const playerExternalId = playerResult.data?.external_id ?? null;
+
+  let allEvents: any[] = [];
+  try {
+    allEvents = await fetchUpcomingEventsRaw(daysAhead);
+  } catch (err: any) {
+    (log as any).warn?.({ err: err.message }, "[socialGraph] upcoming events fetch failed");
+    return { buddies, upcoming: [], registrations: [] };
+  }
+  const events = allEvents.slice(0, maxEvents);
+
+  // ── 4. Fetch signups for those events ONCE (parallel batches of 3 with throttle) ──
+  type EventSignups = { event: any; externalIds: string[] };
+  const signupsByEvent: EventSignups[] = [];
+  for (let i = 0; i < events.length; i += 3) {
+    if (i > 0) await sleep(250);
+    const batch = events.slice(i, i + 3);
+    const results = await Promise.all(
+      batch.map((event) =>
+        fetchEventSignupsRaw(event.id)
+          .then((externalIds) => ({ event, externalIds }))
+          .catch(() => ({ event, externalIds: [] as string[] }))
+      )
+    );
+    signupsByEvent.push(...results);
+  }
+
+  // ── 5. Derive both views from the single signups dataset ────────────────
+  const upcoming: UpcomingWithBuddies[] = [];
+  const registrations: Registration[] = [];
+
+  for (const { event, externalIds } of signupsByEvent) {
+    // Registrations view: did THIS player sign up for this event?
+    if (playerExternalId && externalIds.includes(playerExternalId)) {
+      registrations.push({
+        event_id: event.id,
+        event_name: event.name,
+        start_time: event.startTime,
+      });
+    }
+
+    // Upcoming-with-buddies view: do any of this player's buddies have signups here?
+    const buddiesHere = externalIds
+      .map((eid) => buddyByExternalId.get(eid))
+      .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
+
+    if (buddiesHere.length > 0) {
+      upcoming.push({
+        event_id: event.id,
+        program_name: event.name,
+        level: extractSkillLevel(event.tags),
+        start_time: event.startTime,
+        buddies_signed_up: buddiesHere.map((b) => ({
+          player_id: b.id,
+          name: b.name,
+          shared_sessions: b.shared_sessions,
+        })),
+      });
+    }
+  }
+
+  return { buddies, upcoming, registrations };
+}
+Important: check that extractSkillLevel is exported from artifacts/api-server/src/lib/skillLevel.ts. If the import path is different, adjust the import line at the top accordingly. Do not redefine extractSkillLevel here.
+
+STEP 2 — Update artifacts/api-server/src/routes/agent.ts to use the new function
+Replace the entire try { ... } catch (err) { ... } block that currently does the three Promise.allSettled localhost fetches.
+Find this block (it starts with the // Social context (non-fatal — skip if social graph is unavailable or too slow) comment and ends at the matching } catch (err) { req.log.info({ err }, "Social context fetch skipped (non-fatal)"); }):
+The block to delete starts approximately:
+typescript  // Social context (non-fatal — skip if social graph is unavailable or too slow)
+  let socialContext: string | null = null;
+  let programsForAgent: any[] = available_programs; // overridden below if registrations succeed
+  try {
+    const port = process.env.PORT ?? "8080";
+    // All three fetches run in parallel...
+And ends with:
+typescript  } catch (err) {
+    req.log.info({ err }, "Social context fetch skipped (non-fatal)");
+  }
+Replace the whole block with:
+typescript  // Social context (non-fatal — uses consolidated lib function, no localhost self-fetch)
+  let socialContext: string | null = null;
+  let programsForAgent: any[] = available_programs; // overridden below if registrations succeed
+  try {
+    const { buddies, upcoming, registrations } = await getPlayerSocialContext(player_id, {
+      logger: req.log as any,
+    });
+
+    // Build registered event ID set and filter available programs
+    const registeredEventIds = new Set(registrations.map((r) => r.event_id));
+    if (registeredEventIds.size > 0) {
+      programsForAgent = available_programs.filter((p: any) => {
+        const eventId = (p.signup_url as string | null)?.split("/events/")[1];
+        return !eventId || !registeredEventIds.has(eventId);
+      });
+      req.log.info(
+        { total: available_programs.length, filtered: programsForAgent.length, registered: registeredEventIds.size },
+        "[agent] filtered already-registered events from available programs"
+      );
+    }
+
+    // Split upcoming buddy sessions: already registered vs still open
+    const alreadyBooked = upcoming.filter((ev) => registeredEventIds.has(ev.event_id));
+    const openWithBuddies = upcoming.filter((ev) => !registeredEventIds.has(ev.event_id));
+
+    const etFmt = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+    });
+    const shortName = (name: string) => {
+      const parts = name.split(" ");
+      return parts.length >= 2 ? `${parts[0]} ${parts[1][0]}.` : name;
+    };
+
+    if (buddies.length > 0 || alreadyBooked.length > 0 || openWithBuddies.length > 0) {
+      const lines: string[] = ["SOCIAL CONTEXT:"];
+
+      if (buddies.length > 0) {
+        const buddyList = buddies.slice(0, 5)
+          .map((b) => `${shortName(b.name)} (${b.shared_sessions} sessions together)`)
+          .join(", ");
+        lines.push(`Players this player knows from past sessions (3+ shared courts): ${buddyList}`);
+      }
+
+      if (alreadyBooked.length > 0) {
+        const bookedLines = alreadyBooked.map((ev) => {
+          const dateStr = etFmt.format(new Date(ev.start_time));
+          const names = ev.buddies_signed_up.map((b) => shortName(b.name));
+          return `- ${dateStr}: ${ev.program_name} with ${names.join(" and ")}`;
+        });
+        lines.push(
+          `ALREADY BOOKED WITH BUDDIES — this player is already registered for:\n${bookedLines.join("\n")}\nDO NOT recommend these sessions. Instead, acknowledge their upcoming court time and recommend something different — a complementary session on a different day, or a next step in their progression.`
+        );
+      }
+
+      if (openWithBuddies.length > 0) {
+        lines.push("Upcoming sessions where their court buddies are already signed up (player NOT yet registered):");
+        for (const ev of openWithBuddies.slice(0, 5)) {
+          const dateStr = etFmt.format(new Date(ev.start_time));
+          const level = ev.level ? ` · ${ev.level}` : "";
+          const names = ev.buddies_signed_up.map((b) => shortName(b.name));
+          const nameStr = names.length === 1 ? `${names[0]} is` : `${names.join(" and ")} are`;
+          lines.push(`${dateStr}${level} · ${nameStr} registered for ${ev.program_name}`);
+        }
+      }
+
+      lines.push(
+        "Use this information to personalize your outreach. Only mention players who are confirmed registered — never guess. For ALREADY BOOKED sessions, acknowledge the upcoming court time; do not re-recommend those sessions."
+      );
+
+      socialContext = lines.join("\n");
+    }
+  } catch (err) {
+    req.log.info({ err }, "Social context fetch skipped (non-fatal)");
+  }
+Then add the import at the top of agent.ts, alongside the other lib imports:
+typescriptimport { getPlayerSocialContext } from "../lib/socialGraph";
+Do not modify artifacts/api-server/src/routes/socialGraph.ts. The three existing routes stay exactly as they are.
+
+Verification (only these — nothing else)
+
+Build: pnpm -C artifacts/api-server build. Confirm exit 0.
+Restart the dev server. Confirm it boots cleanly.
+Hit POST /api/agent/run with one player_id (the same test player you used last round, or any player with attendance history). Confirm the response shape is unchanged — same fields, same structure as before.
+Time the agent run. Run it once with time:
+
+time curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" -d '{"player_id":"<id>"}'
+Report the wall-clock time. We expect a noticeable reduction from baseline.
+That's it. Don't run other smoke tests. Don't grep for unrelated drift. Don't refactor routes/socialGraph.ts.
+
+Report back:
+
+New file created with line count
+agent.ts: lines changed (range or hunk count)
+TypeScript build result
+Server boot result
+Sample agent response showing unchanged shape
+Wall-clock timing of the agent run

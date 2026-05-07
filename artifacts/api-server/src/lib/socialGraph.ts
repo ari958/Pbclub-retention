@@ -1,0 +1,236 @@
+import { supabase } from "./supabaseClient";
+import { extractSkillLevel } from "./skillLevel";
+import { logger as defaultLogger } from "./logger";
+
+const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+export interface BuddyEntry {
+  player_id: string;
+  name: string;
+  shared_sessions: number;
+  last_shared_at: string | null;
+  opt_in_notifications: boolean;
+}
+
+export interface UpcomingWithBuddies {
+  event_id: string;
+  program_name: string;
+  level: string | null;
+  start_time: string;
+  buddies_signed_up: { player_id: string; name: string; shared_sessions: number }[];
+}
+
+export interface Registration {
+  event_id: string;
+  event_name: string;
+  start_time: string;
+}
+
+export interface PlayerSocialContext {
+  buddies: BuddyEntry[];
+  upcoming: UpcomingWithBuddies[];
+  registrations: Registration[];
+}
+
+interface ContextOptions {
+  logger?: { warn: Function; info: Function; error: Function };
+  daysAhead?: number;
+  maxEvents?: number;
+}
+
+// ─── PodPlay helpers (private) ────────────────────────────────────────────────
+async function fetchUpcomingEventsRaw(daysAhead: number): Promise<any[]> {
+  const now = new Date().toISOString();
+  const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
+  const url = `${PODPLAY_BASE}/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
+  const res = await fetch(url, {
+    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
+  const data = await res.json() as any;
+  return (data.items ?? []).filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
+}
+
+async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
+  const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch {
+    return [];
+  }
+  if (res.status === 404) return [];
+  if (res.status === 429) {
+    await sleep(3_000);
+    try {
+      const retry = await fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" } });
+      if (!retry.ok) return [];
+      const d = await retry.json() as any;
+      return (d.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+    } catch {
+      return [];
+    }
+  }
+  if (!res.ok) return [];
+  const data = await res.json() as any;
+  return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+}
+
+// ─── Main entry point ─────────────────────────────────────────────────────────
+/**
+ * Single consolidated fetch for the agent's social context. Returns buddies,
+ * upcoming-with-buddies, and registrations from one PodPlay events sweep,
+ * eliminating the duplicate work that the three /api/social-graph routes
+ * would otherwise do when called in parallel.
+ *
+ * Failure mode: returns empty arrays for any portion that fails. Never throws —
+ * the agent route should treat social context as enrichment, not requirement.
+ */
+export async function getPlayerSocialContext(
+  playerId: string,
+  options: ContextOptions = {},
+): Promise<PlayerSocialContext> {
+  const log = options.logger ?? defaultLogger;
+  const daysAhead = options.daysAhead ?? 7;
+  const maxEvents = options.maxEvents ?? 10;
+
+  // ── 1. Fetch buddy pairs + player external_id in parallel ───────────────
+  const [pairsResult, playerResult] = await Promise.all([
+    supabase
+      .from("buddy_pairs")
+      .select("player_a, player_b, shared_sessions, last_shared_at, opt_in_notifications")
+      .or(`player_a.eq.${playerId},player_b.eq.${playerId}`)
+      .order("shared_sessions", { ascending: false })
+      .limit(50),
+    supabase
+      .from("players")
+      .select("external_id")
+      .eq("id", playerId)
+      .maybeSingle(),
+  ]);
+
+  if (pairsResult.error) {
+    (log as any).warn?.({ err: pairsResult.error.message }, "[socialGraph] buddy_pairs query failed");
+  }
+  const pairs = pairsResult.data ?? [];
+
+  // Build buddy ID list and shared_sessions map
+  const buddyIds = pairs.map((p: any) => (p.player_a === playerId ? p.player_b : p.player_a));
+  const sharedSessionsByBuddy = new Map<string, number>();
+  for (const p of pairs as any[]) {
+    const otherId = p.player_a === playerId ? p.player_b : p.player_a;
+    sharedSessionsByBuddy.set(otherId, p.shared_sessions);
+  }
+
+  // ── 2. Fetch buddy player rows (one query) ──────────────────────────────
+  let buddyPlayers: { id: string; name: string; external_id: string | null }[] = [];
+  if (buddyIds.length > 0) {
+    const { data, error } = await supabase
+      .from("players")
+      .select("id, name, external_id")
+      .in("id", buddyIds);
+    if (error) {
+      (log as any).warn?.({ err: error.message }, "[socialGraph] buddy player lookup failed");
+    } else {
+      buddyPlayers = (data ?? []) as any[];
+    }
+  }
+
+  // Build buddies output (top 10, sorted by shared_sessions desc — already sorted from query)
+  const buddyById = new Map(buddyPlayers.map((p) => [p.id, p]));
+  const buddies: BuddyEntry[] = pairs
+    .slice(0, 10)
+    .map((p: any) => {
+      const otherId = p.player_a === playerId ? p.player_b : p.player_a;
+      const player = buddyById.get(otherId);
+      return {
+        player_id: otherId,
+        name: player?.name ?? "Unknown",
+        shared_sessions: p.shared_sessions,
+        last_shared_at: p.last_shared_at ?? null,
+        opt_in_notifications: p.opt_in_notifications ?? false,
+      };
+    });
+
+  // Build buddy-by-external-id map for upcoming-with-buddies lookup
+  const buddyByExternalId = new Map<string, { id: string; name: string; shared_sessions: number }>();
+  for (const p of buddyPlayers) {
+    if (p.external_id) {
+      buddyByExternalId.set(p.external_id, {
+        id: p.id,
+        name: p.name,
+        shared_sessions: sharedSessionsByBuddy.get(p.id) ?? 0,
+      });
+    }
+  }
+
+  // ── 3. Fetch upcoming events ONCE ───────────────────────────────────────
+  const playerExternalId = playerResult.data?.external_id ?? null;
+
+  let allEvents: any[] = [];
+  try {
+    allEvents = await fetchUpcomingEventsRaw(daysAhead);
+  } catch (err: any) {
+    (log as any).warn?.({ err: err.message }, "[socialGraph] upcoming events fetch failed");
+    return { buddies, upcoming: [], registrations: [] };
+  }
+  const events = allEvents.slice(0, maxEvents);
+
+  // ── 4. Fetch signups for those events ONCE (parallel batches of 3 with throttle) ──
+  type EventSignups = { event: any; externalIds: string[] };
+  const signupsByEvent: EventSignups[] = [];
+  for (let i = 0; i < events.length; i += 3) {
+    if (i > 0) await sleep(250);
+    const batch = events.slice(i, i + 3);
+    const results = await Promise.all(
+      batch.map((event) =>
+        fetchEventSignupsRaw(event.id)
+          .then((externalIds) => ({ event, externalIds }))
+          .catch(() => ({ event, externalIds: [] as string[] }))
+      )
+    );
+    signupsByEvent.push(...results);
+  }
+
+  // ── 5. Derive both views from the single signups dataset ────────────────
+  const upcoming: UpcomingWithBuddies[] = [];
+  const registrations: Registration[] = [];
+
+  for (const { event, externalIds } of signupsByEvent) {
+    // Registrations view: did THIS player sign up for this event?
+    if (playerExternalId && externalIds.includes(playerExternalId)) {
+      registrations.push({
+        event_id: event.id,
+        event_name: event.name,
+        start_time: event.startTime,
+      });
+    }
+
+    // Upcoming-with-buddies view: do any of this player's buddies have signups here?
+    const buddiesHere = externalIds
+      .map((eid) => buddyByExternalId.get(eid))
+      .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
+
+    if (buddiesHere.length > 0) {
+      upcoming.push({
+        event_id: event.id,
+        program_name: event.name,
+        level: extractSkillLevel(event.tags),
+        start_time: event.startTime,
+        buddies_signed_up: buddiesHere.map((b) => ({
+          player_id: b.id,
+          name: b.name,
+          shared_sessions: b.shared_sessions,
+        })),
+      });
+    }
+  }
+
+  return { buddies, upcoming, registrations };
+}
