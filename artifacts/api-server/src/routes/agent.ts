@@ -94,8 +94,7 @@ OUTPUT FORMAT — return a JSON object with these fields:
 {
   "message": "the SMS text only — no quotes around it",
   "reasoning": "one sentence explaining the recommendation",
-  "recommended_programs": ["program name"],
-  "engagement_state": "active|lapsing|dormant"
+  "recommended_programs": ["program name"]
 }`;
 
 router.post("/agent/run", agentRateLimit, async (req, res) => {
@@ -221,6 +220,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     name: profile.name,
     skill_level: profile.skill_level ?? null,
     last_visit_date,
+    engagement_state,  // server-computed; Claude must use this, not derive its own
     programs_attended,
     membership_status: profile.membership_status ?? "non-member",
     progression_status: profile.progression_status ?? null,
@@ -502,6 +502,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
     send_strategy,
     ...agentResponse,
+    engagement_state,  // server-computed; overrides anything Claude may emit
   };
   if (skip_reason) responseBody.skip_reason = skip_reason;
 

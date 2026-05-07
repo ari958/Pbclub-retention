@@ -1,0 +1,110 @@
+ENGAGEMENT_STATE — pass into prompt, remove from output
+The route computes engagement_state deterministically from last_visit_date, but the agent is letting Claude compute its own version and return it in the JSON output. Claude's value is wrong (returns "active" for a 15-day lapsed player) and creates two-sources-of-truth: the conversation record has the correct value while the response JSON has Claude's incorrect one.
+Fix: pass the server-computed value into the prompt context, and stop asking Claude to return it.
+
+FIX 1 — agent.ts: include engagement_state in player profile passed to Claude
+In artifacts/api-server/src/routes/agent.ts, find the playerProfileForAgent object construction:
+typescript  const playerProfileForAgent = {
+    name: profile.name,
+    skill_level: profile.skill_level ?? null,
+    last_visit_date,
+    programs_attended,
+    membership_status: profile.membership_status ?? "non-member",
+    progression_status: profile.progression_status ?? null,
+    notes: profile.notes ?? null,
+    coach_assigned_level: profile.coach_assigned_level ?? null,
+    level_confidence: levelConfidenceForAgent,
+  };
+Add engagement_state to the object:
+typescript  const playerProfileForAgent = {
+    name: profile.name,
+    skill_level: profile.skill_level ?? null,
+    last_visit_date,
+    engagement_state,  // server-computed; Claude must use this, not derive its own
+    programs_attended,
+    membership_status: profile.membership_status ?? "non-member",
+    progression_status: profile.progression_status ?? null,
+    notes: profile.notes ?? null,
+    coach_assigned_level: profile.coach_assigned_level ?? null,
+    level_confidence: levelConfidenceForAgent,
+  };
+Note: engagement_state is already computed earlier in the route and available as a const. This just adds it to what Claude sees.
+
+FIX 2 — agent.ts: update the system prompt's output schema
+In the same file, find the SYSTEM_PROMPT string. Locate the OUTPUT FORMAT block at the end:
+typescriptOUTPUT FORMAT — return a JSON object with these fields:
+{
+  "message": "the SMS text only — no quotes around it",
+  "reasoning": "one sentence explaining the recommendation",
+  "recommended_programs": ["program name"],
+  "engagement_state": "active|lapsing|dormant"
+}
+Change it to:
+typescriptOUTPUT FORMAT — return a JSON object with these fields:
+{
+  "message": "the SMS text only — no quotes around it",
+  "reasoning": "one sentence explaining the recommendation",
+  "recommended_programs": ["program name"]
+}
+(Just remove the engagement_state line from the schema.)
+
+FIX 3 — agent.ts: explicitly include engagement_state in the response from the server-computed value
+Find the response body construction:
+typescript  const responseBody: Record<string, unknown> = {
+    conversation_id,
+    message_id,
+    warm_score: warmScore,
+    link_strategy,
+    scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
+    send_strategy,
+    ...agentResponse,
+  };
+The ...agentResponse spread will no longer include engagement_state (since Claude no longer outputs it). Explicitly add the server's computed value after the spread:
+typescript  const responseBody: Record<string, unknown> = {
+    conversation_id,
+    message_id,
+    warm_score: warmScore,
+    link_strategy,
+    scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
+    send_strategy,
+    ...agentResponse,
+    engagement_state,  // server-computed; overrides anything Claude may emit
+  };
+The explicit assignment after the spread is intentional: even if Claude leaks an engagement_state field by accident (despite the schema change), the server value wins.
+
+Verification
+
+Build: pnpm -C artifacts/api-server build. Confirm exit 0.
+Restart the dev server.
+Clear the warm_score cache and re-run the four tests:
+
+sqlUPDATE players
+SET warm_score = NULL, warm_score_updated_at = NULL
+WHERE id IN (
+  '0c48e1a9-a19a-4588-aee0-b49956e4dfb1',
+  '7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c',
+  'e997b2c9-3210-46c7-aa78-78d2499d89aa',
+  '4703d133-9a5b-49e4-a2e7-a3953087eb0a'
+);
+bashcurl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"0c48e1a9-a19a-4588-aee0-b49956e4dfb1"}' > /tmp/sagan_v3.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c"}' > /tmp/krasinski_v3.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"e997b2c9-3210-46c7-aa78-78d2499d89aa"}' > /tmp/mair_v3.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"4703d133-9a5b-49e4-a2e7-a3953087eb0a"}' > /tmp/digon_v3.json
+
+Report from each response:
+
+engagement_state (should now match the server-computed value)
+warm_score
+link_strategy
+First line of message
+
+
+
+We expect Sagan/Digon to be "active", Krasinski to be "lapsing", Mair to be "dormant" — matching the diagnostic log values from the previous round.
+That's it.
+
+Report back with the four responses.
