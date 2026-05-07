@@ -1,0 +1,95 @@
+Excellent data. Let me work through the findings carefully — there are several distinct issues here and I want to separate them clearly.
+What worked
+The four messages are all good, and that matters more than any of the metrics. Walking through each:
+
+Sagan: Casual, references the program by name, tight recommendation. ✓
+Krasinski: Names two real buddies (Kavita and Carlota) registered for the actual session, soft social nudge framing, no surveillance language. ✓
+Mair: "the one remaining spot adds natural urgency" is a nice touch from the reasoning, the message itself doesn't oversell. ✓
+Digon: Correctly identifies she's already booked Friday and recommends a same-day add-on rather than re-suggesting Ladies Night. The "ALREADY BOOKED WITH BUDDIES" branch fired and the prompt instruction worked. ✓
+
+No banned words. No banned phrases. No em-dashes. No exclamation points. Contractions used naturally. Names addressed cleanly (no trailing space on Carolyn, confirming the trim worked somewhere upstream). Surveillance framing absent.
+The agent is producing the messages we want.
+What's broken — three separate issues
+Issue 1: Every warm score is 0
+TIER 1 (John Sagan, 11 attendances at one program, last visit 5 days ago):  warm_score = 0
+TIER 2 (Carolyn Krasinski, 15 days lapsed):                                  warm_score = 0
+TIER 3 (Jayesh Mair, 31 days dormant):                                       warm_score = 0
+TIER 5 (Carlota Digon, 17 buddy pairs, last visit 3 days ago):               warm_score = 0
+This is a real bug. Sagan in particular should score positively — 11 attendances at the recommended program triggers +5 × decay (1.0) = +5. Plus +4 if program_type matches. Plus +3 for ready-to-advance (he might not have that). Even without progression status, he should be at +5 to +9.
+Two possibilities:
+Possibility A: The cache is poisoned. From yesterday, Angel got warm_score = 0 because the new-player branch fires and writes 0 to the cache. The cache lasts 24 hours. If we recently called the agent on these players during testing — which we did for Geoff yesterday — and the new-player branch fired or the score was 0 for any reason, it's now cached as 0 for 24 hours.
+But that doesn't explain all four being 0. Unless every test player ran through the new-player branch at some point.
+Possibility B: The recommended program doesn't match the heuristic top program. Look at the agent route flow:
+typescript// Picks heuristic top program BEFORE Claude:
+const topProgram = programsForAgent.find(p => p.skill_level === playerSkillLevel) ?? programsForAgent[0];
+
+// Computes warm score against THAT program:
+warmScore = await computeWarmScore(player_id, topProgram.program_type, topProgram.name, ...);
+If playerSkillLevel is null (none of our test players have skill_level populated, presumably), the fallback is programsForAgent[0] — the first program in the slim list, which is whatever sorts first by start time. That program may not be the player's exact program_name, may not match their program_type history, and may be at a level 2+ ranks above them.
+For Sagan: The slim 10-program list is sorted by start time. The first one is whatever starts soonest. If it's "Beginner Drilling" while Sagan exclusively does "Half Price Early Open Play," he gets:
+
++5 for exact match → 0 (no match)
++4 for program_type → 0 (different type)
+−2 for never attended this type
+−1 for no progression_status
+= −3 raw, capped... actually the score isn't capped. So it should be negative.
+
+But it's 0, not negative. That's the cache. Score from yesterday's run was 0 (Angel's new-player branch leaked into a cache key shared with these players? No, the cache is per-player). Or score was 0 yesterday for some other reason and we're hitting cached values.
+Diagnostic step before guessing further:
+sqlSELECT id, name, warm_score, warm_score_updated_at,
+       (NOW() - warm_score_updated_at) AS cache_age
+FROM players
+WHERE id IN (
+  '0c48e1a9-a19a-4588-aee0-b49956e4dfb1',  -- Sagan
+  '7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c',  -- Krasinski
+  'e997b2c9-3210-46c7-aa78-78d2499d89aa',  -- Mair
+  '4703d133-9a5b-49e4-a2e7-a3953087eb0a'   -- Digon
+);
+If warm_score = 0 and cache_age is more than a few minutes, the cache is the issue. Run that and report.
+Issue 2: Engagement state is active for Krasinski
+Carolyn Krasinski: last_visit_date = 2026-04-22, days_since_visit = 15
+But: engagement_state = "active"
+The route's logic:
+typescriptif (daysSince <= 14) return "active";
+if (daysSince <= 30) return "lapsing";
+return "dormant";
+15 days should be lapsing, not active. But the response says active.
+Off-by-one bug, or the data type. daysSince is computed as:
+typescript(Date.now() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24)
+If last_visit_date is '2026-04-22' (a date string), it parses as midnight UTC. If "now" is May 7 mid-afternoon ET, that's about 15.7 days. Should fall into the <= 30 branch. So engagement_state should be lapsing.
+Unless last_visit_date derived in the route is not 2026-04-22. Look at how it's computed:
+typescript// agent.ts
+const last_visit_date = attendance.length > 0 ? attendance[0].attended_at : null;
+That's pulling from attendance[0] — the most recent attendance row. If Krasinski has an attendance row dated 2026-04-23 (1 day after her stored last_visit_date), daysSince would be ~14, hitting the active branch.
+So the agent route is computing engagement_state from attendance[0].attended_at, not players.last_visit_date. The two can differ. players.last_visit_date is updated at the end of syncEventAttendance.js based on the latest attendance row. They should match. If they don't, something's off in the sync or it's a date-vs-timestamp thing post-yesterday's migration.
+Run this:
+sqlSELECT
+  p.id,
+  p.name,
+  p.last_visit_date AS players_table,
+  MAX(a.attended_at) AS attendances_max
+FROM players p
+LEFT JOIN attendances a ON a.player_id = p.id
+WHERE p.id IN (
+  '0c48e1a9-a19a-4588-aee0-b49956e4dfb1',
+  '7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c',
+  'e997b2c9-3210-46c7-aa78-78d2499d89aa',
+  '4703d133-9a5b-49e4-a2e7-a3953087eb0a'
+)
+GROUP BY p.id, p.name, p.last_visit_date;
+If players_table ≠ attendances_max::date for any player, we have a sync drift bug to fix.
+Issue 3: Output token sprawl on Mair (274) and Digon (622)
+This is the real latency driver per your observation. Two of four runs spent meaningful tokens on reasoning before the JSON.
+Looking at the system prompt, it says "return a JSON object with these fields" but doesn't forbid preamble. Claude defaults to thinking out loud. With richer context (Mair has lapsing complexity, Digon has buddy + already-booked complexity), the model talks itself through the decision before producing JSON. That preamble gets thrown away by the indexOf parser but we paid for the tokens and waited for them.
+This is the right time to use Anthropic's tool_use structured output — it forces the model to emit JSON directly without preamble. But it's a bigger change than what we have time for in this audit. The cheap fix is to add a stronger directive to the system prompt:
+OUTPUT — Your entire response must be a single JSON object and nothing else. No preamble. No reasoning before the JSON. No text after the closing brace. Begin your response with `{` and end with `}`.
+This is a known-effective pattern with Claude. Probably cuts Mair from 274 → 130 and Digon from 622 → 200, getting them in line with Sagan/Krasinski's ~120.
+Triage
+Rank by impact:
+
+Issue 1 (warm score = 0) is most important to investigate. If it's the cache, easy fix. If it's the logic, real bug.
+Issue 2 (engagement_state mismatch) is a real correctness bug. The agent message tone is keyed off engagement state, so getting "active" when someone's lapsing means the wrong opener style.
+Issue 3 (output sprawl) is a perf and cost issue but doesn't affect correctness. Already paying ~3-5s extra and ~$0.005 per call.
+
+Run the two SQL queries (warm_score cache check and last_visit_date drift check). Paste back. We'll know within minutes whether Issue 1 is cache or logic, and whether Issue 2 is a sync drift or a route-level bug.
+Then we decide: fix here, or document and ship
