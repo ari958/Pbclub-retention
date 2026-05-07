@@ -113,16 +113,17 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   let available_programs: any[];
   let levelConfidenceRows: any[] = [];
   try {
-    [assembled, available_programs] = await Promise.all([
+    const [assembledResult, programsResult, confidenceResult] = await Promise.all([
       assembleProfile(player_id),
       fetchAvailablePrograms(),
+      supabase
+        .from("level_confidence")
+        .select("level, score, certainty, sessions")
+        .eq("player_id", player_id),
     ]);
-    // Fetch confidence rows (non-fatal if missing)
-    const { data: confRows } = await supabase
-      .from("level_confidence")
-      .select("level, score, certainty, sessions")
-      .eq("player_id", player_id);
-    levelConfidenceRows = confRows ?? [];
+    assembled = assembledResult;
+    available_programs = programsResult;
+    levelConfidenceRows = confidenceResult.data ?? [];
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : "Unknown error";
     const supabaseError = (err as any)?.supabaseError;
@@ -146,12 +147,10 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   const { profile, attendance } = assembled;
 
   // Derive last_visit_date and programs_attended from attendance history
-  const sortedAttendance = [...attendance].sort(
-    (a: any, b: any) => new Date(b.attended_at).getTime() - new Date(a.attended_at).getTime()
-  );
-  const last_visit_date: string | null = sortedAttendance.length > 0 ? sortedAttendance[0].attended_at : null;
+  // attendance is already ordered desc by attended_at from assembleProfile
+  const last_visit_date: string | null = attendance.length > 0 ? attendance[0].attended_at : null;
   const programs_attended: string[] = [
-    ...new Set(sortedAttendance.map((a: any) => a.program_name).filter(Boolean)),
+    ...new Set(attendance.map((a: any) => a.program_name).filter(Boolean)),
   ] as string[];
 
   // Build program familiarity map from existing attendance records (no extra query needed)
@@ -465,14 +464,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       send_strategy,
     };
 
-    let { data, error } = await supabase.from("messages").insert(payload).select("id").single();
-
-    // Column missing (migration pending) — strip unknown columns and retry
-    if (error && (error.code === "PGRST204" || /link_strategy|scheduled_send_at|send_strategy/.test(error.message ?? ""))) {
-      req.log.warn("[agent] new columns missing — inserting without them (migration pending)");
-      const { link_strategy: _ls, scheduled_send_at: _ssa, send_strategy: _ss, ...fallbackPayload } = payload;
-      ({ data, error } = await supabase.from("messages").insert(fallbackPayload).select("id").single());
-    }
+    const { data, error } = await supabase.from("messages").insert(payload).select("id").single();
 
     if (error) {
       req.log.error({ err: error }, "Failed to create message record");

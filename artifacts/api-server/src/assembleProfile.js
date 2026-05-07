@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
 /**
@@ -14,15 +14,15 @@ export async function assembleProfile(player_id) {
   const [profileResult, attendanceResult] = await Promise.all([
     supabase
       .from("players")
-      .select("*")
+      .select("club_id, name, skill_level, membership_status, progression_status, notes, coach_assigned_level")
       .eq("id", player_id)
       .single(),
 
     supabase
       .from("attendances")
-      .select("*")
+      .select("attended_at, program_name")
       .eq("player_id", player_id)
-      .order("attended_at", { ascending: true }),
+      .order("attended_at", { ascending: false }),
   ]);
 
   if (profileResult.error) {

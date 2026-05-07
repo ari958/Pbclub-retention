@@ -102,25 +102,21 @@ export async function computeWarmScore(
     }
   }
 
-  // ── Fetch messages (via conversations) ───────────────────────────────────
-  const { data: convs } = await supabase
-    .from("conversations")
-    .select("id")
-    .eq("player_id", playerId);
-
-  const convIds = (convs ?? []).map((c: any) => c.id as string);
-  let inboundMsgs: any[] = [];
-  let outboundMsgs: any[] = [];
-
-  if (convIds.length > 0) {
-    const { data: msgs } = await supabase
+  // ── Fetch messages and attendances in parallel ────────────────────────────
+  // Uses messages.player_id (denormalized 2026-05-07) — no conversations join needed
+  const [messagesResult, attendancesResult] = await Promise.all([
+    supabase
       .from("messages")
       .select("direction, reply_sentiment, body, link_clicked, ignored")
-      .in("conversation_id", convIds);
-
-    inboundMsgs = (msgs ?? []).filter((m: any) => m.direction === "inbound");
-    outboundMsgs = (msgs ?? []).filter((m: any) => m.direction === "outbound");
-  }
+      .eq("player_id", playerId),
+    supabase
+      .from("attendances")
+      .select("program_name, program_type, session_type")
+      .eq("player_id", playerId),
+  ]);
+  const allMsgs: any[] = messagesResult.data ?? [];
+  const inboundMsgs = allMsgs.filter((m: any) => m.direction === "inbound");
+  const outboundMsgs = allMsgs.filter((m: any) => m.direction === "outbound");
 
   // ── EDGE: negative sentiment or STOP → force cold ────────────────────────
   const hasNegative = inboundMsgs.some(
@@ -145,13 +141,7 @@ export async function computeWarmScore(
     }
   }
 
-  // ── Fetch attendances ─────────────────────────────────────────────────────
-  const { data: attendances } = await supabase
-    .from("attendances")
-    .select("program_name, program_type, session_type")
-    .eq("player_id", playerId);
-
-  const allAttendances: any[] = attendances ?? [];
+  const allAttendances: any[] = attendancesResult.data ?? [];
 
   // ── Decay multiplier (attendance-based signals only) ──────────────────────
   const decay = decayMultiplier(player.last_visit_date);

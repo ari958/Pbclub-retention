@@ -1,0 +1,228 @@
+AGENT HOT PATH CLEANUP — six focused fixes
+Six surgical changes across three files. No new abstractions, no refactors beyond what's listed. Make exactly these changes and stop.
+After each fix, list the file and line range changed. Do not run any extra greps, smoke tests, or audits beyond what's specified at the end.
+
+FIX 1 — assembleProfile.js: switch to service_role key
+File: artifacts/api-server/src/assembleProfile.js
+Change:
+javascriptconst supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
+To:
+javascriptconst supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+FIX 2 — assembleProfile.js: narrow SELECT columns
+Same file. Change the two queries inside Promise.all:
+javascriptsupabase
+  .from("players")
+  .select("*")
+  .eq("id", player_id)
+  .single(),
+supabase
+  .from("attendances")
+  .select("*")
+  .eq("player_id", player_id)
+  .order("attended_at", { ascending: true }),
+To:
+javascriptsupabase
+  .from("players")
+  .select("club_id, name, skill_level, membership_status, progression_status, notes, coach_assigned_level")
+  .eq("id", player_id)
+  .single(),
+supabase
+  .from("attendances")
+  .select("attended_at, program_name")
+  .eq("player_id", player_id)
+  .order("attended_at", { ascending: false }),
+Two changes here:
+
+Narrow column lists (drop select("*"))
+Change attendance order to descending (saves the in-memory re-sort in agent.ts)
+
+
+FIX 3 — agent.ts: remove the in-memory attendance re-sort
+File: artifacts/api-server/src/routes/agent.ts
+Find:
+typescriptconst sortedAttendance = [...attendance].sort(
+  (a: any, b: any) => new Date(b.attended_at).getTime() - new Date(a.attended_at).getTime()
+);
+const last_visit_date: string | null = sortedAttendance.length > 0 ? sortedAttendance[0].attended_at : null;
+const programs_attended: string[] = [
+  ...new Set(sortedAttendance.map((a: any) => a.program_name).filter(Boolean)),
+] as string[];
+Replace with:
+typescript// attendance is already ordered desc by attended_at from assembleProfile
+const last_visit_date: string | null = attendance.length > 0 ? attendance[0].attended_at : null;
+const programs_attended: string[] = [
+  ...new Set(attendance.map((a: any) => a.program_name).filter(Boolean)),
+] as string[];
+Then find attendanceCountMap build loop a few lines below:
+typescriptfor (const row of attendance) {
+Leave that loop unchanged. It already uses attendance directly.
+
+FIX 4 — agent.ts: parallelize the level_confidence query
+Same file. Find:
+typescripttry {
+  [assembled, available_programs] = await Promise.all([
+    assembleProfile(player_id),
+    fetchAvailablePrograms(),
+  ]);
+  // Fetch confidence rows (non-fatal if missing)
+  const { data: confRows } = await supabase
+    .from("level_confidence")
+    .select("level, score, certainty, sessions")
+    .eq("player_id", player_id);
+  levelConfidenceRows = confRows ?? [];
+} catch (err: unknown) {
+Replace with:
+typescripttry {
+  const [assembledResult, programsResult, confidenceResult] = await Promise.all([
+    assembleProfile(player_id),
+    fetchAvailablePrograms(),
+    supabase
+      .from("level_confidence")
+      .select("level, score, certainty, sessions")
+      .eq("player_id", player_id),
+  ]);
+  assembled = assembledResult;
+  available_programs = programsResult;
+  levelConfidenceRows = confidenceResult.data ?? [];
+} catch (err: unknown) {
+
+FIX 5 — agent.ts: remove the dead PGRST204 fallback
+Same file. Find and delete this block entirely:
+typescript    // Column missing (migration pending) — strip unknown columns and retry
+    if (error && (error.code === "PGRST204" || /link_strategy|scheduled_send_at|send_strategy/.test(error.message ?? ""))) {
+      req.log.warn("[agent] new columns missing — inserting without them (migration pending)");
+      const { link_strategy: _ls, scheduled_send_at: _ssa, send_strategy: _ss, ...fallbackPayload } = payload;
+      ({ data, error } = await supabase.from("messages").insert(fallbackPayload).select("id").single());
+    }
+The surrounding insert and error check stay. Just remove the fallback retry block.
+
+FIX 6 — warmScore.ts: parallelize the 4-query cascade using messages.player_id
+File: artifacts/api-server/src/lib/warmScore.ts
+The function currently does: player → conversations → messages (sequential), then attendances. Restructure to 3 parallel queries via the new messages.player_id column.
+Find this block (starts roughly at the comment "Fetch player row" and ends after the attendances fetch):
+typescript  // ── Fetch player row ──────────────────────────────────────────────────────
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select(
+      "id, created_at, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
+    )
+    .eq("id", playerId)
+    .maybeSingle();
+  if (playerError || !player) {
+    logger.warn({ playerId, err: playerError?.message }, "[warmScore] player not found");
+    return 0;
+  }
+  // ── Cache check ───────────────────────────────────────────────────────────
+  if (!forceRefresh && player.warm_score != null && player.warm_score_updated_at) {
+    const ageMs = Date.now() - new Date(player.warm_score_updated_at).getTime();
+    if (ageMs < 24 * 60 * 60 * 1000) {
+      logger.info({ playerId, cached: player.warm_score }, "[warmScore] returning cached score");
+      return player.warm_score as number;
+    }
+  }
+  // ── EDGE: program starts within 48 hours → force warm ────────────────────
+  if (programStartDate) {
+    const hoursUntil = (programStartDate.getTime() - Date.now()) / (1000 * 60 * 60);
+    if (hoursUntil >= 0 && hoursUntil <= 48) {
+      logger.info({ playerId, hoursUntil }, "[warmScore] imminent program — forcing warm (10)");
+      await cacheScore(playerId, 10);
+      return 10;
+    }
+  }
+  // ── Fetch messages (via conversations) ───────────────────────────────────
+  const { data: convs } = await supabase
+    .from("conversations")
+    .select("id")
+    .eq("player_id", playerId);
+  const convIds = (convs ?? []).map((c: any) => c.id as string);
+  let inboundMsgs: any[] = [];
+  let outboundMsgs: any[] = [];
+  if (convIds.length > 0) {
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("direction, reply_sentiment, body, link_clicked, ignored")
+      .in("conversation_id", convIds);
+    inboundMsgs = (msgs ?? []).filter((m: any) => m.direction === "inbound");
+    outboundMsgs = (msgs ?? []).filter((m: any) => m.direction === "outbound");
+  }
+Replace with:
+typescript  // ── Fetch player row first (cache check may short-circuit before other queries) ──
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select(
+      "id, created_at, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
+    )
+    .eq("id", playerId)
+    .maybeSingle();
+  if (playerError || !player) {
+    logger.warn({ playerId, err: playerError?.message }, "[warmScore] player not found");
+    return 0;
+  }
+  // ── Cache check ───────────────────────────────────────────────────────────
+  if (!forceRefresh && player.warm_score != null && player.warm_score_updated_at) {
+    const ageMs = Date.now() - new Date(player.warm_score_updated_at).getTime();
+    if (ageMs < 24 * 60 * 60 * 1000) {
+      logger.info({ playerId, cached: player.warm_score }, "[warmScore] returning cached score");
+      return player.warm_score as number;
+    }
+  }
+  // ── EDGE: program starts within 48 hours → force warm ────────────────────
+  if (programStartDate) {
+    const hoursUntil = (programStartDate.getTime() - Date.now()) / (1000 * 60 * 60);
+    if (hoursUntil >= 0 && hoursUntil <= 48) {
+      logger.info({ playerId, hoursUntil }, "[warmScore] imminent program — forcing warm (10)");
+      await cacheScore(playerId, 10);
+      return 10;
+    }
+  }
+  // ── Fetch messages and attendances in parallel ────────────────────────────
+  // Uses messages.player_id (denormalized 2026-05-07) — no conversations join needed
+  const [messagesResult, attendancesResult] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("direction, reply_sentiment, body, link_clicked, ignored")
+      .eq("player_id", playerId),
+    supabase
+      .from("attendances")
+      .select("program_name, program_type, session_type")
+      .eq("player_id", playerId),
+  ]);
+  const allMsgs: any[] = messagesResult.data ?? [];
+  const inboundMsgs = allMsgs.filter((m: any) => m.direction === "inbound");
+  const outboundMsgs = allMsgs.filter((m: any) => m.direction === "outbound");
+Then delete the existing attendance fetch a few lines below:
+typescript  // ── Fetch attendances ─────────────────────────────────────────────────────
+  const { data: attendances } = await supabase
+    .from("attendances")
+    .select("program_name, program_type, session_type")
+    .eq("player_id", playerId);
+  const allAttendances: any[] = attendances ?? [];
+Replace with:
+typescript  const allAttendances: any[] = attendancesResult.data ?? [];
+The rest of the function (decay, scoring, signal logic) stays unchanged.
+
+Verification (only these — nothing else)
+
+Run TypeScript build:
+
+pnpm -C artifacts/api-server build
+Confirm it exits 0. If errors, paste them.
+
+Restart the dev server and verify it boots without errors.
+Hit POST /api/agent/run with one player_id (any test player). Confirm the response shape includes warm_score, link_strategy, scheduled_send_at, and send_strategy fields.
+
+That's it. Don't run grep audits, don't smoke-test other endpoints, don't recompute anything.
+
+Report back:
+
+Each fix with file and line range
+TypeScript build result
+Server restart result
+One sample agent response showing the four expected fields
