@@ -524,7 +524,16 @@ export default function Dashboard() {
   const saveEdit = async (messageId: string) => {
     setSaving(true);
     try {
-      await supabase.from("messages").update({ body: draftBody }).eq("id", messageId);
+      const res = await fetch(`/api/messages/${messageId}/draft`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: draftBody }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? "Failed to save edit");
+        return;
+      }
       setEditingId(null);
       setDraftBody("");
       await fetchMessages();

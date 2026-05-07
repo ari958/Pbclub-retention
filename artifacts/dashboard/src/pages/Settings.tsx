@@ -596,9 +596,15 @@ export default function Settings() {
     if (!club) return;
     setSaving(true);
     try {
-      const { error } = await supabase.from("clubs").update({ scheduled_sync_time: syncTime, timezone }).eq("id", club.id);
-      if (error) toast.error(error.message);
-      else {
+      const res = await fetch(`/api/clubs/${club.id}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scheduled_sync_time: syncTime, timezone }),
+      });
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        toast.error(d.error ?? "Failed to save schedule");
+      } else {
         setClub((prev) => prev ? { ...prev, scheduled_sync_time: syncTime, timezone } : prev);
         toast.success("Schedule saved");
       }

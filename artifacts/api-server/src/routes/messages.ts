@@ -623,4 +623,32 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   res.status(200).send("<Response></Response>");
 });
 
+// ─── PATCH /api/messages/:id/draft ───────────────────────────────────────────
+// Edit the body of a pending (unsent) message. Only works while status=pending.
+
+router.patch("/messages/:id/draft", async (req, res) => {
+  const { body } = req.body as { body?: unknown };
+  if (!body || typeof body !== "string" || !body.trim()) {
+    res.status(400).json({ error: "body is required and must be a non-empty string" });
+    return;
+  }
+
+  const { data, error } = await supabase
+    .from("messages")
+    .update({ body: body.trim() })
+    .eq("id", req.params.id)
+    .eq("status", "pending")
+    .select("id, body, status")
+    .single();
+
+  if (error || !data) {
+    res
+      .status(404)
+      .json({ error: error?.message ?? "Message not found or not in pending status" });
+    return;
+  }
+
+  res.json(data);
+});
+
 export default router;

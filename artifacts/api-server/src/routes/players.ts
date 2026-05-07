@@ -82,7 +82,7 @@ router.post("/players/:id/progression", async (req, res) => {
 // ─── PATCH /api/players/:id/coach-level ──────────────────────────────────────
 
 const CoachLevelSchema = z.object({
-  coach_assigned_level: z.string().min(1),
+  coach_assigned_level: z.string().min(1).nullable(),
   coach_level_notes: z.string().optional(),
   coach_level_set_by: z.string().optional(),
 });
@@ -95,18 +95,20 @@ router.patch("/players/:id/coach-level", async (req, res) => {
   }
   const { coach_assigned_level, coach_level_notes, coach_level_set_by } = parsed.data;
 
-  // Validate level exists in taxonomy for this club
-  const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
-  const { data: taxRow } = await supabase
-    .from("level_taxonomy")
-    .select("level")
-    .eq("level", coach_assigned_level)
-    .eq("club_id", CLUB_ID)
-    .maybeSingle();
+  // Taxonomy validation only when setting a non-null level
+  if (coach_assigned_level !== null) {
+    const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
+    const { data: taxRow } = await supabase
+      .from("level_taxonomy")
+      .select("level")
+      .eq("level", coach_assigned_level)
+      .eq("club_id", CLUB_ID)
+      .maybeSingle();
 
-  if (!taxRow) {
-    res.status(400).json({ error: `Level "${coach_assigned_level}" not found in level_taxonomy for this club` });
-    return;
+    if (!taxRow) {
+      res.status(400).json({ error: `Level "${coach_assigned_level}" not found in level_taxonomy for this club` });
+      return;
+    }
   }
 
   const { data: updated, error } = await supabase
@@ -115,7 +117,7 @@ router.patch("/players/:id/coach-level", async (req, res) => {
       coach_assigned_level,
       coach_level_notes: coach_level_notes ?? null,
       coach_level_set_by: coach_level_set_by ?? null,
-      coach_level_set_at: new Date().toISOString(),
+      coach_level_set_at: coach_assigned_level !== null ? new Date().toISOString() : null,
     })
     .eq("id", req.params.id)
     .select()
@@ -136,6 +138,58 @@ router.patch("/players/:id/coach-level", async (req, res) => {
     .eq("player_id", req.params.id);
 
   res.json({ player: updated, level_confidence: confidence ?? [] });
+});
+
+// ─── PATCH /api/players/:id/notes ────────────────────────────────────────────
+
+const NotesSchema = z.object({
+  notes: z.string().nullable(),
+});
+
+router.patch("/players/:id/notes", async (req, res) => {
+  const parsed = NotesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("players")
+    .update({ notes: parsed.data.notes })
+    .eq("id", req.params.id);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ updated: true });
+});
+
+// ─── PATCH /api/players/:id/coach-level-notes ─────────────────────────────────
+
+const CoachLevelNotesSchema = z.object({
+  coach_level_notes: z.string().nullable(),
+});
+
+router.patch("/players/:id/coach-level-notes", async (req, res) => {
+  const parsed = CoachLevelNotesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
+    return;
+  }
+
+  const { error } = await supabase
+    .from("players")
+    .update({ coach_level_notes: parsed.data.coach_level_notes })
+    .eq("id", req.params.id);
+
+  if (error) {
+    res.status(500).json({ error: error.message });
+    return;
+  }
+
+  res.json({ updated: true });
 });
 
 // ─── GET /api/players/:id/confidence ─────────────────────────────────────────

@@ -148,7 +148,11 @@ export default function Assessments() {
 
   const updateProgression = async (playerId: string, status: string) => {
     setLoadingKey(playerId + status);
-    await supabase.from("players").update({ progression_status: status }).eq("id", playerId);
+    await fetch(`/api/players/${playerId}/progression`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status, assessed_by: "operator" }),
+    });
     setLoadingKey(null);
     setCheckmarks((prev) => new Set([...prev, playerId]));
     setTimeout(() => {

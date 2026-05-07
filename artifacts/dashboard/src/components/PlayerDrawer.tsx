@@ -249,11 +249,20 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
   const updateProgression = async (val: ProgressionStatus) => {
     if (!player) return;
     setSavingProgression(true);
-    await supabase.from("players").update({ progression_status: val }).eq("id", player.id);
-    setPlayer((p) => p ? { ...p, progression_status: val } : p);
+    const res = await fetch(`/api/players/${player.id}/progression`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: val, assessed_by: "operator" }),
+    });
+    if (res.ok) {
+      setPlayer((p) => p ? { ...p, progression_status: val } : p);
+      onDataChanged?.();
+      toast.info(`Progression set to ${toTitleCase(val ?? "unset")}`);
+    } else {
+      const d = await res.json().catch(() => ({}));
+      toast.error(d.error ?? "Failed to update progression");
+    }
     setSavingProgression(false);
-    onDataChanged?.();
-    toast.info(`Progression set to ${toTitleCase(val ?? "unset")}`);
   };
 
   const saveNotes = async () => {
@@ -261,7 +270,11 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     const trimmed = notesDraft.trim();
     const current = player.notes ?? "";
     if (trimmed === current) return;
-    await supabase.from("players").update({ notes: trimmed || null }).eq("id", player.id);
+    await fetch(`/api/players/${player.id}/notes`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notes: trimmed || null }),
+    });
     setPlayer((p) => p ? { ...p, notes: trimmed || null } : p);
     setNoteSaved(true);
     if (noteSaveTimer.current) clearTimeout(noteSaveTimer.current);
@@ -299,7 +312,11 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     if (!player) return;
     const trimmed = coachLevelNotesDraft.trim();
     if (trimmed === (player.coach_level_notes ?? "")) return;
-    await supabase.from("players").update({ coach_level_notes: trimmed || null }).eq("id", player.id);
+    await fetch(`/api/players/${player.id}/coach-level-notes`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ coach_level_notes: trimmed || null }),
+    });
     setPlayer((p) => p ? { ...p, coach_level_notes: trimmed || null } : p);
     setCoachLevelNotesSaved(true);
     if (coachNoteTimer.current) clearTimeout(coachNoteTimer.current);
@@ -632,10 +649,17 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                     {player.coach_assigned_level && (
                       <button
                         onClick={() => {
-                          supabase.from("players").update({ coach_assigned_level: null }).eq("id", player.id).then(() => {
-                            setPlayer((p) => p ? { ...p, coach_assigned_level: null } : p);
-                            toast.info("Coach level cleared");
-                          });
+                          fetch(`/api/players/${player.id}/coach-level`, {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ coach_assigned_level: null }),
+                          })
+                            .then((res) => res.ok ? res.json() : res.json().then((d: any) => Promise.reject(d.error)))
+                            .then(() => {
+                              setPlayer((p) => p ? { ...p, coach_assigned_level: null } : p);
+                              toast.info("Coach level cleared");
+                            })
+                            .catch(() => toast.error("Failed to clear coach level"));
                         }}
                         style={{
                           padding: "4px 10px",

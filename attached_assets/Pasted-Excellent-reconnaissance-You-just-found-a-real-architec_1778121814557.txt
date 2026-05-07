@@ -1,0 +1,77 @@
+Excellent reconnaissance. You just found a real architectural drift problem — and the reason the migration didn't immediately break things is luck, not design.
+Let me explain what's actually happening, because the answer matters more than the immediate fix.
+The current state
+Your dashboard writes to players and clubs directly via the anon key, and they still work. They work because of these two policies in the new RLS layer:
+players:  anon_read_players → SELECT only
+clubs:    anon_read_clubs   → SELECT only
+There is no anon UPDATE policy on either table. Yet the writes succeed. That tells me one of two things is true:
+
+The writes are failing silently — Supabase's anon client returns success even when RLS blocks the update, because the row count returned is 0 and the dashboard isn't checking error or count. This is the most likely scenario. The drawer says "saved," the network call returns 200, and the data didn't change. Operators would never notice unless they refresh the page.
+The writes are succeeding because of GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role and somehow the anon key is being elevated. This shouldn't be possible with proper config, but it's worth ruling out.
+
+Test it right now. Open the dashboard, change a player's coach_assigned_level, hit save, then hard-refresh the page. If the value reverted, the write was silently failing all along — even before today's migration, because nothing in the old policies granted anon UPDATE on players either. The old {public} write policies were on conversations, messages, and message_templates, not on players or clubs.
+So one of two stories is true:
+
+Story A: These writes have been broken for some time and nobody noticed because UI is optimistic and operators rarely hard-refresh. Likely.
+Story B: There's a permission elevation path somewhere we haven't found yet. Less likely but worth ruling out.
+
+Either way, the answer is the same: route every write through the API server. Direct-from-dashboard writes via the anon key are an architectural mistake even when they work.
+Why this matters beyond fixing four lines
+The dashboard reaching directly into Supabase for writes breaks several things you'll want later:
+
+No server-side validation. When the operator types into a coach notes field, no server validates length, sanitizes input, or checks they're authorized. The browser is the source of truth. That's wrong.
+No audit trail. Every state change should hit an API endpoint that can log who did what, when, and why. Direct supabase writes leave no trace beyond the row mutation itself.
+No business logic hooks. Setting coach_assigned_level should trigger a computeLevelConfidence(playerId) recompute (the level confidence skill explicitly notes the PATCH route does this). If the dashboard writes to the column directly, the recompute never fires and the player's confidence score goes stale.
+No future multi-tenancy. If you ever onboard a second club, the dashboard hitting supabase.from('players').update(...) will be cross-club-writable as soon as you relax RLS to support multiple clubs. Routing through the API server gives you one place to enforce club isolation.
+Inconsistent surface area. Half your writes go through /api/..., half through Supabase REST. New developers (or future-you at 11pm) won't know which one to use for a new feature.
+
+The fix — make it a rule, not a one-off
+Here's what to do in order:
+Step 1 — confirm the symptom. Test the silent-failure hypothesis on one of the four direct writes. Pick progression_status since it's visible in the UI:
+
+Set a player's progression_status to "ready-to-advance"
+Hard-refresh the page
+If it reverted to whatever it was, we have confirmation
+
+Step 2 — route the four writes through the API server. You already have PATCH /api/players/:id/coach-level per the level confidence skill. Add the missing endpoints:
+PATCH /api/players/:id/progression
+  body: { progression_status, progression_assessed_by }
+  on save: set progression_assessed_at = now()
+
+PATCH /api/players/:id/notes
+  body: { notes }
+
+PATCH /api/players/:id/coach-level-notes
+  body: { coach_level_notes }
+  (separate from coach-level because different audit trail)
+
+PATCH /api/clubs/:id/settings
+  body: { scheduled_sync_time?, timezone? }
+  (settings-bag pattern; can add more fields later without new routes)
+Each one uses supabase from the shared client (service_role), validates the input, performs the update, returns the new state. Standard pattern, ~20 lines each.
+Step 3 — replace the four supabase.from(...).update() calls in PlayerDrawer.tsx and Settings.tsx with fetch() to the new endpoints.
+Step 4 — make a rule. Add a comment at the top of dashboard/src/lib/supabase.ts (or wherever the anon client is created) that says:
+typescript// IMPORTANT: this client is for SELECT only. Never use it for INSERT,
+// UPDATE, or DELETE. All writes must go through the API server at /api/*.
+// The RLS policies will silently reject writes via this client.
+Then audit with grep so you can prove no other writes slipped in. Run this in the dashboard source:
+bashgrep -rn "supabase\.from(" artifacts/dashboard/src \
+  | grep -E "\.(insert|update|upsert|delete)\("
+If that returns anything other than the four we just identified, you've found more drift to fix.
+What about the existing dashboard reads?
+Those are fine. SELECT-only via anon is the documented pattern, the policies allow it, and reads via PostgREST with RLS are exactly what Supabase is designed for. Don't move reads to the API server unnecessarily — that's overcorrection.
+The line is clean and worth memorizing:
+
+Dashboard reads: Supabase anon client. Direct.
+Dashboard writes: API server. Always.
+Server reads + writes: Supabase service_role client.
+
+Recommendation for sequencing
+You have three things in flight now:
+
+Confirm the silent-failure hypothesis (1 min)
+Route the four writes through the API (~1-2 hours of Replit work, 4 routes + 4 fetch swaps)
+Continue the schema audit (C2, C3, plus the truncated-columns query I'm still waiting on)
+
+I'd do them in that order. Confirming the silent failure tells us whether this is "fix soon" or "fix immediately." If progression_status changes really are silently lost, every coach assessment made in the past N weeks may not have persisted, which has knock-on effects on every level confidence score that depends on it. That's worth knowing before we do anything else.
+Run the silent-failure test and tell me what you see. Then send the truncated-columns query whenever you have a minute — I want to keep momentum on the schema review while you decide how to sequence the dashboard fix.
