@@ -73,7 +73,7 @@ export async function computeWarmScore(
   const { data: player, error: playerError } = await supabase
     .from("players")
     .select(
-      "id, created_at, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
+      "id, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
     )
     .eq("id", playerId)
     .maybeSingle();
@@ -111,7 +111,7 @@ export async function computeWarmScore(
       .eq("player_id", playerId),
     supabase
       .from("attendances")
-      .select("program_name, program_type, session_type")
+      .select("program_name, program_type, session_type, attended_at")
       .eq("player_id", playerId),
   ]);
   const allMsgs: any[] = messagesResult.data ?? [];
@@ -130,18 +130,26 @@ export async function computeWarmScore(
     return -10;
   }
 
-  // ── EDGE: new player < 14 days → ask first ───────────────────────────────
-  if (player.created_at) {
-    const daysSinceCreated =
-      (Date.now() - new Date(player.created_at).getTime()) / (1000 * 60 * 60 * 24);
-    if (daysSinceCreated < 14) {
-      logger.info({ playerId, daysSinceCreated }, "[warmScore] new player — returning 0");
-      await cacheScore(playerId, 0);
-      return 0;
-    }
-  }
-
   const allAttendances: any[] = attendancesResult.data ?? [];
+
+  // ── EDGE: new player (first attendance < 14 days ago, or no attendance yet) ──
+  // Uses first attendance date rather than players.created_at — created_at is
+  // the DB row insert timestamp, which fires the "new" branch for every player
+  // imported during initial setup.
+  if (allAttendances.length === 0) {
+    logger.info({ playerId }, "[warmScore] no attendance history — returning 0");
+    await cacheScore(playerId, 0);
+    return 0;
+  }
+  const firstAttendedAt = allAttendances
+    .map((a: any) => new Date(a.attended_at).getTime())
+    .reduce((min: number, t: number) => (t < min ? t : min), Date.now());
+  const daysSinceFirstAttended = (Date.now() - firstAttendedAt) / (1000 * 60 * 60 * 24);
+  if (daysSinceFirstAttended < 14) {
+    logger.info({ playerId, daysSinceFirstAttended }, "[warmScore] new player (first attendance < 14d) — returning 0");
+    await cacheScore(playerId, 0);
+    return 0;
+  }
 
   // ── Decay multiplier (attendance-based signals only) ──────────────────────
   const decay = decayMultiplier(player.last_visit_date);

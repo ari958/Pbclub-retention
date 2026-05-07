@@ -1,0 +1,203 @@
+This is sharp diagnosis. Let me work through it carefully because there are actually three findings here, not two.
+Finding 1 (warm score logic bug) — your read is exactly right, with one correction
+The new-player branch in warmScore.ts:
+typescriptif (player.created_at) {
+  const daysSinceCreated =
+    (Date.now() - new Date(player.created_at).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSinceCreated < 14) {
+    logger.info({ playerId, daysSinceCreated }, "[warmScore] new player — returning 0");
+    await cacheScore(playerId, 0);
+    return 0;
+  }
+}
+If all four test players were imported in the same batch ~13 days ago, all four hit this branch and return 0 regardless of attendance history. That's exactly what the logs confirmed.
+But here's the deeper bug — created_at in the players table is the database insert timestamp, not the date the player joined the club. When importAllPlayers.js runs and creates new player rows, it sets created_at to "now" — meaning every player imported during a fresh setup looks like a brand-new player to the warm-score logic. The "<14 days" check was designed to protect real new members from premature warm scoring, but it's being triggered by data-import recency.
+This is a real production-blocker. The day you import 2,006 players from PodPlay's history, every single one of them is a "new player" for 14 days as far as warmScore.ts is concerned. Nobody gets a meaningful warm score during launch week.
+The fix is to use a different source of truth for "is this a real new member":
+
+Best: Use the player's first attendance date. If their first attendance is < 14 days ago, they're new. This is robust to imports — a 5-year veteran whose data was imported yesterday has a first_attended_at from 5 years ago, so the branch correctly skips.
+Second best: Add a joined_at column to players, distinct from created_at. Source it from PodPlay's user-creation timestamp during import. This requires a migration and a re-import to populate.
+Cheapest hack (don't do this): Tighten the threshold to "< 7 days." Doesn't actually solve the problem, just narrows the window.
+
+Option 1 is the right call. It's also a one-query change in warmScore.ts — no migration, no re-import, no extra data dependencies. We're already fetching attendances anyway.
+Finding 2 (engagement_state) — I think you misread the bug
+You said "Krasinski 15.7 days came back active" and pointed at boundary logic. Let me re-read what we have:
+Carolyn Krasinski: last_visit_date = 2026-04-22, days_since_visit = 15
+engagement_state returned: "active"
+And the route logic:
+typescriptfunction computeEngagementState(lastVisitDate) {
+  if (!lastVisitDate) return "dormant";
+  const daysSince = (Date.now() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSince <= 14) return "active";
+  if (daysSince <= 30) return "lapsing";
+  return "dormant";
+}
+Now the math. lastVisitDate is a date string "2026-04-22". Parsed as a Date, that's 2026-04-22T00:00:00.000Z — midnight UTC. Today is 2026-05-07 afternoon ET.
+If the test ran at, say, 16:42 UTC on May 7 (per your cache timestamps), Date.now() ≈ 2026-05-07T16:42:00Z. The diff: 15 days, 16 hours, 42 minutes. Divide by 1000 * 60 * 60 * 24: 15.7 days.
+15.7 <= 14 is false. So it should fall through to the lapsing branch. Krasinski should have come back as lapsing, not active.
+But she came back active. Let's check what value actually went into the function. The route does:
+typescriptconst last_visit_date = attendance.length > 0 ? attendance[0].attended_at : null;
+Now — attended_at was migrated yesterday from date to timestamptz, and syncEventAttendance.js was updated to write the full ISO timestamp. Krasinski's last attendance was probably an evening session on April 22 ET. That's ~April 23 UTC.
+Math: 2026-04-22 22:00:00 ET = 2026-04-23 02:00:00 UTC. Diff from May 7 16:42 UTC: ~14.6 days. That's still > 14, should still be lapsing.
+Unless... Krasinski's most recent attendance is actually later than 2026-04-22. Your drift check showed MAX(attended_at) = 2026-04-22. But that was a date-cast in your query. If the underlying timestamp is 2026-04-23T02:00:00Z and you cast to date in ET, you'd see 2026-04-22. But the route reads the raw timestamp.
+So daysSince could be ~14.6, which rounds in the test result you reported as 15 but is actually < 15. Still > 14, still should be lapsing.
+I'm stuck on this without seeing the actual computed value. Let me ask Replit for the diagnostic in the cleanup prompt below.
+Finding 3 (the new one you found) — Krasinski's name is dirty
+"Carolyn  Krasinski " (double space + trailing space) in the database. Yet the message came out clean: "Carolyn, Kavita and Carlota are both signed up...". So the route trimmed it somewhere.
+Actually, the route uses profile.name which is playerProfileForAgent.name, passed as raw to Claude. Claude saw the dirty name and naturally addressed it as "Carolyn" because that's how humans behave — they trim implicitly when reading. The raw data didn't get fixed; Claude is being polite about it.
+That's a separate cleanup. Sample this query to see how widespread it is:
+sqlSELECT COUNT(*) AS total,
+       COUNT(*) FILTER (WHERE name <> TRIM(name)) AS dirty_names,
+       COUNT(*) FILTER (WHERE name LIKE '% %') AS multi_space_names
+FROM players;
+Probably bigger than just Krasinski. Add to the followup list.
+Triage and what to do
+These three findings split cleanly:
+#FindingSeverityFix1New-player branch fires on every imported playerProduction blocker for warm scoringSwitch from created_at to first attendance date2Krasinski's engagement_statePossible bug, possibly my misreadAdd diagnostic logging, run again, see what the actual daysSince value is3Dirty player names in DBMinor data qualityOne-time cleanup query, separate work item
+Issue 1 is the only one that should actually change the agent route today. Issue 2 needs more data before we know if it's even a bug. Issue 3 is data hygiene, not the audit's scope.
+The fix for Issue 1, and the diagnostic for Issue 2
+Here's the Replit prompt. Two changes, both small.
+
+WARM SCORE NEW-PLAYER FIX + ENGAGEMENT STATE DIAGNOSTIC
+Two changes, both surgical.
+
+FIX 1 — warmScore.ts: replace created_at check with first-attendance check
+Currently the new-player branch fires for any player whose database row was created < 14 days ago. This means every player imported during initial setup looks "new" for 14 days, which suppresses warm scoring for the entire user base during launch week.
+The right signal is: when did this player first attend a session? Players whose first attendance was < 14 days ago are genuinely new. Long-time members whose data was just imported are not.
+In artifacts/api-server/src/lib/warmScore.ts, find the new-player branch:
+typescript  // ── EDGE: new player < 14 days → ask first ───────────────────────────────
+  if (player.created_at) {
+    const daysSinceCreated =
+      (Date.now() - new Date(player.created_at).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSinceCreated < 14) {
+      logger.info({ playerId, daysSinceCreated }, "[warmScore] new player — returning 0");
+      await cacheScore(playerId, 0);
+      return 0;
+    }
+  }
+The attendancesResult is fetched in parallel a few lines below. We need to know first-attendance date before the new-player check fires, but we don't want a separate query if we can help it.
+The cleanest fix: move the new-player check to after the attendance fetch. The check needs allAttendances. Restructure:
+Find the existing parallel fetch:
+typescript  // ── Fetch messages and attendances in parallel ────────────────────────────
+  // Uses messages.player_id (denormalized 2026-05-07) — no conversations join needed
+  const [messagesResult, attendancesResult] = await Promise.all([
+    supabase
+      .from("messages")
+      .select("direction, reply_sentiment, body, link_clicked, ignored")
+      .eq("player_id", playerId),
+    supabase
+      .from("attendances")
+      .select("program_name, program_type, session_type")
+      .eq("player_id", playerId),
+  ]);
+  const allMsgs: any[] = messagesResult.data ?? [];
+  const inboundMsgs = allMsgs.filter((m: any) => m.direction === "inbound");
+  const outboundMsgs = allMsgs.filter((m: any) => m.direction === "outbound");
+Update the attendances select to include attended_at:
+typescript    supabase
+      .from("attendances")
+      .select("program_name, program_type, session_type, attended_at")
+      .eq("player_id", playerId),
+Then delete the existing created_at new-player branch entirely (the block I quoted at the top of this fix).
+After the parallel fetch and the message filtering, but before the attendances are used for scoring, insert a new branch that checks first-attendance date:
+typescript  const allAttendances: any[] = attendancesResult.data ?? [];
+
+  // ── EDGE: new player (first attendance < 14 days ago, or no attendance yet) ──
+  // Uses first attendance date rather than players.created_at — created_at is
+  // the DB row insert timestamp, which fires the "new" branch for every player
+  // imported during initial setup.
+  if (allAttendances.length === 0) {
+    logger.info({ playerId }, "[warmScore] no attendance history — returning 0");
+    await cacheScore(playerId, 0);
+    return 0;
+  }
+  const firstAttendedAt = allAttendances
+    .map((a: any) => new Date(a.attended_at).getTime())
+    .reduce((min: number, t: number) => (t < min ? t : min), Date.now());
+  const daysSinceFirstAttended = (Date.now() - firstAttendedAt) / (1000 * 60 * 60 * 24);
+  if (daysSinceFirstAttended < 14) {
+    logger.info({ playerId, daysSinceFirstAttended }, "[warmScore] new player (first attendance < 14d) — returning 0");
+    await cacheScore(playerId, 0);
+    return 0;
+  }
+Where to insert: right after const allAttendances: any[] = attendancesResult.data ?? []; and before any of the scoring logic that uses it.
+The existing scoring logic continues to use allAttendances unchanged. Don't touch it.
+Also: the created_at field is no longer referenced. Remove it from the player select earlier in the function. Find:
+typescript  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select(
+      "id, created_at, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
+    )
+    .eq("id", playerId)
+    .maybeSingle();
+Change to:
+typescript  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select(
+      "id, last_visit_date, progression_status, skill_level, warm_score, warm_score_updated_at",
+    )
+    .eq("id", playerId)
+    .maybeSingle();
+
+FIX 2 — agent.ts: log the actual daysSince value used for engagement_state
+The Krasinski test came back active despite being 15+ days lapsed. Could be an actual bug, could be a timezone or rounding issue I'm missing. Add one log line so the next test tells us definitively.
+In artifacts/api-server/src/routes/agent.ts, find:
+typescriptfunction computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
+  if (!lastVisitDate) return "dormant";
+  const daysSince = (Date.now() - new Date(lastVisitDate).getTime()) / (1000 * 60 * 60 * 24);
+  if (daysSince <= 14) return "active";
+  if (daysSince <= 30) return "lapsing";
+  return "dormant";
+}
+The function doesn't have access to a logger. Don't add one. Instead, add a log line at the call site. Find:
+typescript  const engagement_state = computeEngagementState(last_visit_date);
+Replace with:
+typescript  const engagement_state = computeEngagementState(last_visit_date);
+  const daysSinceVisit = last_visit_date
+    ? (Date.now() - new Date(last_visit_date).getTime()) / (1000 * 60 * 60 * 24)
+    : null;
+  req.log.info(
+    { player_id, last_visit_date, daysSinceVisit, engagement_state },
+    "[agent] engagement state computed",
+  );
+This logs the exact last_visit_date value the route saw and the computed daysSince. The next time we run the test on Krasinski, we'll see whether the value is < 14 (route is reading wrong data) or > 14 (route logic is wrong).
+
+Verification
+
+Build: pnpm -C artifacts/api-server build. Confirm exit 0.
+Restart the dev server.
+Re-run the same four test calls from before:
+
+bashcurl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"0c48e1a9-a19a-4588-aee0-b49956e4dfb1"}' > /tmp/sagan_v2.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c"}' > /tmp/krasinski_v2.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"e997b2c9-3210-46c7-aa78-78d2499d89aa"}' > /tmp/mair_v2.json
+curl -X POST http://localhost:8080/api/agent/run -H "Content-Type: application/json" \
+  -d '{"player_id":"4703d133-9a5b-49e4-a2e7-a3953087eb0a"}' > /tmp/digon_v2.json
+
+Important — clear the warm_score cache before running, otherwise we'll get yesterday's cached 0s. Run this in Supabase SQL editor first:
+
+sqlUPDATE players
+SET warm_score = NULL, warm_score_updated_at = NULL
+WHERE id IN (
+  '0c48e1a9-a19a-4588-aee0-b49956e4dfb1',
+  '7e05fe8e-2ab7-4c9b-b406-ae96fa80ed8c',
+  'e997b2c9-3210-46c7-aa78-78d2499d89aa',
+  '4703d133-9a5b-49e4-a2e7-a3953087eb0a'
+);
+
+From each response, paste:
+
+engagement_state
+warm_score
+link_strategy
+The first line of the message
+
+
+From the server logs, paste the four [agent] engagement state computed lines (one per player) — these have the diagnostic data we need for Issue 2.
+
+That's it. Don't run anything else.
+
+Report back with the four responses and the four log lines.

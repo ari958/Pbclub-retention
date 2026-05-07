@@ -174,6 +174,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   // Compute engagement state before calling Claude so we can store it on the conversation
   const engagement_state = computeEngagementState(last_visit_date);
+  const daysSinceVisit = last_visit_date
+    ? (Date.now() - new Date(last_visit_date).getTime()) / (1000 * 60 * 60 * 24)
+    : null;
+  req.log.info(
+    { player_id, last_visit_date, daysSinceVisit, engagement_state },
+    "[agent] engagement state computed",
+  );
 
   // Create conversation record before calling Claude
   const { data: conversationData, error: conversationError } = await supabase
