@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { supabase } from "../lib/supabaseClient";
 import { extractSkillLevel } from "../lib/skillLevel";
 import { logger } from "../lib/logger";
+import { getPlayerSocialContext } from "../lib/socialGraph";
 
 const router: IRouter = Router();
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
