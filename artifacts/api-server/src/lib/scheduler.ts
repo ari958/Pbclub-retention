@@ -5,6 +5,8 @@ import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
 import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
+import { runMilestoneBatch } from "./milestoneCheck";
+import { runMonthlyRecapBatch } from "./monthlyRecap";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 
@@ -155,44 +157,33 @@ export async function runNightlyChain(): Promise<void> {
 
     // Step 6: Milestone check (non-fatal)
     try {
-      const port = process.env.PORT ?? "8080";
       await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
-      const milestoneRes = await fetch(
-        `http://localhost:${port}/api/recap/milestones`,
-        { method: "POST", signal: AbortSignal.timeout(15 * 60 * 1000) }
-      );
-      const milestoneResult = await milestoneRes.json() as any;
-      await appendJobLog(JOB_NIGHTLY,
-        `Step 6 complete — checked: ${milestoneResult.checked ?? "?"} triggered: ${milestoneResult.triggered ?? "?"}`);
+      const result = await runMilestoneBatch();
+      const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+      await appendJobLog(JOB_NIGHTLY, `Step 6 complete — ${statsLine}`);
+      if (result.errors?.length) {
+        await appendJobLog(JOB_NIGHTLY, `Step 6 had ${result.errors.length} non-fatal errors`);
+      }
     } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY,
-        `Milestone check error (non-fatal): ${err.message}`);
+      await appendJobLog(JOB_NIGHTLY, `Milestone check error (non-fatal): ${err.message}`);
     }
 
     // Step 7: Monthly recap — only on 1st of month (non-fatal)
     try {
       const now = new Date();
       if (now.getDate() === 1) {
-        const port = process.env.PORT ?? "8080";
         const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
         const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
         await appendJobLog(JOB_NIGHTLY, `Step 7: generating monthly recaps for ${priorYear}-${priorMonth}`);
-        const recapRes = await fetch(
-          `http://localhost:${port}/api/recap/monthly`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ month: priorMonth, year: priorYear }),
-            signal: AbortSignal.timeout(30 * 60 * 1000),
-          }
-        );
-        const recapResult = await recapRes.json() as any;
-        await appendJobLog(JOB_NIGHTLY,
-          `Step 7 complete — recaps queued: ${recapResult.queued ?? "?"}`);
+        const result = await runMonthlyRecapBatch(priorMonth, priorYear);
+        const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+        await appendJobLog(JOB_NIGHTLY, `Step 7 complete — ${statsLine}`);
+        if (result.errors?.length) {
+          await appendJobLog(JOB_NIGHTLY, `Step 7 had ${result.errors.length} non-fatal errors`);
+        }
       }
     } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY,
-        `Monthly recap error (non-fatal): ${err.message}`);
+      await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);
     }
 
     // Mark nightly_sync done

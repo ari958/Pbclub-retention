@@ -235,7 +235,13 @@ async function persistMilestone(
 
 // ─── Batch runner ──────────────────────────────────────────────────────────────
 
-export async function runMilestoneBatch(): Promise<{ checked: number; triggered: number; errors: number }> {
+export interface BatchResult {
+  ok: boolean;
+  stats: Record<string, number>;
+  errors?: string[];
+}
+
+export async function runMilestoneBatch(): Promise<BatchResult> {
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, "Milestone batch started");
 
@@ -273,5 +279,5 @@ export async function runMilestoneBatch(): Promise<{ checked: number; triggered:
 
   await appendJobLog(JOB_ID, `Done — checked: ${checked}, triggered: ${triggered}, errors: ${errors}`);
   await finishJob(JOB_ID, "done", { checked, triggered, errors });
-  return { checked, triggered, errors };
+  return { ok: errors === 0, stats: { checked, triggered, errors } };
 }

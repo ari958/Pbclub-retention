@@ -1,0 +1,96 @@
+prompt — Pass 1 of 3
+The scheduler's nightly chain (steps 4–7) currently fires HTTP requests to its own process via fetch('http://localhost:...'). We're refactoring all four steps to direct function calls across three passes. This is Pass 1: Steps 6 (milestones) and 7 (monthly recap), the two cleanest cases.
+Both already have lib functions (runMilestoneBatch, runMonthlyRecapBatch) — the route handlers are just fire-and-forget wrappers. The scheduler will call those lib functions directly. The only meaningful change beyond the rewiring is that the lib functions need to return real stats so the scheduler's log lines stop saying triggered: ? and start saying triggered: 7.
+Make exactly the changes below. Don't touch Steps 4 or 5 yet — those are Pass 2 and Pass 3.
+
+Step 1 — Update lib/milestoneCheck.ts:runMilestoneBatch() to return stats.
+Find the function. Today it returns void (or Promise<void>). Change the return type and value to:
+typescriptexport interface BatchResult {
+  ok: boolean;
+  stats: Record<string, number>;
+  errors?: string[];
+}
+
+export async function runMilestoneBatch(): Promise<BatchResult> {
+  // ... existing logic ...
+
+  // At the end, return the actual stats this batch was already tracking
+  // internally (likely already in scope as local variables — checked,
+  // triggered, errors, etc.). Map them into the stats object.
+  return {
+    ok: errors.length === 0,
+    stats: {
+      checked,
+      triggered,
+      // include any other counters this function already tracks
+    },
+    errors: errors.length > 0 ? errors : undefined,
+  };
+}
+If the existing implementation doesn't already track checked and triggered as local counters, look at how the function is currently logging progress (it almost certainly increments counters somewhere) and surface those as the stats. If you have to choose between two reasonable counter names, pick the one that matches what the scheduler currently tries to log. Send me a quick note in your reply if the counter names you found don't match checked/triggered — I want to know if we're inheriting different terminology.
+Define BatchResult once and export it. Either put it in milestoneCheck.ts and re-export, or put it in a shared location like lib/types.ts. Use judgment based on what fits the project's existing conventions; if there's no obvious shared types file, just export from milestoneCheck.ts.
+
+Step 2 — Update lib/monthlyRecap.ts:runMonthlyRecapBatch() the same way.
+Same pattern. Return Promise<BatchResult> (import from wherever you put the type in Step 1). Surface the stats the function already tracks — likely queued, possibly skipped, errors. The scheduler's existing log line tries to read result.queued, so make sure that's a key.
+
+Step 3 — Update the route handlers to use the new return values.
+In routes/recap.ts, both POST /recap/milestones and POST /recap/monthly are fire-and-forget today. Keep them that way — the dashboard depends on the immediate response. The lib functions returning a value doesn't change the .catch() pattern; it just means future callers (the scheduler) can use the return.
+If the existing code looks like:
+typescriptrunMilestoneBatch().catch((err) => req.log.error({ err }, "[recap] milestone batch error"));
+res.json({ success: true, message: "Milestone batch started" });
+Leave it exactly that way. The route doesn't need the return value; only the scheduler does.
+
+Step 4 — Update the scheduler steps in lib/scheduler.ts.
+Find Step 6 (milestone check) and Step 7 (monthly recap). They look roughly like:
+typescript// Step 6: Milestone check
+try {
+  await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
+  const res = await fetch(`http://localhost:${port}/api/recap/milestones`, {
+    method: "POST",
+    signal: AbortSignal.timeout(15 * 60 * 1000),
+  });
+  const result = await res.json();
+  await appendJobLog(JOB_NIGHTLY,
+    `Step 6 complete — checked: ${result.checked ?? "?"} triggered: ${result.triggered ?? "?"}`);
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY, `Milestone check error (non-fatal): ${err.message}`);
+}
+Replace with:
+typescript// Step 6: Milestone check
+try {
+  await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
+  const result = await runMilestoneBatch();
+  const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+  await appendJobLog(JOB_NIGHTLY, `Step 6 complete — ${statsLine}`);
+  if (result.errors?.length) {
+    await appendJobLog(JOB_NIGHTLY, `Step 6 had ${result.errors.length} non-fatal errors`);
+  }
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY, `Milestone check error (non-fatal): ${err.message}`);
+}
+Apply the same shape to Step 7 (monthly recap). The 1st-of-month gate (if (now.getDate() === 1)) stays exactly where it is in the scheduler — don't move it.
+Add the imports at the top of scheduler.ts:
+typescriptimport { runMilestoneBatch } from "./milestoneCheck";
+import { runMonthlyRecapBatch } from "./monthlyRecap";
+Remove the port constant if it's only used by Steps 6 and 7. If Steps 4 and 5 still need it (they will until Pass 2 and Pass 3), leave it.
+
+Step 5 — Verify and report back.
+
+tsc --noEmit — confirm clean compile.
+Grep to confirm Steps 6 and 7 no longer fetch localhost:
+
+bash   grep -n "localhost.*recap" artifacts/api-server/src/lib/scheduler.ts
+Expected: zero matches. (Steps 4 and 5 still have their localhost fetches; that's fine. They'd match different patterns — social-graph and churn-scores.)
+
+Send back:
+
+The updated runMilestoneBatch signature + return shape (just the function signature and the return statement, ~10 lines)
+The updated runMonthlyRecapBatch signature + return shape
+Steps 6 and 7 of scheduler.ts after the change (the new try/catch blocks)
+tsc output
+The grep result
+Any deviation from checked/triggered/queued in the actual counter names you found
+
+
+
+Don't restart the server. We'll restart after I review.

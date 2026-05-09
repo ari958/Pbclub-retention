@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "./supabaseClient";
 import { startJob, finishJob, appendJobLog } from "./jobStore";
 import { logger } from "./logger";
+import type { BatchResult } from "./milestoneCheck";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -227,7 +228,7 @@ Make it feel warm and personal. Reference their court partners by first name and
 export async function runMonthlyRecapBatch(
   month: number,
   year: number
-): Promise<{ queued: number; skipped: number; errors: number }> {
+): Promise<BatchResult> {
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, `Monthly recap batch started — ${monthName(month)} ${year}`);
 
@@ -267,5 +268,5 @@ export async function runMonthlyRecapBatch(
 
   await appendJobLog(JOB_ID, `Done — queued: ${queued}, skipped: ${skipped}, errors: ${errors}`);
   await finishJob(JOB_ID, "done", { queued, skipped, errors });
-  return { queued, skipped, errors };
+  return { ok: errors === 0, stats: { queued, skipped, errors } };
 }
