@@ -1,0 +1,51 @@
+Pass 3 starts with a read-back. I need to see the existing implementation of POST /sync/churn-scores and the per-player function it calls before extracting. Don't modify anything in this step.
+Step 1 — Read the full route handler.
+Open artifacts/api-server/src/routes/sync.ts and find the POST /sync/churn-scores handler. Send back the complete handler verbatim with line numbers — every line from the route declaration through its closing brace. I particularly want to see:
+
+The synchronous portion (everything that runs before the response is sent)
+The detached IIFE that does the actual work
+The full job lifecycle inside the IIFE (startJob, appendJobLog, the per-player loop, cancellation check, finishJob)
+Any error handling around the IIFE
+
+Step 2 — Read the per-player function.
+Open artifacts/api-server/src/lib/churnScore.ts. Send back the signatures (just the exported function declarations, not the bodies) of computeChurnScore and computeChurnScoreAndReturn (or whatever the exact names are — the read-back from earlier mentioned both).
+I need to know:
+
+Their input parameters
+Their return types
+Whether they're async
+Whether either currently throws on failure or returns an error sentinel
+
+Step 3 — Identify dependencies.
+Specifically for the POST /sync/churn-scores handler:
+
+Which Supabase client is in scope?
+Does it use req.log, logger, or both?
+Does the IIFE poll isCancelled() mid-loop? If yes, what's the call signature — isCancelled('compute_churn_scores') or isCancelled(jobId) or something else?
+Does the per-player loop have any throttling (e.g., 50ms sleep between players)?
+What's the page size for fetching players (LIMIT in the SELECT)?
+
+Step 4 — Confirm what the scheduler currently expects.
+Look at Step 5 in lib/scheduler.ts. Confirm:
+
+The endpoint it currently fetches: POST /sync/churn-scores (or /api/sync/churn-scores — whichever is registered)
+What fields it tries to read from the response
+The AbortSignal.timeout value (likely 30 minutes given the runbook says churn takes 6m at current scale)
+
+
+Send back:
+
+The complete route handler code (verbatim, with line numbers)
+The function signatures from lib/churnScore.ts
+The dependency notes from Step 3
+The scheduler Step 5 block as it stands today
+
+Don't modify any files. Once I see the full picture I'll write the extraction prompt.
+
+The thing I'm most curious about: who owns the compute_churn_scores job lifecycle after the refactor. Three options exist on paper, and which is right depends on what the dashboard contract actually demands:
+
+(A) The lib function owns it. runChurnScoreBatch() calls startJob/finishJob internally. The route's IIFE just calls the lib function. The scheduler also calls it directly. Two callers, both get the same job lifecycle. Simplest.
+(B) The caller owns it. The lib function takes a job ID parameter and assumes it's been started. The route starts the job, fires the IIFE which calls the lib function, the IIFE finishes the job. Scheduler does the same.
+(C) Optional — the lib function detects. Pass an option flag for "manage your own job lifecycle." Default to true; the scheduler passes false and integrates the work into nightly_sync's lifecycle.
+
+I lean A — it's how runMilestoneBatch and runMonthlyRecapBatch already work after Pass 1. Consistency wins. But there's a subtle issue with A: when the scheduler calls runChurnScoreBatch() directly during nightly sync, compute_churn_scores becomes its own concurrent job alongside nightly_sync. The dashboard would show both running. Probably fine — but worth deciding deliberately, not by accident.
