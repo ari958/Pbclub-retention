@@ -1,0 +1,37 @@
+Two small fixes to Pass 1.
+1. Fix the errors variable name collision in lib/milestoneCheck.ts and lib/monthlyRecap.ts.
+Both functions track an error count in a variable named errors, then return stats: { ..., errors }. This works numerically but shadows the BatchResult.errors?: string[] field's intended semantics (a list of error messages, not a count).
+Rename the local counter variable to errorCount in both files. The key in the stats object stays errors (it reads fine in the log line: errors: 3). Just the local variable changes:
+typescript// Before
+let errors = 0;
+// ... errors++ on each failure ...
+return { ok: errors === 0, stats: { checked, triggered, errors } };
+
+// After
+let errorCount = 0;
+// ... errorCount++ on each failure ...
+return { ok: errorCount === 0, stats: { checked, triggered, errors: errorCount } };
+Same shape for runMonthlyRecapBatch. After the rename, BatchResult.errors?: string[] is available for future callers who want to surface actual error messages without repurposing the count field.
+2. Add a "skipped" log line to scheduler Step 7 for non-1st days.
+Today, on days 2–31 the Step 7 try block runs but the inner if (now.getDate() === 1) is false, so nothing logs. Operators reading job_logs see Steps 1–6 and then silence. Add an explicit skip log so the chain's intent is visible:
+typescript// Step 7: Monthly recap — only on 1st of month (non-fatal)
+try {
+  const now = new Date();
+  if (now.getDate() === 1) {
+    const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
+    const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
+    await appendJobLog(JOB_NIGHTLY, `Step 7: generating monthly recaps for ${priorYear}-${priorMonth}`);
+    const result = await runMonthlyRecapBatch(priorMonth, priorYear);
+    const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+    await appendJobLog(JOB_NIGHTLY, `Step 7 complete — ${statsLine}`);
+    if (result.errors?.length) {
+      await appendJobLog(JOB_NIGHTLY, `Step 7 had ${result.errors.length} non-fatal errors`);
+    }
+  } else {
+    await appendJobLog(JOB_NIGHTLY, "Step 7: monthly recap skipped (not 1st of month)");
+  }
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);
+}
+3. Verify. Run tsc --noEmit, confirm clean. Send back the renamed return statements (just the two final-line returns, one per file) and the updated Step 7 block.
+Don't restart the server. After this, Pass 1 is fully done and we'll move to Pass 2.

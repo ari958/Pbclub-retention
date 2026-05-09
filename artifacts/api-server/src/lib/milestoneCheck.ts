@@ -245,7 +245,7 @@ export async function runMilestoneBatch(): Promise<BatchResult> {
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, "Milestone batch started");
 
-  let checked = 0, triggered = 0, errors = 0;
+  let checked = 0, triggered = 0, errorCount = 0;
   let offset = 0;
 
   while (true) {
@@ -267,7 +267,7 @@ export async function runMilestoneBatch(): Promise<BatchResult> {
         if (result.checked) checked++;
         if (result.triggered) triggered++;
       } catch (err: any) {
-        errors++;
+        errorCount++;
         logger.error({ err, playerId: player.id }, "[milestone_check] player error");
       }
       await delay(50);
@@ -277,7 +277,7 @@ export async function runMilestoneBatch(): Promise<BatchResult> {
     offset += 1000;
   }
 
-  await appendJobLog(JOB_ID, `Done — checked: ${checked}, triggered: ${triggered}, errors: ${errors}`);
-  await finishJob(JOB_ID, "done", { checked, triggered, errors });
-  return { ok: errors === 0, stats: { checked, triggered, errors } };
+  await appendJobLog(JOB_ID, `Done — checked: ${checked}, triggered: ${triggered}, errors: ${errorCount}`);
+  await finishJob(JOB_ID, "done", { checked, triggered, errors: errorCount });
+  return { ok: errorCount === 0, stats: { checked, triggered, errors: errorCount } };
 }

@@ -181,6 +181,8 @@ export async function runNightlyChain(): Promise<void> {
         if (result.errors?.length) {
           await appendJobLog(JOB_NIGHTLY, `Step 7 had ${result.errors.length} non-fatal errors`);
         }
+      } else {
+        await appendJobLog(JOB_NIGHTLY, "Step 7: monthly recap skipped (not 1st of month)");
       }
     } catch (err: any) {
       await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);

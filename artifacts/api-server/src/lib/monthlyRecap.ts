@@ -232,7 +232,7 @@ export async function runMonthlyRecapBatch(
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, `Monthly recap batch started — ${monthName(month)} ${year}`);
 
-  let queued = 0, skipped = 0, errors = 0;
+  let queued = 0, skipped = 0, errorCount = 0;
   let offset = 0;
 
   while (true) {
@@ -256,7 +256,7 @@ export async function runMonthlyRecapBatch(
         if (result.skipped) skipped++;
         else queued++;
       } catch (err: any) {
-        errors++;
+        errorCount++;
         logger.error({ err, playerId: player.id }, "[monthly_recap] player error");
       }
       await delay(100);
@@ -266,7 +266,7 @@ export async function runMonthlyRecapBatch(
     offset += 1000;
   }
 
-  await appendJobLog(JOB_ID, `Done — queued: ${queued}, skipped: ${skipped}, errors: ${errors}`);
-  await finishJob(JOB_ID, "done", { queued, skipped, errors });
-  return { ok: errors === 0, stats: { queued, skipped, errors } };
+  await appendJobLog(JOB_ID, `Done — queued: ${queued}, skipped: ${skipped}, errors: ${errorCount}`);
+  await finishJob(JOB_ID, "done", { queued, skipped, errors: errorCount });
+  return { ok: errorCount === 0, stats: { queued, skipped, errors: errorCount } };
 }
