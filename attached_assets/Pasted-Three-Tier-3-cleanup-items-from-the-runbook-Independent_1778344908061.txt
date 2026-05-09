@@ -1,0 +1,52 @@
+Three Tier 3 cleanup items from the runbook. Independent, low-risk, batch them in one session.
+
+GROUND RULES
+- All three changes are small. Don't expand scope.
+- Run `npx tsc --noEmit` after each item. If any item fails tsc, revert just that one and continue with the others.
+- Send back a single report at the end with diffs for all three.
+
+ITEM 1 — `scoreToLinkStrategy` typo (Tier 3 #7)
+In `artifacts/api-server/src/lib/warmScore.ts`, the function is exported as `scorToLinkStrategy` (missing 'e'). Fix:
+  - Rename the export from `scorToLinkStrategy` to `scoreToLinkStrategy`
+  - Find every import: `grep -rn "scorToLinkStrategy" artifacts/api-server/src`
+  - Update each import to the new name
+  - Confirm the grep returns zero matches for the old name after the rename
+
+ITEM 2 — `sanitizeScheduledSendAt` redundant ternary (Tier 3 #9)
+In `artifacts/api-server/src/lib/playerTiming.ts`, the after-hours rollover branch has `tmWeekend ? 8 : 8` (both arms produce 8). The minute differs (30 vs 0) so the surrounding logic is correct — just the hour ternary is redundant.
+
+Before editing: send back the surrounding 5–10 lines so I can confirm we're looking at the same code. If the ternary structure is actually `hour: tmWeekend ? 8 : 8, minute: tmWeekend ? 30 : 0` (or similar), simplify to `hour: 8, minute: tmWeekend ? 30 : 0`. If it's structured differently than the runbook describes, STOP and report what's actually there.
+
+ITEM 3 — Dirty player names (Tier 3 #8)
+The runbook flagged at least one player (Carolyn Krasinski) with trailing whitespace in `players.name`. Two-step process:
+
+Step 3a — Audit. Run this against the database (use whatever query mechanism the project has — likely a script in `artifacts/api-server/scripts/` or direct Supabase SQL via the service role client). Send back the result counts before doing the UPDATE:
+
+  SELECT COUNT(*) AS total,
+         COUNT(*) FILTER (WHERE name <> TRIM(name)) AS dirty,
+         COUNT(*) FILTER (WHERE name LIKE '%  %') AS multi_space,
+         COUNT(*) FILTER (WHERE name <> TRIM(REGEXP_REPLACE(name, '\s+', ' ', 'g'))) AS needs_normalization
+  FROM players;
+
+Step 3b — If `needs_normalization` > 0, run the cleanup:
+
+  UPDATE players
+  SET name = TRIM(REGEXP_REPLACE(name, '\s+', ' ', 'g'))
+  WHERE name <> TRIM(REGEXP_REPLACE(name, '\s+', ' ', 'g'));
+
+Then re-run the audit query and confirm `needs_normalization = 0`.
+
+If `needs_normalization` is unexpectedly large (>50, say), STOP and report before running the UPDATE. The runbook implied it'd be a small handful; a large number suggests something else going on.
+
+REPORT
+For each item, send back:
+  - Item 1: the rename diff + grep confirmation that old name returns zero matches
+  - Item 2: the lines before and after, plus a one-line explanation of the simplification (or a STOP report if the structure was different)
+  - Item 3: audit counts before, audit counts after, count of rows updated
+
+If tsc failed on any item, note which one and that you reverted it.
+Quick rationale for the structure:
+
+Item 2 has the read-back-first guard because the runbook's description of the ternary is from memory and might not match what's actually in the file. Two minutes of work; not worth getting wrong by guessing.
+Item 3 has the audit-before-update pattern because UPDATE without a WHERE-bounded preview is the kind of thing that quietly mangles data. The "stop if >50 rows" check is paranoid but cheap.
+No unattended pre-approval this time since you're presumably around. If you want to step away again, add "Pre-approved to proceed through all three items if tsc and audit checks pass" at the bottom.

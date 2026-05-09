@@ -7,7 +7,7 @@ import { assembleProfile } from "../assembleProfile.js";
 // @ts-ignore — plain JS module
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { supabase } from "../lib/supabaseClient";
-import { computeWarmScore, scorToLinkStrategy } from "../lib/warmScore";
+import { computeWarmScore, scoreToLinkStrategy } from "../lib/warmScore";
 import { computeScheduledSendAt } from "../lib/playerTiming";
 import { getPlayerSocialContext } from "../lib/socialGraph";
 
@@ -339,7 +339,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       warmScore = await computeWarmScore(player_id, topProgram.program_type ?? "", topProgram.name, {
         programLevel: topProgram.skill_level ?? undefined,
       });
-      link_strategy = scorToLinkStrategy(warmScore);
+      link_strategy = scoreToLinkStrategy(warmScore);
       if (link_strategy === "direct") {
         topProgramSignupUrl = topProgram.signup_url ?? null;
       }

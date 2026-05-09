@@ -236,7 +236,7 @@ export async function computeWarmScore(
 }
 
 /** Map a numeric warm score to a link strategy string. */
-export function scorToLinkStrategy(score: number): "direct" | "ask" | "soft" {
+export function scoreToLinkStrategy(score: number): "direct" | "ask" | "soft" {
   if (score > 6) return "direct";
   if (score >= 3) return "ask";
   return "soft";

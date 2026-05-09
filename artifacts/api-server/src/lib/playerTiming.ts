@@ -253,7 +253,7 @@ export function sanitizeScheduledSendAt(
   } else if (localHour > windowCloseHour) {
     const tomorrow   = new Date(proposedSendAt.getTime() + 24 * 60 * 60 * 1000);
     const tmWeekend  = (() => { const d = etComponents(tomorrow).weekday; return d === 0 || d === 6; })();
-    result = setLocalTime(tomorrow, tmWeekend ? 8 : 8, tmWeekend ? 30 : 0);
+    result = setLocalTime(tomorrow, 8, tmWeekend ? 30 : 0);
   } else {
     result = proposedSendAt;
   }
