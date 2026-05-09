@@ -1,0 +1,21 @@
+Reviewed all of it carefully. Diffs are clean and the placement decisions are good. Walking through each:
+lib/replyExpectations.ts — exact match to spec. ✓
+postSessionFeedback.ts header + imports — header in place, expectReply and findActiveExpectation imported. ✓
+Dedupe at line 163–175 — correct shape. The continue is right because we're inside a for (const player of eligible) loop. The metadata cast uses optional chaining defensively (?.event_id) which handles the case where a future expectation kind might have differently-shaped metadata. ✓
+expectReply write at 213–221 — exact match. ✓
+messages.ts read at 487–507 — clean replacement. The downstream usage of meta, conversationId from expectation.conversation_id is wired correctly. ✓
+resolveExpectation placement at 557–564 — this is the one I want to call out because the placement is better than what I specified. They put it after computeLevelConfidence(...).catch(...) is fired as a background task, and inside the if (!existingFb) branch. That means:
+
+✓ Resolves only on the success path (reply matched, session_feedback written)
+✓ Doesn't resolve if existingFb was non-null (player already submitted; expectation stays active in case the "real" reply comes later)
+✓ Doesn't block on the level-confidence recompute (which is fired-and-forgotten with .catch)
+✓ Runs before the "Send thanks" reply, which is the right order — if resolveExpectation were to fail, we'd want to know before sending the thanks
+
+The "fire confidence recompute, then resolve, then thank" sequence is exactly the right ordering.
+Greps — clean. The only pending_sends references are in migrate_feedback.mjs, which is a historical script and should not be touched. Zero matches in runtime code.
+tsc --noEmit — clean. ✓
+Verdict: ship it
+Deploy order:
+
+Restart the api-server (Replit). The migration is already applied; the new code can read/write the renamed table immediately.
+Watch the logs for ~10 minutes. Specifically: confirm postSessionFeedback poller ticks at least once without errors, and [feedback] log lines look normal. The poller runs every 30 min, so you may need to wait up to 30 min to see the first tick.
