@@ -5,6 +5,7 @@ import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
 import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
+import { computeBuddyPairs } from "./socialGraph";
 import { runMilestoneBatch } from "./milestoneCheck";
 import { runMonthlyRecapBatch } from "./monthlyRecap";
 import { logger } from "./logger";
@@ -128,15 +129,15 @@ export async function runNightlyChain(): Promise<void> {
 
     // Step 4: Buddy pair graph (non-fatal)
     try {
-      const port = process.env.PORT ?? "8080";
-      const buddyRes = await fetch(
-        `http://localhost:${port}/api/social-graph/compute-buddy-pairs`,
-        { method: "POST", signal: AbortSignal.timeout(5 * 60 * 1000) }
-      );
-      const buddyStats = await buddyRes.json() as any;
-      await appendJobLog(JOB_NIGHTLY, `Step 4 complete — buddy pairs updated: ${buddyStats.pairs_updated ?? 0}`);
+      await appendJobLog(JOB_NIGHTLY, "Step 4: updating buddy pair graph");
+      const result = await computeBuddyPairs();
+      const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+      await appendJobLog(JOB_NIGHTLY, `Step 4 complete — ${statsLine}`);
+      if (result.errors?.length) {
+        await appendJobLog(JOB_NIGHTLY, `Step 4 had ${result.errors.length} non-fatal errors`);
+      }
     } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY, `Step 4 buddy pairs error (non-fatal): ${err.message}`);
+      await appendJobLog(JOB_NIGHTLY, `Buddy pair update error (non-fatal): ${err.message}`);
     }
 
     // Step 5: Churn score recompute (non-fatal)

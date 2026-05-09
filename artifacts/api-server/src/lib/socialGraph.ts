@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { extractSkillLevel } from "./skillLevel";
 import { logger as defaultLogger } from "./logger";
+import type { BatchResult } from "./milestoneCheck";
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -233,4 +234,138 @@ export async function getPlayerSocialContext(
   }
 
   return { buddies, upcoming, registrations };
+}
+
+// ─── Buddy pair computation ────────────────────────────────────────────────────
+
+export interface ComputeBuddyPairsResult extends BatchResult {
+  details: {
+    pairs_updated: number;
+    pairs_above_threshold: number;
+    pairs_below_threshold: number;
+    upsert_errors?: string[];
+  };
+}
+
+export interface ComputeBuddyPairsOptions {
+  lookbackDays?: number;
+  logger?: { warn: Function; info: Function; error: Function };
+}
+
+/**
+ * Recomputes the buddy_pairs table from the last `lookbackDays` of
+ * attendance rows. A pair is recorded when two players have shared at
+ * least 3 sessions (events). Idempotent — replaces existing rows via
+ * upsert on (player_a, player_b).
+ *
+ * Called by:
+ *   - POST /social-graph/compute-buddy-pairs (manual / dashboard)
+ *   - Scheduler step 4 (nightly)
+ */
+export async function computeBuddyPairs(
+  options: ComputeBuddyPairsOptions = {},
+): Promise<ComputeBuddyPairsResult> {
+  const log = options.logger ?? defaultLogger;
+  const lookbackDays = options.lookbackDays ?? 90;
+  const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
+
+  // ── 1. Page through attendances ─────────────────────────────────────────
+  type AttRow = { player_id: string; event_id: string; attended_at: string };
+  const allRows: AttRow[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("attendances")
+      .select("player_id, event_id, attended_at")
+      .gte("attended_at", cutoff)
+      .not("player_id", "is", null)
+      .range(offset, offset + 999);
+    if (error) throw new Error(error.message);
+    if (!data || data.length === 0) break;
+    allRows.push(...(data as AttRow[]));
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+
+  // ── 2. Group by event ───────────────────────────────────────────────────
+  const eventMap = new Map<string, { playerIds: string[]; lastAt: string }>();
+  for (const row of allRows) {
+    const entry = eventMap.get(row.event_id);
+    if (!entry) {
+      eventMap.set(row.event_id, { playerIds: [row.player_id], lastAt: row.attended_at });
+    } else {
+      entry.playerIds.push(row.player_id);
+      if (row.attended_at > entry.lastAt) entry.lastAt = row.attended_at;
+    }
+  }
+
+  // ── 3. Build pair counts ────────────────────────────────────────────────
+  type PairData = { player_a: string; player_b: string; count: number; last_shared_at: string };
+  const pairMap = new Map<string, PairData>();
+  for (const { playerIds, lastAt } of eventMap.values()) {
+    const unique = [...new Set(playerIds)];
+    for (let i = 0; i < unique.length; i++) {
+      for (let j = i + 1; j < unique.length; j++) {
+        const a = unique[i] < unique[j] ? unique[i] : unique[j];
+        const b = unique[i] < unique[j] ? unique[j] : unique[i];
+        const key = `${a}:${b}`;
+        const existing = pairMap.get(key);
+        if (!existing) {
+          pairMap.set(key, { player_a: a, player_b: b, count: 1, last_shared_at: lastAt });
+        } else {
+          existing.count++;
+          if (lastAt > existing.last_shared_at) existing.last_shared_at = lastAt;
+        }
+      }
+    }
+  }
+
+  // ── 4. Filter to threshold ──────────────────────────────────────────────
+  let pairsBelowThreshold = 0;
+  const upserts: object[] = [];
+  const now = new Date().toISOString();
+  for (const pair of pairMap.values()) {
+    if (pair.count < 3) { pairsBelowThreshold++; continue; }
+    upserts.push({
+      player_a: pair.player_a,
+      player_b: pair.player_b,
+      shared_sessions: pair.count,
+      last_shared_at: pair.last_shared_at,
+      updated_at: now,
+    });
+  }
+
+  // ── 5. Upsert in batches ────────────────────────────────────────────────
+  let pairsUpdated = 0;
+  const upsertErrors: string[] = [];
+  for (let i = 0; i < upserts.length; i += 100) {
+    const batch = upserts.slice(i, i + 100);
+    const { error } = await supabase
+      .from("buddy_pairs")
+      .upsert(batch, { onConflict: "player_a,player_b" });
+    if (error) {
+      (log as any).error?.({ err: error.message }, "[buddyPairs] upsert error");
+      upsertErrors.push(error.message);
+    } else {
+      pairsUpdated += batch.length;
+    }
+  }
+
+  const details: ComputeBuddyPairsResult["details"] = {
+    pairs_updated: pairsUpdated,
+    pairs_above_threshold: upserts.length,
+    pairs_below_threshold: pairsBelowThreshold,
+  };
+  if (upsertErrors.length > 0) details.upsert_errors = upsertErrors;
+
+  return {
+    ok: upsertErrors.length === 0,
+    stats: {
+      pairs_updated: pairsUpdated,
+      pairs_above_threshold: upserts.length,
+      pairs_below_threshold: pairsBelowThreshold,
+    },
+    errors: upsertErrors.length > 0 ? upsertErrors : undefined,
+    details,
+  };
 }

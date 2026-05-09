@@ -2,7 +2,7 @@ import { Router, type IRouter } from "express";
 import { supabase } from "../lib/supabaseClient";
 import { extractSkillLevel } from "../lib/skillLevel";
 import { logger } from "../lib/logger";
-import { getPlayerSocialContext } from "../lib/socialGraph";
+import { getPlayerSocialContext, computeBuddyPairs } from "../lib/socialGraph";
 
 const router: IRouter = Router();
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
@@ -81,94 +81,10 @@ async function loadPlayerMap(): Promise<Map<string, PlayerRow>> {
 
 router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
   try {
-    const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-
-    type AttRow = { player_id: string; event_id: string; attended_at: string };
-    const allRows: AttRow[] = [];
-    let offset = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("attendances")
-        .select("player_id, event_id, attended_at")
-        .gte("attended_at", cutoff)
-        .not("player_id", "is", null)
-        .range(offset, offset + 999);
-      if (error) { res.status(500).json({ error: error.message }); return; }
-      if (!data || data.length === 0) break;
-      allRows.push(...(data as AttRow[]));
-      if (data.length < 1000) break;
-      offset += 1000;
-    }
-
-    const eventMap = new Map<string, { playerIds: string[]; lastAt: string }>();
-    for (const row of allRows) {
-      const entry = eventMap.get(row.event_id);
-      if (!entry) {
-        eventMap.set(row.event_id, { playerIds: [row.player_id], lastAt: row.attended_at });
-      } else {
-        entry.playerIds.push(row.player_id);
-        if (row.attended_at > entry.lastAt) entry.lastAt = row.attended_at;
-      }
-    }
-
-    type PairData = { player_a: string; player_b: string; count: number; last_shared_at: string };
-    const pairMap = new Map<string, PairData>();
-    for (const { playerIds, lastAt } of eventMap.values()) {
-      const unique = [...new Set(playerIds)];
-      for (let i = 0; i < unique.length; i++) {
-        for (let j = i + 1; j < unique.length; j++) {
-          const a = unique[i] < unique[j] ? unique[i] : unique[j];
-          const b = unique[i] < unique[j] ? unique[j] : unique[i];
-          const key = `${a}:${b}`;
-          const existing = pairMap.get(key);
-          if (!existing) {
-            pairMap.set(key, { player_a: a, player_b: b, count: 1, last_shared_at: lastAt });
-          } else {
-            existing.count++;
-            if (lastAt > existing.last_shared_at) existing.last_shared_at = lastAt;
-          }
-        }
-      }
-    }
-
-    let pairsUpdated = 0;
-    let pairsBelowThreshold = 0;
-    const upserts: object[] = [];
-    const now = new Date().toISOString();
-    for (const pair of pairMap.values()) {
-      if (pair.count < 3) { pairsBelowThreshold++; continue; }
-      upserts.push({
-        player_a: pair.player_a,
-        player_b: pair.player_b,
-        shared_sessions: pair.count,
-        last_shared_at: pair.last_shared_at,
-        updated_at: now,
-      });
-    }
-
-    const upsertErrors: string[] = [];
-    for (let i = 0; i < upserts.length; i += 100) {
-      const batch = upserts.slice(i, i + 100);
-      const { error } = await supabase
-        .from("buddy_pairs")
-        .upsert(batch, { onConflict: "player_a,player_b" });
-      if (error) {
-        logger.error({ err: error.message }, "[social-graph] buddy_pairs upsert error");
-        upsertErrors.push(error.message);
-      } else {
-        pairsUpdated += batch.length;
-      }
-    }
-
-    const response: Record<string, unknown> = {
-      pairs_updated: pairsUpdated,
-      pairs_above_threshold: upserts.length,
-      pairs_below_threshold: pairsBelowThreshold,
-    };
-    if (upsertErrors.length > 0) response.upsert_errors = upsertErrors;
-    res.json(response);
+    const result = await computeBuddyPairs({ logger: req.log });
+    res.json(result.details);
   } catch (err: any) {
-    logger.error({ err: err.message }, "[social-graph] compute-buddy-pairs error");
+    req.log.error({ err: err.message }, "[social-graph] compute-buddy-pairs error");
     res.status(500).json({ error: err.message });
   }
 });
@@ -327,15 +243,11 @@ router.post("/social-graph/test/player-registrations/:id", async (req, res) => {
 // ─── Route E: POST /api/social-graph/test/compute-now ────────────────────────
 
 router.post("/social-graph/test/compute-now", async (req, res) => {
-  const port = process.env.PORT ?? "8080";
   try {
-    const result = await fetch(
-      `http://localhost:${port}/api/social-graph/compute-buddy-pairs`,
-      { method: "POST", signal: AbortSignal.timeout(5 * 60 * 1000) }
-    );
-    const data = await result.json();
-    res.json(data);
+    const result = await computeBuddyPairs({ logger: req.log });
+    res.json(result.details);
   } catch (err: any) {
+    req.log.error({ err: err.message }, "[social-graph] test compute-now error");
     res.status(500).json({ error: err.message });
   }
 });
