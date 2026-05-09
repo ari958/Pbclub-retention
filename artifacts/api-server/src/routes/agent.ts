@@ -31,6 +31,7 @@ const agentRateLimit = rateLimit({
 
 const AgentRunSchema = z.object({
   player_id: z.string().min(1, "player_id is required"),
+  _model: z.string().optional(),
 });
 
 const router: IRouter = Router();
@@ -122,6 +123,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   }
   const { player_id } = parsed.data;
   const t0 = Date.now();
+
+  // Dev-only model override — never honoured in production
+  const bodyModel = process.env.NODE_ENV !== "production" ? parsed.data._model : undefined;
+  const resolvedModel = bodyModel ?? AGENT_MODEL;
+  if (bodyModel) {
+    req.log.info({ requested_model: bodyModel, gate: "dev_only" }, "[agent] model override applied");
+  }
 
   // Fetch player profile, live programs, and level confidence in parallel
   let assembled: any;
@@ -401,10 +409,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   ].filter(Boolean).join("\n\n");
 
   let agentResponse: any;
+  let modelUsed: string = resolvedModel;
+  let inputTokens = 0;
+  let outputTokens = 0;
   try {
     const completion = await anthropic.messages.create(
       {
-        model: AGENT_MODEL,
+        model: resolvedModel,
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
         tools: [RETENTION_MESSAGE_TOOL],
@@ -427,12 +438,11 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       throw new Error("Claude did not return expected tool_use block");
     }
     agentResponse = toolUseBlock.input as { message: string; recommended_programs: string[] };
+    modelUsed   = completion.model;
+    inputTokens  = completion.usage?.input_tokens  ?? 0;
+    outputTokens = completion.usage?.output_tokens ?? 0;
     req.log.info(
-      {
-        input_tokens: completion.usage?.input_tokens,
-        output_tokens: completion.usage?.output_tokens,
-        model: completion.model,
-      },
+      { input_tokens: inputTokens, output_tokens: outputTokens, model: modelUsed },
       "[agent] anthropic usage",
     );
     req.log.info({ elapsed_ms: Date.now() - t0 }, "[timing] claude complete");
@@ -541,6 +551,9 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   const responseBody: Record<string, unknown> = {
     conversation_id,
     message_id,
+    model_used: modelUsed,
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
     warm_score: warmScore,
     link_strategy,
     scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
