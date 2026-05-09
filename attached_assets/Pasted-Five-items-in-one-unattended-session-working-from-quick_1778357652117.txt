@@ -1,0 +1,159 @@
+Five items in one unattended session, working from quickest to riskiest. Each item is independent — finish, commit-equivalent (clean diff + verification), then move to the next. If any item fails its stop conditions, leave that item reverted and continue to the next one. Don't let one bad item block the rest.
+
+The five items, in order:
+  A. Tier 3 — email defensive trim in importAllPlayers.js (~5 min)
+  B. Tier 4 #12 — monthlyRecap.ts end-to-end audit
+  C. Tier 4 #13 — postSessionFeedback.ts audit (revisit in light of the closed reply_expectations migration)
+  D. Tier 5 S2 — scheduler idempotency guard (~30 min)
+  E. Tier 5 S8 — decouple link_strategy from heuristic top program (real refactor, scope the largest)
+
+GLOBAL GROUND RULES
+- Each item runs steps READ → AUDIT/PLAN → IMPLEMENT → VERIFY → REPORT independently.
+- After each item, send back the report and STATUS (CLOSED / PARTIAL / DEFERRED / REVERTED).
+- If an item is REVERTED, send back the reason and move on. Don't try to "rescue" it in this session.
+- tsc must pass after every code change. node --check for .js files. If it fails: revert that item, mark REVERTED, continue.
+- Do not modify tests, the agent route system prompt, or any file outside what each item explicitly names — unless an audit surfaces a real cross-file bug, in which case STOP and DEFER that item.
+- Do not touch the runbook. (Yes, I know it's stale. Not now.)
+
+────────────────────────────────────────────────────────────
+ITEM A — Email defensive trim (Tier 3, ~5 min)
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/importAllPlayers.js
+The earlier audit flagged that `email = user.email ?? null` doesn't trim. Apply the same defensive normalization we used for names.
+
+  - Add: const normalizeEmail = (s) => s == null ? null : s.trim().toLowerCase() || null;
+  - Apply at every site where email is read from PodPlay user data and written to the DB.
+  - Lowercase is intentional — emails are case-insensitive in practice and lowercasing prevents duplicate-by-case bugs. If this surfaces a unique-constraint conflict on `email` (existing data has mixed case), STOP and DEFER — that's a data migration, not a 5-min fix.
+  - node --check, send back the diff.
+
+STATUS: CLOSED if normalizeEmail applied and node --check passes; DEFERRED if duplicate-by-case surfaced.
+
+────────────────────────────────────────────────────────────
+ITEM B — monthlyRecap.ts audit (Tier 4 #12)
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/lib/monthlyRecap.ts (path may differ; find it).
+
+This file was touched briefly during the messages.player_id fix but never reviewed end-to-end. Run the same audit checklist we used on importAllPlayers.js, adapted:
+
+  1. Supabase client — shared singleton from lib/supabaseClient.ts, no inline createClient
+  2. messages.player_id populated on every INSERT (NOT NULL FK)
+  3. messages.sent_at explicitly null for any queued/scheduled inserts
+  4. Idempotency — monthly_recaps UNIQUE on (player_id, recap_month). Inserts must use upsert with onConflict, or pre-check existence
+  5. Error handling — per-player failure logged and skipped, batch continues
+  6. N+1 pattern — same check we did on churnScore. If it loops over players with multiple queries each, flag and quantify (rough per-player ms × player count)
+  7. Anything weird
+
+Classify findings: FIX NOW (clear bugs), FOLLOW-UP (real but defer), IGNORE.
+
+If FIX NOW count is 0–2 and each fix is < 10 lines: implement now, verify with tsc + a fake-supabase dry-run for any logic change.
+
+If FIX NOW count is 3+ OR any single fix is structural (e.g. full N+1 refactor): STOP and DEFER. Mark as PARTIAL with the audit report and recommended fixes. We'll schedule it separately.
+
+STATUS: CLOSED if 0 FIX NOW items, or if 1–2 small fixes shipped clean. PARTIAL with audit if larger findings.
+
+────────────────────────────────────────────────────────────
+ITEM C — postSessionFeedback.ts audit (Tier 4 #13)
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/jobs/postSessionFeedback.ts (or wherever it lives — find it).
+
+This was tied to Tier 1 #1 (pending_sends → reply_expectations migration), which is closed. Re-audit in that context:
+
+  1. Confirm the file no longer references pending_sends. If it does, that's a migration regression — STOP and report.
+  2. Confirm reply_expectations is being used correctly per its actual schema (find the schema by reading any file that defines or selects from it).
+  3. Run the same audit checklist as Item B (Supabase client, player_id, sent_at, idempotency, error handling, N+1, weirdness).
+  4. session_feedback table — this is the table with the anon_insert RLS policy for Twilio webhook. Confirm postSessionFeedback.ts is on the OUTBOUND side (sending the feedback request SMS), not the INBOUND side (receiving the reply). The two are easy to confuse.
+
+Classify the same way as Item B. Same stop conditions.
+
+STATUS: CLOSED if clean or 1–2 small fixes; PARTIAL with audit if larger findings.
+
+────────────────────────────────────────────────────────────
+ITEM D — Tier 5 S2: scheduler idempotency guard
+────────────────────────────────────────────────────────────
+From the runbook:
+"The scheduler tick checks nightlyJob.status === 'running' before triggering, but doesn't lock per-day. If the server restarts during the scheduled hour, the chain could fire twice in one day. Add stats.last_run_day check."
+
+File: artifacts/api-server/src/lib/scheduler.ts (probably). The scheduler tick logic and the jobs row for "nightly_sync".
+
+Plan:
+  1. Read scheduler.ts and find the tick function — the one that checks `nightlyJob.status === "running"`.
+  2. Read the jobs table row shape. Look for stats column (probably jsonb) and how it's currently used.
+  3. Add a guard: before triggering, check if the current local-club-date matches a "last_run_day" field in jobs.stats. If yes, skip (already ran today). If no, proceed and write last_run_day = today after a successful chain completion.
+
+Implementation requirements:
+  - "Today" = club-local date, not UTC. The clubs table has timezone (IANA). Use the same date-derivation logic that's already used elsewhere (likely in syncEventAttendance.js for last_visit_date — reference it).
+  - Only update last_run_day on SUCCESSFUL chain completion. If the chain fails midway, leave last_run_day alone so a retry on the same day will re-fire.
+  - Atomic update — if the scheduler checks last_run_day, finds today doesn't match, but a parallel tick is already mid-run, we still need the existing nightlyJob.status === "running" check to prevent concurrent fires. Both guards are needed; they protect against different scenarios (status = concurrent fires within a tick window; last_run_day = re-fire after restart).
+
+Verify:
+  - tsc clean
+  - Walk through three scenarios in your head and confirm the logic:
+    1. Cold start at 1am club-local, never run today: should fire ✓
+    2. Server restart at 2am club-local, already ran successfully at 1:15am: should skip ✓
+    3. Server restart at 1:30am club-local, ran at 1am but chain failed at step 3: should re-fire ✓
+  - Send back the three scenarios with which guard catches each.
+
+If implementing this requires schema changes (new column on jobs, etc.): STOP and DEFER. The runbook implied stats.last_run_day fits in existing jsonb; if it doesn't, that's a migration call I want to make myself.
+
+STATUS: CLOSED if implemented and three scenarios verified; DEFERRED if schema changes required.
+
+────────────────────────────────────────────────────────────
+ITEM E — Tier 5 S8: decouple link_strategy from heuristic top program
+────────────────────────────────────────────────────────────
+This is the largest item and the one most likely to surface scope. From the runbook:
+
+"The agent route picks a top program heuristically before Claude runs, computes warm_score against it, and uses that score for link_strategy. Claude often recommends a different program, and the link_strategy was scored against the wrong one."
+
+File: artifacts/api-server/src/routes/agent.ts.
+
+The fix has two viable shapes per the runbook:
+  Option 1: Compute link_strategy AFTER Claude makes the recommendation. Re-score against the program Claude actually picked.
+  Option 2: Score against all candidates and surface them all; Claude picks; link_strategy comes from the scored entry that matches.
+
+Decision: I want Option 1. It's smaller, simpler, and matches the existing flow (Claude picks, then we use what Claude picked). Option 2 is closer to a multi-program rework.
+
+Plan:
+  1. Read agent.ts. Find:
+     a. Where the heuristic top program is selected (pre-Claude)
+     b. Where computeWarmScore is called against it
+     c. Where scoreToLinkStrategy is called (this is what we're moving)
+     d. Where Claude's recommended_programs[0] is resolved against the program list (this exists — used for signup_url lookup)
+  2. The new flow:
+     a. Pre-Claude: keep the heuristic top program selection (Claude needs context). Pass programs to Claude as before.
+     b. Pre-Claude: compute warm_score against the heuristic top program — KEEP this for context passed into the prompt (the "warm score" the player sees in the prompt).
+     c. POST-Claude: after agentResponse parses, look up the program Claude actually recommended (firstRecommendedName lookup, already exists on line 428-ish).
+     d. POST-Claude: compute link_strategy from a re-scored warm_score against THAT program. NOT from the pre-Claude warm_score against the heuristic top.
+     e. Stitch the post-Claude link_strategy into the response body, replacing whatever the current code returns.
+  3. Edge case: Claude might recommend a program not in the available list (paraphrased name, hallucinated name). Today's lookup at line 428 handles this with .find(), which returns undefined. If undefined, fall back to the pre-Claude link_strategy. Don't fail the request.
+  4. Edge case: Claude might recommend NO program (recommended_programs is empty — e.g. new player welcome, no pitch). In that case, link_strategy doesn't matter (there's no link to send). Set link_strategy to "soft" or null and document the choice in a comment.
+
+Verify:
+  - tsc clean
+  - Walk through three scenarios in your head:
+    1. Claude picks the heuristic top program: link_strategy is identical to before (no behavior change for the common case)
+    2. Claude picks a different program: link_strategy reflects the actual recommendation
+    3. Claude picks no program / unresolvable name: graceful fallback, no error
+  - If you have a known test player from earlier sessions, fire one agent request and inspect the response. Confirm link_strategy is sane and the message body matches the recommendation.
+  - Send back the diff and the three scenarios.
+
+If the refactor touches more than ~30 lines or requires moving warm_score computation out of the Promise.all data fetch: STOP and DEFER. That's a bigger re-plumbing that needs a fresh design pass.
+
+STATUS: CLOSED if implemented in <30 lines and three scenarios verified; PARTIAL if you got partway but had to revert; DEFERRED if scope grew.
+
+────────────────────────────────────────────────────────────
+GO-AHEAD POLICY
+────────────────────────────────────────────────────────────
+Pre-approved through all five items. Each item is independent — failure in one doesn't block the rest. After each item, send the report and move on.
+
+For each item, end with one of:
+  STATUS: CLOSED      — implemented, verified, no concerns
+  STATUS: PARTIAL     — partial progress, what's left, audit findings if any
+  STATUS: DEFERRED    — clean revert, here's why, scheduled separately
+  STATUS: REVERTED    — broke something, reverted to clean state, here's the cause
+
+Final summary at the end:
+  - Five-line status block (one line per item)
+  - Total diff scope (which files touched)
+  - Any items I should look at first when I'm back
+
+Don't paper over problems. A DEFERRED with a clear reason is better than a CLOSED with a hidden bug. I'll trust your judgment on scope.

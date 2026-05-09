@@ -14,7 +14,8 @@ const UPSERT_BATCH = 100;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-const normalizeName = (s) => s == null ? null : s.replace(/\s+/g, ' ').trim();
+const normalizeName  = (s) => s == null ? null : s.replace(/\s+/g, ' ').trim();
+const normalizeEmail = (s) => s == null ? null : s.trim().toLowerCase() || null;
 
 function formatPhone(raw) {
   if (!raw) return null;
@@ -314,7 +315,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     const extId      = String(user.id);
     const name       = [user.firstName, user.lastName].map(normalizeName).filter(Boolean).join(" ") || "Unknown";
     const phone      = formatPhone(user.phoneNumber);
-    const email      = user.email ?? null;
+    const email      = normalizeEmail(user.email);
     const membership = mapMembership(user.membershipType);
 
     const linked = byExtId.get(extId);

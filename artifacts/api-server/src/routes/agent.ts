@@ -448,6 +448,32 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
     : null;
   const signup_url: string | null = matchedProgram?.signup_url ?? null;
 
+  // ── Post-Claude: re-score link_strategy against the program Claude actually picked ──
+  // The pre-Claude link_strategy was scored against the heuristic top program.
+  // If Claude recommended a different program, or no program, update accordingly.
+  if (!firstRecommendedName) {
+    // Claude recommended no program (e.g. new player welcome) — link is irrelevant
+    link_strategy = "soft";
+  } else if (matchedProgram && matchedProgram.name !== topProgram?.name) {
+    // Claude picked a different program than the heuristic top — re-score against it
+    try {
+      const reScore = await computeWarmScore(
+        player_id,
+        matchedProgram.program_type ?? "",
+        matchedProgram.name,
+        { programLevel: matchedProgram.skill_level ?? undefined },
+      );
+      link_strategy = scoreToLinkStrategy(reScore);
+      req.log.info(
+        { player_id, reScore, link_strategy, program: matchedProgram.name },
+        "[agent] post-claude link_strategy re-scored",
+      );
+    } catch (err) {
+      req.log.warn({ err }, "[agent] post-claude warm score failed — keeping pre-claude strategy");
+    }
+  }
+  // If matchedProgram is null (unresolvable name), pre-Claude link_strategy stands as fallback
+
   // ── Scheduled send timing ──────────────────────────────────────────────────
   // Parse program start date from the matched (or top) program's raw ISO field.
   const programForTiming: any = matchedProgram ?? topProgram ?? null;

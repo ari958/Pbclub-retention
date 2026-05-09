@@ -36,6 +36,19 @@ async function getClubSchedule(): Promise<{ scheduledTime: string; timezone: str
   }
 }
 
+function localDateStr(date: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const y = parts.find((p) => p.type === "year")?.value  ?? "0000";
+  const m = parts.find((p) => p.type === "month")?.value ?? "01";
+  const d = parts.find((p) => p.type === "day")?.value   ?? "01";
+  return `${y}-${m}-${d}`;
+}
+
 function isTimeToRun(scheduledTime: string, timezone: string): boolean {
   const [h, m] = scheduledTime.split(":").map(Number);
   const now = new Date();
@@ -51,7 +64,7 @@ function isTimeToRun(scheduledTime: string, timezone: string): boolean {
   return nowH === h && nowM === m;
 }
 
-export async function runNightlyChain(): Promise<void> {
+export async function runNightlyChain(todayStr?: string): Promise<void> {
   logger.info("[scheduler] Starting nightly chain");
   await startJob(JOB_NIGHTLY);
   await appendJobLog(JOB_NIGHTLY, "Nightly chain started");
@@ -194,8 +207,12 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);
     }
 
-    // Mark nightly_sync done
-    await finishJob(JOB_NIGHTLY, "done");
+    // Mark nightly_sync done — persist last_run_day so a same-day restart skips re-fire
+    await finishJob(
+      JOB_NIGHTLY,
+      "done",
+      todayStr ? ({ last_run_day: todayStr } as unknown as Record<string, number>) : undefined,
+    );
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
     logger.info("[scheduler] Nightly chain completed");
   } catch (err: any) {
@@ -238,12 +255,21 @@ export function startScheduler(): void {
         return;
       }
 
+      // Guard: skip if the chain already ran successfully today (protects against
+      // same-day re-fire after a server restart during the scheduled hour).
+      const todayStr = localDateStr(new Date(), schedule.timezone);
+      const lastRunDay = (nightlyJob.stats as any)?.last_run_day ?? null;
+      if (lastRunDay === todayStr) {
+        logger.info({ todayStr }, "[scheduler] Nightly chain already ran today — skipping");
+        return;
+      }
+
       logger.info(
-        { scheduledTime: schedule.scheduledTime, timezone: schedule.timezone },
+        { scheduledTime: schedule.scheduledTime, timezone: schedule.timezone, todayStr },
         "[scheduler] Time matched — triggering nightly chain"
       );
 
-      runNightlyChain().catch((err) => {
+      runNightlyChain(todayStr).catch((err) => {
         logger.error({ err }, "[scheduler] Uncaught error in nightly chain");
       });
     } catch (err) {
