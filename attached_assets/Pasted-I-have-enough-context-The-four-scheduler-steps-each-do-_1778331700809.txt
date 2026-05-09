@@ -1,0 +1,27 @@
+I have enough context. The four scheduler steps each do roughly the same thing:
+typescripttry {
+  await appendJobLog(JOB_NIGHTLY, "Step N: doing X");
+  const res = await fetch(`http://localhost:${port}/api/.../...`, {
+    method: "POST",
+    signal: AbortSignal.timeout(N * 60 * 1000),
+  });
+  const result = await res.json();
+  await appendJobLog(JOB_NIGHTLY, `Step N complete — ...`);
+} catch (err) {
+  await appendJobLog(JOB_NIGHTLY, `... error (non-fatal): ${err.message}`);
+}
+This is the same shape as the socialGraph refactor we just finished, applied to four call sites at once. The pattern is clear; the prompt structure can mirror today's earlier work.
+Send back the agent latency check whenever you have it. While I wait, here's how I'm thinking about item #3.
+What we're fixing
+Four steps in lib/scheduler.ts fire HTTP requests to the same process they're running in:
+StepEndpointUnderlying logic4POST /api/social-graph/compute-buddy-pairsBuddy pair recompute5POST /api/sync/churn-scoresChurn batch recompute6POST /api/recap/milestonesMilestone batch trigger7POST /api/recap/monthlyMonthly recap (only on 1st of month)
+Each fetch eats Express middleware overhead, can't share state with the calling job, and uses 5–30 minute timeouts as guards rather than signals. The fix is the same pattern as today's socialGraph work: extract the route bodies into lib functions, have the scheduler call them directly, leave the routes as thin wrappers for the dashboard's manual-trigger UI.
+Two-step approach
+Same shape as today:
+Step A — Read what's in each file before touching anything. I want to see:
+
+Whether the relevant lib function already exists for each step (it might — socialGraph.ts:computeBuddyPairs() would be the parallel to today's getPlayerSocialContext())
+What the route handlers actually do (so we know whether the lib function needs extraction or just import)
+What the response shape is (since the scheduler reads result.pairs_updated, result.checked, etc., we need to preserve that contract)
+
+Step B — After confirming, refactor. Each step becomes one direct function call instead of one fetch.

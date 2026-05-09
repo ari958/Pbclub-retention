@@ -1,0 +1,35 @@
+The scheduler in artifacts/api-server/src/lib/scheduler.ts runs steps 4–7 by firing HTTP requests to its own process via fetch('http://localhost:...'). We're going to refactor those to direct function calls — same pattern we used for the socialGraph routes earlier today, but applied to four call sites in the scheduler instead of three in a route file.
+Before changing anything, do a read-and-report pass. I need to know what shape each step is in today before I can write the refactor prompt cleanly.
+For each of the four steps below, find the underlying logic and report back. Don't modify any files in this step.
+Step 4 — Buddy pair recompute
+
+Endpoint: POST /api/social-graph/compute-buddy-pairs
+Where does the route handler live? (likely routes/socialGraph.ts)
+Does the handler delegate to a lib function (like lib/socialGraph.ts:computeBuddyPairs() or similar), or is the logic inline in the route?
+What's the response JSON shape? (Scheduler reads result.pairs_updated — we need to preserve any field the scheduler reads)
+
+Step 5 — Churn score recompute
+
+Endpoint: POST /api/sync/churn-scores
+Same questions: where's the handler, lib function vs inline, response shape
+
+Step 6 — Milestone batch trigger
+
+Endpoint: POST /api/recap/milestones
+Same questions
+
+Step 7 — Monthly recap
+
+Endpoint: POST /api/recap/monthly
+Same questions
+Bonus: how does the scheduler decide it's the 1st of the month — is the date check inside the scheduler step, or inside the route handler? (If inside the handler, the scheduler currently calls every night and the route is responsible for no-oping on days 2–31. We need to know which.)
+
+For each step, send back:
+Step N — [name]
+  Route file:        routes/<file>.ts
+  Route handler:     <a few lines showing what the body does — does it call a lib function or run logic inline?>
+  Lib function:      <if one exists, name + path; if not, "inline only">
+  Response shape:    { ... }
+  Scheduler-read fields: <which fields the scheduler currently reads from the response>
+Also report: are any of the four steps using appendJobLog or startJob/finishJob inside the route handler (i.e., the handler manages its own job state separately from the nightly_sync job), or do they only log via req.log? This matters for how cleanly we can extract the logic — if a route handler calls startJob('compute_churn_scores') etc., that's a real job lifecycle we need to preserve.
+Don't change any code. Just read, report, wait.
