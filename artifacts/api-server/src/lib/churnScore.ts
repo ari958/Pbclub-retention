@@ -1,4 +1,6 @@
 import { supabase } from "./supabaseClient";
+import type { BatchResult } from "./milestoneCheck";
+import { startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
 
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -279,4 +281,81 @@ export async function computeChurnScoreAndReturn(
       membership_status: player.membership_status,
     },
   };
+}
+
+// ─── Churn score batch ────────────────────────────────────────────────────────
+
+export const JOB_CHURN = "compute_churn_scores";
+
+/**
+ * Recomputes churn scores for every player with a non-null last_visit_date.
+ * Owns its own job lifecycle (compute_churn_scores in the jobs table) so
+ * the dashboard's polling endpoint /sync/churn-scores/status keeps working.
+ *
+ * Called by:
+ *   - POST /sync/churn-scores (manual / dashboard, 202 + detached IIFE)
+ *   - Scheduler step 5 (nightly, awaited directly)
+ *
+ * Cancellation: polls isCancelled(JOB_CHURN) once per player.
+ *
+ * Errors: never throws. Returns ok=false with errors[] populated on failure
+ * (matches the existing route behavior of finishJob with status='error').
+ */
+export async function runChurnScoreBatch(): Promise<BatchResult> {
+  await startJob(JOB_CHURN);
+  await appendJobLog(JOB_CHURN, "Churn score batch started");
+
+  let scored = 0;
+  const errorMessages: string[] = [];
+
+  try {
+    const playerIds: string[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("id")
+        .not("last_visit_date", "is", null)
+        .range(offset, offset + 999);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      playerIds.push(...data.map((p: any) => p.id as string));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    await appendJobLog(JOB_CHURN, `Found ${playerIds.length} eligible players`);
+
+    for (const playerId of playerIds) {
+      if (await isCancelled(JOB_CHURN)) {
+        await appendJobLog(JOB_CHURN, "Cancelled by operator");
+        throw Object.assign(new Error("Churn scoring cancelled"), { name: "CancelledError" });
+      }
+      await computeChurnScore(playerId);
+      scored++;
+      if (scored % 100 === 0) {
+        await appendJobLog(JOB_CHURN, `Scored ${scored}/${playerIds.length}…`);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    await finishJob(JOB_CHURN, "done", { players_scored: scored });
+    await appendJobLog(JOB_CHURN, `Done — churn scores computed for ${scored} players`);
+
+    return {
+      ok: true,
+      stats: { players_scored: scored },
+    };
+  } catch (err: any) {
+    const cancelled = err.name === "CancelledError";
+    await finishJob(JOB_CHURN, cancelled ? "cancelled" : "error", undefined, err.message);
+    await appendJobLog(JOB_CHURN, `Churn score batch ${cancelled ? "cancelled" : "failed"}: ${err.message}`);
+    errorMessages.push(err.message);
+
+    return {
+      ok: false,
+      stats: { players_scored: scored },
+      errors: errorMessages,
+    };
+  }
 }

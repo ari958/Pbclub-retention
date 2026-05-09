@@ -1,0 +1,161 @@
+Pass 3 of 3. Extract the churn-score batch loop from routes/sync.ts into lib/churnScore.ts as runChurnScoreBatch(). Three changes.
+Change 1 — Add runChurnScoreBatch() to lib/churnScore.ts.
+Append below the existing computeChurnScore and computeChurnScoreAndReturn exports. Use this implementation — it's the route's IIFE body verbatim, lifted into a function with BatchResult return shape.
+typescriptimport type { BatchResult } from "./milestoneCheck";
+import { startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
+
+const JOB_CHURN = "compute_churn_scores";
+
+/**
+ * Recomputes churn scores for every player with a non-null last_visit_date.
+ * Owns its own job lifecycle (compute_churn_scores in the jobs table) so
+ * the dashboard's polling endpoint /sync/churn-scores/status keeps working.
+ *
+ * Called by:
+ *   - POST /sync/churn-scores (manual / dashboard, 202 + detached IIFE)
+ *   - Scheduler step 5 (nightly, awaited directly)
+ *
+ * Cancellation: polls isCancelled(JOB_CHURN) once per player.
+ *
+ * Errors: never throws. Returns ok=false with errors[] populated on failure
+ * (matches the existing route behavior of finishJob with status='error').
+ */
+export async function runChurnScoreBatch(): Promise<BatchResult> {
+  await startJob(JOB_CHURN);
+  await appendJobLog(JOB_CHURN, "Churn score batch started");
+
+  let scored = 0;
+  const errorMessages: string[] = [];
+
+  try {
+    const playerIds: string[] = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from("players")
+        .select("id")
+        .not("last_visit_date", "is", null)
+        .range(offset, offset + 999);
+      if (error) throw new Error(error.message);
+      if (!data || data.length === 0) break;
+      playerIds.push(...data.map((p: any) => p.id as string));
+      if (data.length < 1000) break;
+      offset += 1000;
+    }
+
+    await appendJobLog(JOB_CHURN, `Found ${playerIds.length} eligible players`);
+
+    for (const playerId of playerIds) {
+      if (await isCancelled(JOB_CHURN)) {
+        await appendJobLog(JOB_CHURN, "Cancelled by operator");
+        throw Object.assign(new Error("Churn scoring cancelled"), { name: "CancelledError" });
+      }
+      await computeChurnScore(playerId);
+      scored++;
+      if (scored % 100 === 0) {
+        await appendJobLog(JOB_CHURN, `Scored ${scored}/${playerIds.length}…`);
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+
+    await finishJob(JOB_CHURN, "done", { players_scored: scored });
+    await appendJobLog(JOB_CHURN, `Done — churn scores computed for ${scored} players`);
+
+    return {
+      ok: true,
+      stats: { players_scored: scored },
+    };
+  } catch (err: any) {
+    const cancelled = err.name === "CancelledError";
+    await finishJob(JOB_CHURN, cancelled ? "cancelled" : "error", undefined, err.message);
+    await appendJobLog(JOB_CHURN, `Churn score batch ${cancelled ? "cancelled" : "failed"}: ${err.message}`);
+    errorMessages.push(err.message);
+
+    return {
+      ok: false,
+      stats: { players_scored: scored },
+      errors: errorMessages,
+    };
+  }
+}
+Notes on the implementation:
+
+The JOB_CHURN constant lives inside lib/churnScore.ts now. If routes/sync.ts references JOB_CHURN elsewhere (status endpoint, cancel endpoint), import it from ./lib/churnScore rather than re-declaring. Check for other usages with grep -n "JOB_CHURN\|compute_churn_scores" artifacts/api-server/src before editing — if JOB_CHURN is defined in the route file or in jobStore.ts already, hoist it to a shared location rather than duplicating the constant. If it's only used in the route's churn handler and the new lib function, defining it in lib/churnScore.ts and importing where needed is correct.
+The function deliberately never throws, even on hard failures — it logs and returns ok: false. The route's await runChurnScoreBatch() inside the IIFE doesn't need its own try/catch because the lib function handles all error paths internally. The scheduler's existing try/catch around Step 5 still catches anything truly unexpected (e.g., import failures, bugs in the lib function itself).
+supabase import: the file likely already has it for computeChurnScore. Don't add a duplicate.
+
+Change 2 — Replace the route handler in routes/sync.ts.
+Find POST /sync/churn-scores (lines 382–432 per the read-back). Replace its entire body with:
+typescriptrouter.post("/sync/churn-scores", async (_req, res) => {
+  // Detached IIFE preserves the 202-immediately contract for the dashboard.
+  // The lib function owns the JOB_CHURN lifecycle (startJob, finishJob, logs).
+  (async () => {
+    await runChurnScoreBatch();
+  })();
+
+  return res.status(202).json({
+    message: "Churn score computation started",
+    statusUrl: "/api/sync/churn-scores/status",
+  });
+});
+Add the import at the top:
+typescriptimport { runChurnScoreBatch } from "../lib/churnScore";
+Critical: don't call startJob(JOB_CHURN) synchronously in the route before the IIFE anymore. The original handler did this (line 383) so the dashboard's status poll would see running immediately on the next poll tick. The lib function now does it inside the IIFE. There's a small window — typically under 100ms — where the dashboard could poll between the 202 response and the lib function's startJob call, and see the previous job state. This is acceptable behavior for a status endpoint.
+If, after deploying, the dashboard reports "weird flickering" on the churn job status immediately after a manual trigger, that's the symptom of this race. The fix would be moving startJob back into the synchronous portion of the route before the IIFE. We'd revisit then. Don't pre-optimize for it.
+Change 3 — Update Step 5 in lib/scheduler.ts.
+Find Step 5 (churn score recompute, lines 143–157 per the read-back). Replace with:
+typescript// Step 5: Churn score recompute (non-fatal, awaited directly)
+//
+// Behavior change from previous fetch-localhost pattern: this now blocks
+// until the entire batch finishes before Step 6 starts. Previously the
+// fetch returned 202 immediately and Step 6 ran concurrently against
+// stale churn scores. Total nightly chain runtime grows by ~6 minutes
+// (typical churn batch duration) but Step 6 (milestones) now runs
+// against fresh churn data — correctness win.
+try {
+  await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
+  const result = await runChurnScoreBatch();
+  const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+  await appendJobLog(JOB_NIGHTLY, `Step 5 complete — ${statsLine}`);
+  if (result.errors?.length) {
+    await appendJobLog(JOB_NIGHTLY, `Step 5 had ${result.errors.length} non-fatal errors`);
+  }
+} catch (err: any) {
+  await appendJobLog(JOB_NIGHTLY, `Churn score recompute error (non-fatal): ${err.message}`);
+}
+Add the import:
+typescriptimport { runChurnScoreBatch } from "./churnScore";
+The 10-minute AbortSignal.timeout from the old fetch is gone. We're awaiting the lib function directly; if it ever runs catastrophically long, that's a real bug we want to surface, not silently kill via timeout.
+Also: the port constant defined at the top of Step 5 (const port = process.env.PORT ?? "8080") — check if any other step still uses it. After Pass 1, 2, and 3 are all complete, no scheduler step should fetch localhost. If port is now unused, delete it. Run grep -n "port" artifacts/api-server/src/lib/scheduler.ts to confirm before deleting.
+Change 4 — Verify and report back.
+
+Run tsc --noEmit. Confirm clean.
+Three grep checks:
+
+bash   # No more localhost fetches anywhere in the scheduler
+   grep -n "localhost" artifacts/api-server/src/lib/scheduler.ts
+
+   # New lib export present
+   grep -n "runChurnScoreBatch" artifacts/api-server/src/lib/churnScore.ts
+
+   # Route delegates correctly
+   grep -n "runChurnScoreBatch" artifacts/api-server/src/routes/sync.ts
+
+   # JOB_CHURN canonicalization — should appear in lib (definition + usage)
+   # and route (only if status/cancel endpoints reference it)
+   grep -rn "JOB_CHURN\|compute_churn_scores" artifacts/api-server/src
+Expected: scheduler grep returns zero matches. Lib and route greps return their respective references. The JOB_CHURN canonicalization grep should reveal whether the constant is defined in one place or duplicated — report whatever you find.
+
+Send back:
+
+The new runChurnScoreBatch function in lib/churnScore.ts (full body — yes, all of it, since this is the largest change in the pass)
+The new POST /sync/churn-scores route handler body (the 9-line wrapper)
+The new Step 5 block in scheduler.ts
+Where JOB_CHURN ended up living (and whether it was duplicated)
+Whether the port constant in scheduler.ts is now unused, and if so, whether you deleted it
+tsc output
+All four grep results
+
+
+
+Don't restart the server. Send back the diffs and I'll review before deploy.

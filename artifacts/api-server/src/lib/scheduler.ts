@@ -6,6 +6,7 @@ import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobSto
 import { computeLevelConfidence } from "./levelConfidence";
 import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
 import { computeBuddyPairs } from "./socialGraph";
+import { runChurnScoreBatch } from "./churnScore";
 import { runMilestoneBatch } from "./milestoneCheck";
 import { runMonthlyRecapBatch } from "./monthlyRecap";
 import { logger } from "./logger";
@@ -140,20 +141,24 @@ export async function runNightlyChain(): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Buddy pair update error (non-fatal): ${err.message}`);
     }
 
-    // Step 5: Churn score recompute (non-fatal)
+    // Step 5: Churn score recompute (non-fatal, awaited directly)
+    //
+    // Behavior change from previous fetch-localhost pattern: this now blocks
+    // until the entire batch finishes before Step 6 starts. Previously the
+    // fetch returned 202 immediately and Step 6 ran concurrently against
+    // stale churn scores. Total nightly chain runtime grows by ~6 minutes
+    // (typical churn batch duration) but Step 6 (milestones) now runs
+    // against fresh churn data — correctness win.
     try {
-      const port = process.env.PORT ?? "8080";
       await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
-      const churnRes = await fetch(
-        `http://localhost:${port}/api/sync/churn-scores`,
-        { method: "POST", signal: AbortSignal.timeout(10 * 60 * 1000) }
-      );
-      const churnResult = await churnRes.json() as any;
-      await appendJobLog(JOB_NIGHTLY,
-        `Step 5 complete — churn scores computed for ${churnResult.players_scored ?? "?"} players`);
+      const result = await runChurnScoreBatch();
+      const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+      await appendJobLog(JOB_NIGHTLY, `Step 5 complete — ${statsLine}`);
+      if (result.errors?.length) {
+        await appendJobLog(JOB_NIGHTLY, `Step 5 had ${result.errors.length} non-fatal errors`);
+      }
     } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY,
-        `Churn score recompute error (non-fatal): ${err.message}`);
+      await appendJobLog(JOB_NIGHTLY, `Churn score recompute error (non-fatal): ${err.message}`);
     }
 
     // Step 6: Milestone check (non-fatal)
