@@ -1,0 +1,70 @@
+MODEL CONFIG + EVAL HARNESS — three small additions, no behavior change to the live route
+We're doing two pieces of work, in order. Don't combine them — finish each cleanly before starting the next.
+Piece 1: Lift the hardcoded model string into a config module.
+The Anthropic call in routes/agent.ts:293 hardcodes model: "claude-sonnet-4-6". We want to make the model a one-line env override so we can A/B test Opus 4.7 without code changes.
+Step 1a. Create artifacts/api-server/src/lib/anthropicConfig.ts with this exact contents:
+typescript/**
+ * Single source of truth for the Anthropic model used by the agent route.
+ *
+ * Override at boot via ANTHROPIC_AGENT_MODEL env var.
+ * Defaults to Sonnet 4.6 — the right pick for short structured outreach SMS
+ * where deterministic work (warm score, engagement state, link strategy) is
+ * already done outside the LLM.
+ *
+ * Valid values today (per Anthropic docs, May 2026):
+ *   "claude-sonnet-4-6"          — default
+ *   "claude-opus-4-7"            — ~2.3x effective cost
+ *   "claude-haiku-4-5-20251001"  — cheapest; quality risk on tone constraints
+ */
+export const AGENT_MODEL: string =
+  process.env.ANTHROPIC_AGENT_MODEL ?? "claude-sonnet-4-6";
+Step 1b. In routes/agent.ts, add this import alongside the existing lib imports near the top of the file:
+typescriptimport { AGENT_MODEL } from "../lib/anthropicConfig";
+Step 1c. In the anthropic.messages.create({...}) block in routes/agent.ts, change:
+typescriptmodel: "claude-sonnet-4-6",
+to:
+typescriptmodel: AGENT_MODEL,
+Step 1d. Build and verify:
+bashpnpm -C artifacts/api-server build
+Confirm exit 0. Restart the dev server. Confirm clean boot.
+Step 1e. Run one agent request from the dashboard against any real player. Check the logs — the [agent] anthropic usage line should show model: "claude-sonnet-4-6" (the default, since ANTHROPIC_AGENT_MODEL is unset). If it shows anything else, stop and report.
+STOP HERE. Send back the log line confirming the model is claude-sonnet-4-6 before continuing to Piece 2.
+
+Piece 2: Eval script for Sonnet 4.6 vs Opus 4.7 side-by-side comparison.
+We want to run the agent route against the same set of real players using both models and compare latency, tokens, cost, and message quality.
+Step 2a. Create artifacts/api-server/src/scripts/compareAgentModels.ts. The script should:
+
+Accept N (number of players to test) as a CLI arg, default 10
+Use the shared Supabase singleton client to pick N random player IDs that have at least one attendance record (so warm score is non-zero and the agent has something to recommend)
+For each player, call the /api/agent/run endpoint twice: once with ANTHROPIC_AGENT_MODEL=claude-sonnet-4-6 (via fetch to localhost), once with claude-opus-4-7
+IMPORTANT: the env var is read at server startup, so we can't change it per-request from inside the script. Two options — pick whichever is cleaner:
+
+Option A: spawn the API server twice in sequence with different env vars, run the script against each
+Option B: temporarily expose the model as a request-level override in the agent route (e.g. accept an optional _model field in the request body, fall back to AGENT_MODEL). Gate it behind process.env.NODE_ENV !== "production" so it can never be exploited in prod.
+
+
+Capture for each call: model used, wall-clock latency in ms, input_tokens, output_tokens, the rendered message body, and the recommended_programs array
+Compute per-call dollar cost using these rates (USD per million tokens):
+
+sonnet-4-6: input $3, output $15
+opus-4-7: input $5, output $25
+
+
+Print a CSV-style table to stdout with columns: player_id, model, latency_ms, input_tokens, output_tokens, cost_usd, message
+Print a summary at the end: averages and totals per model, plus the dollar delta projected to 1,000 calls
+
+Before writing the script, read this back to me:
+
+Which option (A or B) you picked for the model-override mechanism, and a one-sentence justification
+The exact endpoint URL the script will hit (http://localhost:8080/api/agent/run or whatever the dev port is — check existing scheduler code for the port)
+How you'll handle the rate limiter on /api/agent/run (currently 20 req/min — the script may exceed this with 10 players × 2 models = 20 calls back-to-back). Acceptable answers: add a 4-second sleep between calls, or run with rate limiting disabled in dev, or hit a non-rate-limited internal function directly.
+
+STOP HERE. Send back the three answers above before writing the script.
+
+After both pieces land, the workflow is:
+
+Run pnpm tsx src/scripts/compareAgentModels.ts 20 to get a 20-player comparison
+Look at the CSV output — does Opus produce noticeably better messages? Is the latency delta tolerable? What's the cost projection at 1,000 calls/month?
+Decide: stay on Sonnet (default), or set ANTHROPIC_AGENT_MODEL=claude-opus-4-7 in Replit Secrets
+
+The eval is the answer to your question. Anything I tell you before running it is informed guess; the CSV is data.

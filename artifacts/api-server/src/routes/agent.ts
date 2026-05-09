@@ -10,6 +10,7 @@ import { supabase } from "../lib/supabaseClient";
 import { computeWarmScore, scoreToLinkStrategy } from "../lib/warmScore";
 import { computeScheduledSendAt } from "../lib/playerTiming";
 import { getPlayerSocialContext } from "../lib/socialGraph";
+import { AGENT_MODEL } from "../lib/anthropicConfig";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
@@ -403,7 +404,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
   try {
     const completion = await anthropic.messages.create(
       {
-        model: "claude-sonnet-4-6",
+        model: AGENT_MODEL,
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
         tools: [RETENTION_MESSAGE_TOOL],
