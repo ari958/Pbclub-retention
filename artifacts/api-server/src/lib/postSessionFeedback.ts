@@ -1,7 +1,20 @@
+/**
+ * Post-session feedback dispatcher.
+ *
+ * Polls every 30 minutes for sessions ending in the last 30 minutes and queues
+ * a "did everyone belong at this level?" feedback prompt to each attendee.
+ *
+ * The outbound message itself goes into `messages` with status='pending'.
+ * Separately, we register a reply_expectations entry via expectReply() so
+ * that when the player replies "1" or "2", the inbound webhook handler in
+ * routes/messages.ts can route the reply back to this specific (player,
+ * event, level) context. See lib/replyExpectations.ts for the pattern.
+ */
 import { supabase } from "./supabaseClient";
 import { sendViaTwilio } from "./twilio";
 import { extractSkillLevel, isFeedbackLevel } from "./skillLevel";
 import { logger } from "./logger";
+import { expectReply, findActiveExpectation } from "./replyExpectations";
 
 const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 
@@ -104,20 +117,6 @@ export async function sendFeedbackForEvent(
     return stats;
   }
 
-  // Idempotency: skip if feedback texts already sent for this event
-  const { data: existingSends } = await supabase
-    .from("pending_sends")
-    .select("id")
-    .eq("type", "session_feedback")
-    .eq("metadata->>event_id", eventId)
-    .limit(1);
-
-  if (existingSends && existingSends.length > 0) {
-    log(`[feedback] Event ${eventId} — feedback already sent — skipping`);
-    stats.skipped++;
-    return stats;
-  }
-
   // Get all player_ids that attended this event
   const { data: attRows, error: attErr } = await supabase
     .from("attendances")
@@ -162,6 +161,11 @@ export async function sendFeedbackForEvent(
   const twilioAvailable = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 
   for (const player of eligible) {
+    const existing = await findActiveExpectation(player.id, "session_feedback");
+    if (existing && (existing.metadata as { event_id?: string })?.event_id === eventId) {
+      // Already dispatched a feedback prompt for this (player, event); skip.
+      continue;
+    }
     const firstName = (player.name as string).split(" ")[0];
     const messageBody = templateBody
       .replace(/\{\{first_name\}\}/g, firstName)
@@ -205,12 +209,11 @@ export async function sendFeedbackForEvent(
         ...(twilio_sid ? { twilio_message_sid: twilio_sid, sent_at: sentAt } : {}),
       });
 
-      // Register in pending_sends so the inbound handler can route the reply
-      await supabase.from("pending_sends").insert({
-        player_id: player.id,
-        type: "session_feedback",
+      await expectReply({
+        playerId: player.id,
+        kind: "session_feedback",
         metadata: { event_id: eventId, level },
-        conversation_id: conv.id,
+        conversationId: conv.id,
       });
 
       // Advance cooldown timestamp
