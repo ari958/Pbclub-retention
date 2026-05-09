@@ -55,38 +55,6 @@ async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
   return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
 }
 
-// ─── fetchPlayerRegistrations ─────────────────────────────────────────────────
-// Returns upcoming events (from the supplied list) that the player is already
-// registered for, identified by their PodPlay external_id.
-
-async function fetchPlayerRegistrations(
-  externalId: string,
-  events: any[]
-): Promise<{ event_id: string; event_name: string; start_time: string }[]> {
-  const registered: { event_id: string; event_name: string; start_time: string }[] = [];
-  for (let i = 0; i < events.length; i += 3) {
-    if (i > 0) await sleep(250);
-    const batch = events.slice(i, i + 3);
-    const results = await Promise.all(
-      batch.map((event) =>
-        fetchEventSignupsRaw(event.id)
-          .then((ids) => ({ event, inEvent: ids.includes(externalId) }))
-          .catch(() => ({ event, inEvent: false }))
-      )
-    );
-    for (const { event, inEvent } of results) {
-      if (inEvent) {
-        registered.push({
-          event_id: event.id,
-          event_name: event.name,
-          start_time: event.startTime,
-        });
-      }
-    }
-  }
-  return registered;
-}
-
 // ─── Supabase helpers ─────────────────────────────────────────────────────────
 
 type PlayerRow = { id: string; external_id: string; name: string };
