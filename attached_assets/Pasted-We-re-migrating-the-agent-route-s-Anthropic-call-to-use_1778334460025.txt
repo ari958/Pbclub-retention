@@ -1,0 +1,25 @@
+We're migrating the agent route's Anthropic call to use tool_use structured output. Two reasons: (1) it eliminates the fragile text.indexOf('{') / lastIndexOf('}') parsing, (2) it removes Claude's tendency to emit reasoning preamble before the JSON, which should reduce output tokens and slightly tighten latency.
+Before any code changes, do a read-back. Don't modify anything in this step.
+Step 1 — Read the Anthropic call in routes/agent.ts.
+Send back:
+
+The full anthropic.messages.create({ ... }) block, verbatim with line numbers
+The lines immediately before it that build userMessage (or whatever the variable is) — I want to see the structure of what's being passed in
+The full JSON-parsing block that follows (the text.indexOf / JSON.parse / agentResponse lines)
+The line where engagement_state is overridden after the call (per the runbook, the route does ...agentResponse, engagement_state to overwrite Claude's value)
+
+Step 2 — Send the full system prompt.
+Wherever the SYSTEM_PROMPT constant is defined (likely a top-level const in agent.ts, or imported from another file), send it back verbatim. I need to see the entire prompt string. If it's long, that's fine — paste all of it.
+I particularly want to see:
+
+The instruction telling Claude to return JSON (the language we'll trim)
+The list of fields Claude is asked to produce
+Any instructions that depend on Claude reasoning step-by-step before producing output
+
+Step 3 — Confirm the output shape.
+Today the route appears to consume four output fields from Claude: message, engagement_state, warm_score, recommended_programs. Confirm this list is exact:
+bashgrep -n "agentResponse\." artifacts/api-server/src/routes/agent.ts
+Send back every reference to agentResponse.<field> (the response object after JSON.parse). That tells us exactly which fields are consumed downstream — the tool schema needs to define exactly those fields, no more, no less.
+Step 4 — Confirm the SDK version supports tool_use.
+bashgrep "@anthropic-ai/sdk" artifacts/api-server/package.json
+Send back the version. tool_use has been in the SDK for a long time but I want to confirm we're on a version that supports tool_choice: { type: "tool", name: "..." } — the forced-tool-call mode we'll be using.
