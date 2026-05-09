@@ -208,45 +208,9 @@ router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
 // ─── Route B: GET /api/social-graph/player/:id/buddies ───────────────────────
 
 router.get("/social-graph/player/:id/buddies", async (req, res) => {
-  const { id } = req.params;
   try {
-    const { data: pairs, error } = await supabase
-      .from("buddy_pairs")
-      .select("player_a, player_b, shared_sessions, last_shared_at, opt_in_notifications")
-      .or(`player_a.eq.${id},player_b.eq.${id}`)
-      .order("shared_sessions", { ascending: false })
-      .limit(10);
-
-    if (error) {
-      req.log.warn({ err: error.message }, "buddy_pairs query failed (table may not exist)");
-      res.json({ buddies: [] });
-      return;
-    }
-
-    const otherIds = (pairs ?? []).map((p: any) => (p.player_a === id ? p.player_b : p.player_a));
-    const nameMap = new Map<string, string>();
-    if (otherIds.length > 0) {
-      const { data: players } = await supabase
-        .from("players")
-        .select("id, name")
-        .in("id", otherIds);
-      for (const p of (players ?? []) as { id: string; name: string }[]) {
-        nameMap.set(p.id, p.name);
-      }
-    }
-
-    const buddies = (pairs ?? []).map((p: any) => {
-      const otherId = p.player_a === id ? p.player_b : p.player_a;
-      return {
-        player_id: otherId,
-        name: nameMap.get(otherId) ?? "Unknown",
-        shared_sessions: p.shared_sessions,
-        last_shared_at: p.last_shared_at,
-        opt_in_notifications: p.opt_in_notifications ?? false,
-      };
-    });
-
-    res.json({ buddies });
+    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    res.json({ buddies: social.buddies });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] buddies error");
     res.status(500).json({ error: err.message });
@@ -256,79 +220,9 @@ router.get("/social-graph/player/:id/buddies", async (req, res) => {
 // ─── Route C: GET /api/social-graph/upcoming-with-buddies/:id ────────────────
 
 router.get("/social-graph/upcoming-with-buddies/:id", async (req, res) => {
-  const { id } = req.params;
   try {
-    const { data: pairs, error: pairsErr } = await supabase
-      .from("buddy_pairs")
-      .select("player_a, player_b, shared_sessions")
-      .or(`player_a.eq.${id},player_b.eq.${id}`);
-
-    if (pairsErr) {
-      req.log.warn({ err: pairsErr.message }, "buddy_pairs query failed (table may not exist)");
-      res.json({ upcoming: [] });
-      return;
-    }
-    if (!pairs || pairs.length === 0) { res.json({ upcoming: [] }); return; }
-
-    const buddyIds = pairs.map((p: any) => (p.player_a === id ? p.player_b : p.player_a));
-    const sessionMap = new Map<string, number>();
-    for (const p of pairs as any[]) {
-      const otherId = p.player_a === id ? p.player_b : p.player_a;
-      sessionMap.set(otherId, p.shared_sessions);
-    }
-
-    const { data: buddyPlayers } = await supabase
-      .from("players")
-      .select("id, name, external_id")
-      .in("id", buddyIds);
-
-    const buddyByExternal = new Map<string, { id: string; name: string; shared_sessions: number }>();
-    for (const p of (buddyPlayers ?? []) as { id: string; name: string; external_id: string }[]) {
-      if (p.external_id) {
-        buddyByExternal.set(p.external_id, {
-          id: p.id,
-          name: p.name,
-          shared_sessions: sessionMap.get(p.id) ?? 0,
-        });
-      }
-    }
-
-    const allEvents = await fetchUpcomingEvents(7);
-    const events = allEvents.slice(0, 10); // hard cap — keeps total time ~4s
-    const upcoming: object[] = [];
-
-    // Parallel batches of 3 with 250ms between batches (rate-limit PodPlay)
-    for (let i = 0; i < events.length; i += 3) {
-      if (i > 0) await sleep(250);
-      const batch = events.slice(i, i + 3);
-      const results = await Promise.all(
-        batch.map((event) =>
-          fetchEventSignupsRaw(event.id)
-            .then((externalIds) => ({ event, externalIds }))
-            .catch(() => ({ event, externalIds: [] as string[] }))
-        )
-      );
-      for (const { event, externalIds } of results) {
-        const buddiesHere = externalIds
-          .map((eid) => buddyByExternal.get(eid))
-          .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
-        if (buddiesHere.length > 0) {
-          upcoming.push({
-            event_id: event.id,
-            program_name: event.name,
-            level: extractSkillLevel(event.tags),
-            start_time: event.startTime,
-            buddies_signed_up: buddiesHere.map((b) => ({
-              player_id: b.id,
-              name: b.name,
-              shared_sessions: b.shared_sessions,
-            })),
-          });
-        }
-      }
-    }
-
-    res.json({ upcoming });
+    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    res.json({ upcoming: social.upcoming });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] upcoming-with-buddies error");
     res.status(500).json({ error: err.message });
@@ -436,20 +330,9 @@ router.get("/social-graph/staff-intro-cards", async (req, res) => {
 // ─── Route F: GET /api/social-graph/player/:id/registrations ─────────────────
 
 router.get("/social-graph/player/:id/registrations", async (req, res) => {
-  const { id } = req.params;
   try {
-    const { data: player, error } = await supabase
-      .from("players")
-      .select("external_id")
-      .eq("id", id)
-      .single();
-    if (error || !player?.external_id) {
-      res.json({ registrations: [] });
-      return;
-    }
-    const events = (await fetchUpcomingEvents(7)).slice(0, 10);
-    const registrations = await fetchPlayerRegistrations(player.external_id, events);
-    res.json({ registrations });
+    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    res.json({ registrations: social.registrations });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] player-registrations error");
     res.status(500).json({ error: err.message });
