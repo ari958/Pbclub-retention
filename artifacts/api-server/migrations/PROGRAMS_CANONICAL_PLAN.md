@@ -1,6 +1,6 @@
 # Programs Canonical Taxonomy — Migration Plan
 
-**Status:** PLANNED  
+**Status:** PHASE 1 IMPLEMENTED — Phase 2 backfill SQL ready to run  
 **Author:** session audit, May 2026  
 **Option chosen:** Option 3 — Lightweight normalization at the sync layer
 
@@ -267,22 +267,42 @@ analytics page).
 
 ---
 
-## Open Questions (must answer before Phase 2)
+## Open Questions — ANSWERED
 
-1. **How many attendance rows have each variant string?**
-   Run: `SELECT program_name, COUNT(*) FROM attendances GROUP BY program_name ORDER BY 2 DESC;`
-   in Supabase SQL Editor. This tells us whether the DUPR variants are 5 rows or 5,000.
+1. **How many attendance rows have each variant string?** ✅ ANSWERED (May 2026, live DB query)
 
-2. **Does the club want pricing/duration variants collapsed?**
-   e.g. `"Half Price Afternoon Open Play"` vs `"Afternoon Open Play"` — these look like
-   separate programs to the warm score but may be the same canonical session at different price.
-   Club input required before adding Phase 2 rules for pricing/duration prefixes.
+   | program_name | rows |
+   |---|---|
+   | `Advanced Intermediate Open Play (3.5-3.99)` | 64 ← canonical |
+   | `Advanced Intermediate Open Play 3.5+` | 40 ← variant → normalised |
+   | `Advanced Intermediate Open Play (3.50-3.99)` | 24 ← variant → normalised |
+   | `Intermediate Open Play (3.0-3.49)` | 30 ← standalone (not a variant) |
+   | `Advanced Open Play (4.0-4.49)` | 27 ← standalone (not a variant) |
+   | `20% Off 3 Hour Social Open Play ` (trailing space) | 124 ← whitespace fix |
+   | `Friday  Social Open Play` (double space) | 12 ← whitespace fix |
+   | `Challenge Court Social Open Play ` (trailing space) | 0 (safe to ignore) |
 
-3. **Does PodPlay have a stable `programId` or `templateId` per recurring program?**
-   If yes, Option 2 becomes viable for future syncs — we could store
-   `program_id` (PodPlay's UUID) on attendances and join to the catalog, eliminating the
-   string-match problem entirely. Check the PodPlay API response shape for `events`.
+   Total attendances table: 5,765 rows. Distinct program_name values: 87.
 
-4. **Is warm score "exact program match" (+8) behaving as intended?**
-   Given 87 variant strings, the exact match almost certainly fires less often than designed.
-   Validate via: count players where `warm_score >= 8` and look at what drove the score.
+2. **Does the club want pricing/duration variants collapsed?** ✅ ANSWERED
+
+   **Decision: NO.** `"Half Price X"`, `"$10 X"`, `"20% Off X"` etc. are genuinely distinct
+   programs (different pricing, potentially different session mix). The warm score `program_type`
+   match (+4) still fires for all Open Play variants via `event.customType/type`. Collapsing
+   pricing variants would falsely elevate warm scores for players who only attended discounted
+   sessions. Defer Phase 3 pricing/duration normalization unless the club explicitly requests it.
+
+3. **Does PodPlay have a stable `programId` or `templateId` per recurring program?** ✅ ANSWERED
+
+   **No.** `syncEventAttendance.js:304` stores `event.id` (a per-occurrence instance ID, not a
+   series/template ID). The PodPlay `/apis/v2/events` endpoint does not expose a template or
+   series ID in the current integration. Option 2 (sync via FK) is not viable without further
+   PodPlay API investigation. Deferred.
+
+4. **Is warm score "exact program match" (+8) behaving as intended?** ✅ ANSWERED — CRITICAL BUG
+
+   **0 of 1,000 scored players have warm_score ≥ 8.** The +8 signal (`warmScore.ts:162`
+   exact string match) has never fired. Root cause confirmed: DUPR range variant strings
+   (`(3.50-3.99)`, `3.5+`) prevent exact match. Phase 1 normalization (now deployed to
+   sync layer) stops the bleed. Phase 2 backfill (below) heals the 64 historical rows.
+   After Phase 2, the next churn-score batch will recompute and warm scores will update.

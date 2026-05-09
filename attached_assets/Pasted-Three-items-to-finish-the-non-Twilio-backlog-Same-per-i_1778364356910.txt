@@ -1,0 +1,129 @@
+Three items to finish the non-Twilio backlog. Same per-item independence rules as the last session — failure or defer in one doesn't block the rest.
+
+GROUND RULES
+- tsc / node --check after every change. Revert and continue on failure.
+- Don't expand scope per item.
+- Single report at the end with diffs and a three-line status block.
+- Do not modify files outside what each item names.
+
+────────────────────────────────────────────────────────────
+ITEM 1 — routes/messages.ts bulk send Twilio-before-insert fix
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/routes/messages.ts
+
+Bug: The POST /messages/bulk handler calls Twilio before the DB insert. Same pattern as the postSessionFeedback.ts fix from the last session. Use that fix as the reference implementation.
+
+Fix shape:
+  1. INSERT message row with status: "pending", twilio_sid: null, sent_at: null. Get back the row id.
+  2. If INSERT fails: log, increment failure counter, continue to next recipient. Twilio never called.
+  3. Call Twilio. On success: UPDATE row to status: "sent", set twilio_message_sid, set sent_at: now().
+  4. On Twilio failure: UPDATE row to status: "failed". Do NOT delete the row — it's the audit trail.
+  5. Per-recipient try/catch wraps each iteration. Single failure doesn't abort the batch.
+
+Preserve the response shape this endpoint returns today (whatever counts/results it sends back to the dashboard). The call sites in the dashboard expect that shape — don't change it.
+
+Verify: tsc clean. Walk through the same three scenarios as Item 2 last session (Twilio succeeds / Twilio fails / DB INSERT fails). Send back the diff.
+
+If the endpoint structure differs meaningfully from postSessionFeedback (e.g. it batches Twilio calls or uses a different SDK pattern): adapt the fix to fit, but the principle is the same — the row must exist before Twilio is invoked.
+
+STATUS: CLOSED if implemented and three scenarios verified.
+
+────────────────────────────────────────────────────────────
+ITEM 2 — Tier 4.5 routes audit
+────────────────────────────────────────────────────────────
+Scope: artifacts/api-server/src/routes/players.ts and artifacts/api-server/src/routes/sync.ts. Plus any other route file that has write surfaces and wasn't covered in the original Tier 4 audit. Identify them via:
+
+  grep -rln "supabase.*\.\(insert\|update\|upsert\|delete\)" artifacts/api-server/src/routes
+
+Send back the list of route files first. Then audit each.
+
+Audit checklist per file (same as the Tier 4 pattern):
+  1. Supabase client — shared singleton from supabaseClient.ts, no inline createClient
+  2. messages.player_id populated on every messages INSERT (NOT NULL FK)
+  3. messages.sent_at explicitly null for any queued/scheduled inserts
+  4. Idempotency where applicable (upsert with onConflict, or pre-check existence)
+  5. Error handling — per-row failure logged and surfaced, batch operations don't silently abort
+  6. RLS / role correctness — service_role used, no anon fallback
+  7. Twilio-before-insert pattern (the bug Item 1 fixes — flag any other instances)
+  8. SELECT IN chunk size — 100 not 500 (URL length rule from churnScore work)
+  9. N+1 patterns in any per-row loops
+  10. Anything weird
+
+Classify findings per file: FIX NOW (clear bug, < 10 lines), FOLLOW-UP (real but defer), IGNORE.
+
+Implement FIX NOW items if the per-file count is 0–2 and each fix is small. If any single file has 3+ FIX NOW items, STOP and DEFER that file's audit to a follow-up; report findings without implementing.
+
+For routes/players.ts specifically — this file is the dashboard's primary write surface and added several endpoints during the original audit. Pay extra attention to consistency across endpoints.
+
+For routes/sync.ts — this file likely has the messages.player_id discipline and the upsert patterns we care about. Check those carefully.
+
+Verify: tsc after each fix.
+
+STATUS: CLOSED if 0 FIX NOW or all small fixes implemented; PARTIAL if some files yielded larger findings deferred.
+
+────────────────────────────────────────────────────────────
+ITEM 3 — programs canonical taxonomy: answer questions, then implement
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/migrations/PROGRAMS_CANONICAL_PLAN.md (already written last session, contains the chosen approach: Option 3 lightweight normalization, plus four open questions).
+
+Step A — Read the plan.
+Send back the four open questions verbatim. I want to see them before we proceed.
+
+Step B — Answer the questions yourself where possible.
+For each question, attempt to answer from the codebase or live data. Only flag a question as "needs human input" if it genuinely requires a decision I have to make (a product call, not a technical fact). Examples:
+
+  - "Should normalizeProgramName collapse the DUPR range variants?" → answerable from data: yes, the audit found 3 variants for the same program, that's the bug we're fixing
+  - "What canonical format should DUPR ranges use?" → product call, needs human input (probably "X.X-X.X" but I should pick)
+  - "Should we backfill historical attendance rows or only normalize going forward?" → can answer technically but the trade-off is a judgment call
+
+For each question: send back the question, your proposed answer (or "needs human input" if appropriate), and the evidence/reasoning behind your answer. Do this BEFORE implementing.
+
+If 2+ questions need human input: STOP after Step B and report. I'll answer them and you can implement next session.
+
+If 0–1 questions need human input: pick a sensible default for the one open question (document the choice in a comment), proceed to Step C.
+
+Step C — Implement.
+Per the plan (Option 3):
+  1. Add a normalizeProgramName() function to syncEventAttendance.js. Same pattern as normalizeName from importAllPlayers.js — pure function, handles whitespace, applies a known set of canonical replacements (e.g. DUPR range formatting).
+  2. Apply normalization at every site where program_name is written from PodPlay data into the attendances table.
+  3. Run a one-time backfill SQL to canonicalize existing attendance rows. Print before/after counts of distinct program_name values to confirm the dedup worked.
+
+Specific requirements:
+  - The backfill is a single UPDATE wrapped in BEGIN/COMMIT. Print the count of rows affected.
+  - The canonical replacements are encoded as a const map at the top of the function, easy to extend later.
+  - normalizeProgramName must be safe on null/undefined/empty (return null/null/empty respectively, don't throw).
+  - If normalizeProgramName changes a string, log it on first occurrence per (input → output) pair, so the import log shows what's being canonicalized. Suppress duplicates.
+
+Step D — Verify.
+  1. node --check on syncEventAttendance.js
+  2. Run a dry-run unit test of normalizeProgramName with the DUPR variants and any other patterns the survey identified. Send back input → output for each case.
+  3. Run the backfill SQL against the live DB. Send back: distinct program_name count before, distinct program_name count after, total rows updated.
+  4. Spot-check 3 sample rows: pick one DUPR-range row, one whitespace-variant row if any, one row that should not have changed. Send back before/after for each.
+
+If the post-backfill distinct count doesn't drop by approximately the number of variant clusters identified in the survey: STOP and investigate. The normalize function is wrong somewhere.
+
+STATUS: CLOSED if backfill ran clean and dedup worked; PARTIAL if Steps A/B surfaced too many human-input questions.
+
+────────────────────────────────────────────────────────────
+GO-AHEAD POLICY
+────────────────────────────────────────────────────────────
+Pre-approved through all three items. Each is independent.
+
+For each item, end with one of:
+  STATUS: CLOSED      — implemented, verified
+  STATUS: PARTIAL     — partial progress, what's left
+  STATUS: DEFERRED    — clean state, here's why
+  STATUS: REVERTED    — broke something, reverted, here's the cause
+
+Final summary:
+  - Three-line status block
+  - Total files touched
+  - For Item 2: list of FOLLOW-UP findings if any
+  - For Item 3: which open question(s) still need human input (if any)
+  - Updated backlog after this session — should be either empty (excluding Twilio) or just the human-input questions from Item 3
+
+If everything goes well, the non-Twilio backlog is fully closed.
+Two things specific to this prompt that are worth knowing:
+Item 3's "answer the questions yourself first" pattern is the key piece. The plan from last session was deliberately deferred because the four open questions felt like product calls. Now that we're back, I want the agent to attempt every question first and only escalate the ones that genuinely need a human. Most of the time, "open question" turns out to mean "I didn't have time to look at the data" — not "this requires a value judgment." The agent looking at distinct program_name strings and proposing a canonical format is a fact-finding task, not a product call.
+The "if 2+ questions need human input, STOP" guard is the safety net for when I'm wrong about the above. If the questions really do require product decisions, I want to see them clearly rather than have the agent guess and ship. One question with a documented default is fine; two or more is a signal to wait.
+Item 1 should be quick — same pattern as the last fix, well-rehearsed. Item 2 is the unknown — depends on how many routes have write surfaces. Item 3 is the big one and has the most paths to a clean stop if scope grows.

@@ -138,8 +138,8 @@ router.get("/social-graph/staff-intro-cards", async (req, res) => {
     const allAttendeeIds = [...new Set(bundles.flatMap((b) => b.attendeePlayerIds))];
     const visitCountMap = new Map<string, number>();
     if (allAttendeeIds.length > 0) {
-      for (let i = 0; i < allAttendeeIds.length; i += 500) {
-        const chunk = allAttendeeIds.slice(i, i + 500);
+      for (let i = 0; i < allAttendeeIds.length; i += 100) {  // 100 max — Supabase GET URL limit ~18KB
+        const chunk = allAttendeeIds.slice(i, i + 100);
         const { data: attRows } = await supabase
           .from("attendances")
           .select("player_id")

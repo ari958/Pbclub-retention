@@ -43,6 +43,53 @@ function extractSkillLevel(tags) {
   return null;
 }
 
+// ─── Program name normalisation ───────────────────────────────────────────────
+// Only accidental formatting differences belong here — intentional program
+// distinctions (pricing, duration) must NOT be collapsed.
+const PROGRAM_NAME_CANONICAL_MAP = {
+  "Advanced Intermediate Open Play (3.50-3.99)": "Advanced Intermediate Open Play (3.5-3.99)",
+  "Advanced Intermediate Open Play 3.5+":        "Advanced Intermediate Open Play (3.5-3.99)",
+};
+
+// Track which (raw → canonical) pairs have already been logged so we only emit
+// one line per unique mapping per process lifetime.
+const _programNameLoggedPairs = new Set();
+
+/**
+ * Normalise a PodPlay event name before writing to the attendances table.
+ *  1. Trims leading/trailing whitespace.
+ *  2. Collapses runs of internal whitespace to a single space.
+ *  3. Applies PROGRAM_NAME_CANONICAL_MAP for known DUPR-range formatting variants.
+ *
+ * Logs on the first occurrence of each (input → output) pair.
+ *
+ * @param {string|null|undefined} name - raw event.name from PodPlay
+ * @param {function} log - the sync job log callback
+ * @returns {string|null}
+ */
+function normalizeProgramName(name, log) {
+  if (name === null || name === undefined) return name;
+
+  const original = name;
+
+  // Step 1: trim + collapse internal whitespace
+  let normalized = name.trim().replace(/\s{2,}/g, " ");
+
+  // Step 2: canonical replacements
+  const canonical = PROGRAM_NAME_CANONICAL_MAP[normalized];
+  if (canonical) normalized = canonical;
+
+  if (normalized !== original) {
+    const pair = `${original}→${normalized}`;
+    if (!_programNameLoggedPairs.has(pair)) {
+      _programNameLoggedPairs.add(pair);
+      log(`[sync/events] normalizeProgramName: "${original}" → "${normalized}"`);
+    }
+  }
+
+  return normalized;
+}
+
 // Win-back window: if a player attends within this many days of receiving a message,
 // count it as a conversion
 const WINBACK_WINDOW_DAYS = 14;
@@ -302,7 +349,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         pendingUpserts.push({
           player_id: player.id,
           event_id: event.id,
-          program_name: event.name,
+          program_name: normalizeProgramName(event.name, log),
           attended_at: attendedAt,
           program_type: event.customType ?? event.type ?? null,
           level: extractSkillLevel(event.tags),

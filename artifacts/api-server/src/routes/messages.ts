@@ -310,43 +310,55 @@ router.post("/messages/bulk", async (req, res) => {
     }
 
     const conversation_id: string = convData.id;
-    let twilio_message_sid: string | null = null;
-    let sendFailed = false;
+    const sentAt = new Date().toISOString();
+
+    // INSERT message row BEFORE calling Twilio — row must exist from the moment
+    // Twilio is invoked. If this INSERT fails, skip Twilio entirely.
+    const { data: msgRow, error: msgInsertErr } = await supabase
+      .from("messages")
+      .insert({
+        conversation_id,
+        player_id: player.id,
+        body: interpolated,
+        direction: "outbound",
+        sent_by: "operator",
+        status: "pending",
+        ...(template_id ? { template_id } : {}),
+      })
+      .select("id")
+      .single();
+
+    if (msgInsertErr || !msgRow) {
+      req.log.error({ err: msgInsertErr, player_id: player.id }, "Bulk: failed to insert message row");
+      failed++;
+      errors.push(player.id);
+      continue;
+    }
 
     if (twilioClient) {
       try {
-        twilio_message_sid = await sendViaTwilio(player.phone, interpolated);
+        const twilio_message_sid = await sendViaTwilio(player.phone, interpolated);
+        await supabase
+          .from("messages")
+          .update({ twilio_message_sid, status: "sent", sent_at: sentAt })
+          .eq("id", msgRow.id);
       } catch (err) {
         req.log.error({ err, player_id: player.id }, "Bulk: Twilio send failed");
-        sendFailed = true;
+        // Do NOT delete the row — it is the audit trail even on failure
+        await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
         failed++;
         errors.push(player.id);
+        continue;
       }
     }
 
-    const sentAt = new Date().toISOString();
-
-    // Insert message record
-    await supabase.from("messages").insert({
-      conversation_id,
-      player_id: player.id,
-      body: interpolated,
-      direction: "outbound",
-      sent_by: "operator",
-      status: sendFailed ? "failed" : "sent",
-      ...(twilio_message_sid ? { twilio_message_sid, sent_at: sentAt } : {}),
-      ...(template_id ? { template_id } : {}),
-    });
-
-    if (!sendFailed) {
-      // Update cooldown timestamp
-      await supabase
-        .from("players")
-        .update({ last_outbound_at: sentAt })
-        .eq("id", player.id);
-      sent++;
-      req.log.info({ player_id: player.id, template_id }, "Bulk SMS sent");
-    }
+    // Update cooldown timestamp
+    await supabase
+      .from("players")
+      .update({ last_outbound_at: sentAt })
+      .eq("id", player.id);
+    sent++;
+    req.log.info({ player_id: player.id, template_id }, "Bulk SMS sent");
 
     await delay(100);
   }
