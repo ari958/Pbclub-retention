@@ -1,0 +1,120 @@
+Working unattended for ~2 hours on Tier 4 item #11 from the runbook: audit `importAllPlayers.js` end-to-end. This file has never been reviewed and it's the most likely source of the 138 dirty player names we just cleaned. Goal: leave the file in a state where the next bulk import won't reintroduce whitespace problems or any other quality issues we find.
+
+CONTEXT
+- `importAllPlayers.js` is in `artifacts/api-server/` (path may be at root or under `src/` or `scripts/` — find it).
+- It's a `.js` file, not `.ts`. Per the runbook: ".js files manage their own Supabase client. Acceptable because they bundle separately. Must use SUPABASE_SERVICE_ROLE_KEY directly with no fallback to anon."
+- Source of truth for the import is presumably PodPlay or a CSV. Find out which.
+- The runbook calls out `syncEventAttendance.js` as a sibling reviewed file — its patterns are the reference for how this file SHOULD look.
+
+GROUND RULES
+- Audit first, fix second. Do not start editing on first read.
+- Do not modify any file other than `importAllPlayers.js` itself unless the audit surfaces a real cross-file issue, in which case STOP and report.
+- Preserve the public entry point. Whatever script command or function call invokes this file today keeps working unchanged.
+- Idempotency matters. The import should be safe to run twice in a row without producing duplicates or corrupting data.
+- Use the shared patterns documented in the runbook: service_role key with no anon fallback, `appendJobLog` for progress lines if there's a `jobs` row associated with this run.
+
+STEP 1 — LOCATE AND READ-BACK
+  a. Find the file: `find artifacts -name "importAllPlayers.js"`
+  b. Send back the full file with line numbers
+  c. Find the call sites: `grep -rn "importAllPlayers" artifacts/`
+  d. Identify the data source. Look for: hardcoded URLs, env vars (PODPLAY_*, IMPORT_*, etc.), CSV file paths, command-line arguments. Send back what you find.
+  e. Check whether this file is referenced from the scheduler. If yes, send back the scheduler line. If no, note it's manually invoked.
+
+STOP after step 1. If pre-approved (this prompt grants pre-approval), continue to step 2.
+
+STEP 2 — AUDIT CHECKLIST
+For each item below, send back the line number(s) and a one-sentence finding. Use a flat list format:
+
+  [PASS/FAIL/N/A] LINE NN — finding
+
+Audit items, in order:
+
+  1. Supabase client construction. Is `createClient` called with `SUPABASE_SERVICE_ROLE_KEY`? Is there any `?? process.env.SUPABASE_ANON_KEY` fallback? (Per runbook rule: must be service_role, no fallback.)
+
+  2. Name field normalization. Does the import write `name` to the players table directly from the source field, or does it normalize whitespace first? Look for `TRIM`, `replace(/\s+/`, or similar. THIS IS THE PRIMARY HYPOTHESIS for the 138 dirty names. Document exactly how name flows from source → DB.
+
+  3. Other text-field normalization. Same check for `email`, `phone`, anything else stored as freeform text. Phone in particular often has weird formatting (parens, dashes, country codes).
+
+  4. external_id handling. Per the schema, `players.external_id` is unique and represents the PodPlay user ID. Confirm: is it populated on every imported row? Is there a code path that imports without external_id (manual entries)? If yes, that path needs to set external_id to NULL explicitly, not undefined.
+
+  5. Idempotency. Run the import twice on the same source data — does it produce duplicates, or does it upsert correctly? Look for: `onConflict: "external_id"` on inserts, or an existence check before insert. If it does plain `.insert()` without an upsert clause, that's a bug.
+
+  6. club_id population. Every player must have club_id set. Confirm.
+
+  7. Error handling. What happens when a single row fails? Does the whole import abort, or does it log and continue? Both are defensible; "silently swallow and report success" is not.
+
+  8. Logging. Does it write to `jobs` / `job_logs`, or just `console.log`? If `console.log` only, that's a Tier 3 follow-up not a fix-now item — note it.
+
+  9. RLS / role correctness. With service_role, RLS is bypassed entirely. Confirm no inline `ALTER ROLE` or `SET LOCAL` calls that would change this.
+
+  10. Performance shape. Is it row-by-row (N+1 pattern, like the old churn/milestone jobs) or batched? At ~2,000 players this matters less than at the agent jobs we just fixed, but if it's row-by-row and slow, note the per-row time.
+
+  11. Anything weird that doesn't fit categories 1–10. Use judgment.
+
+STEP 3 — DECIDE WHAT TO FIX NOW
+After the audit, classify findings into three buckets:
+
+  FIX NOW — clear bugs or runbook-rule violations (e.g. anon-key fallback, no whitespace normalization on names, missing onConflict). Fix in this session.
+
+  FOLLOW-UP — real but non-urgent (e.g. uses console.log instead of job_logs). Add to the follow-up list in the report; don't fix.
+
+  IGNORE — stylistic or speculative. Don't mention.
+
+Send back the classification before fixing. If FIX NOW has more than 4 items, STOP and report — that's a bigger refactor than this session's scope.
+
+STEP 4 — FIX
+For each FIX NOW item:
+  - Make the minimum-scope edit
+  - Run the file through node syntax check: `node --check artifacts/<path>/importAllPlayers.js`
+  - If syntax fails, revert and STOP
+
+Specific to whitespace normalization (the most likely fix):
+  - Add a normalization helper at the top of the file:
+      const normalizeName = (s) => s == null ? null : s.replace(/\s+/g, ' ').trim();
+  - Apply it everywhere `name` is read from the source before writing. Don't just sprinkle .trim() — collapse internal whitespace too, because we just saw 65 players with internal double-spaces.
+  - If the source has separate first_name / last_name fields that get concatenated, normalize each and join with single space.
+  - Apply the same pattern to other freeform text fields if the audit surfaced issues there.
+
+STEP 5 — VERIFY THE FIX
+You don't need to actually run the import (it would hit PodPlay or modify the DB). Instead, write a small inline test harness or one-off script that exercises the normalization function with these inputs:
+
+  Input                       Expected
+  "Aneri  Patel"              "Aneri Patel"
+  "Bhavya Aggarwal "          "Bhavya Aggarwal"
+  "  leading"                 "leading"
+  "trailing  "                "trailing"
+  "multi   internal"          "multi internal"
+  "  both   sides  "          "both sides"
+  null                        null
+  ""                          ""
+
+Run it via `node -e "..."` or a temporary file you delete after. Confirm all 8 cases pass. Don't commit the test harness.
+
+For idempotency fixes (if any): verify by inspecting the SQL/Supabase call shape, not by running the import twice. The shape should be `.upsert(rows, { onConflict: "external_id" })` or equivalent.
+
+STEP 6 — REPORT
+Send back:
+  - Step 1 deliverables (file location, call sites, data source, scheduler ref)
+  - Step 2 full audit checklist with PASS/FAIL/N/A for all 11 items
+  - Step 3 classification
+  - Step 4 diff for fixes applied
+  - Step 5 test results
+  - A "Tier 4 #11 status" line at the end: either "CLOSED" if all FIX NOW items shipped clean, or "PARTIAL — N items deferred" with what's left
+
+GO-AHEAD POLICY
+You are pre-approved to proceed through steps 2–6 without checking in, AS LONG AS:
+  - Step 1 surfaces a single import file (no surprises like "there are three importAllPlayers.js variants")
+  - Step 3 classification has 4 or fewer FIX NOW items
+  - `node --check` passes after each edit
+  - The data source is identifiable (PodPlay API or a CSV path or env-driven — not "unclear, requires investigation")
+
+If any of those fails: STOP, leave the file unchanged from its starting state, and write a clear note explaining what you found and why you're stopping. I'd rather come back to a clean read-back with questions than a half-applied fix.
+
+EXPECTED OUTCOME
+Most likely: name normalization is the only real bug, gets a 4-line fix, the rest of the audit is mostly PASS with maybe one or two FOLLOW-UP items. If that's what you find, the report is short and the deliverable is "Tier 4 #11 CLOSED."
+
+Less likely but possible: the file has structural issues (anon-key fallback, missing upsert, broken error handling). In that case the audit report is the deliverable and the fixes get scheduled separately.
+A few notes on how this is structured:
+The audit-then-fix split is the key piece. The previous unattended session worked because the goal was concrete (refactor two files to a known pattern). This one is open-ended — we don't know what's in the file. Forcing a full audit before any edits prevents the agent from finding one issue, fixing it, and missing three others.
+Step 5's test harness is deliberately small. You can't run the actual import unattended (it hits PodPlay or modifies prod data), so the verification is "does the normalization function do what we think it does." Eight cases is enough to spot-check; more is overkill for a 4-line helper.
+The "expected outcome" footer sets a reasonable prior. If the agent comes back with "Tier 4 #11 CLOSED, name normalization fixed," that matches the expected case and you can move on. If it comes back with a longer report, you know to read carefully.

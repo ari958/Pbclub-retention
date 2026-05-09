@@ -14,6 +14,8 @@ const UPSERT_BATCH = 100;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+const normalizeName = (s) => s == null ? null : s.replace(/\s+/g, ' ').trim();
+
 function formatPhone(raw) {
   if (!raw) return null;
   const digits = raw.replace(/\D/g, "");
@@ -310,7 +312,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
     stats.processed++;
     const extId      = String(user.id);
-    const name       = [user.firstName, user.lastName].filter(Boolean).join(" ") || "Unknown";
+    const name       = [user.firstName, user.lastName].map(normalizeName).filter(Boolean).join(" ") || "Unknown";
     const phone      = formatPhone(user.phoneNumber);
     const email      = user.email ?? null;
     const membership = mapMembership(user.membershipType);
