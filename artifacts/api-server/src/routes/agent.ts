@@ -70,6 +70,14 @@ BANNED PHRASES — never use any of these:
 "We wanted to make sure"
 "Looking forward to hearing from you"
 
+TRUTHFULNESS RULE — only reference facts that appear in the PLAYER PROFILE, AVAILABLE PROGRAMS, or SOCIAL CONTEXT sections of this message. Do not infer, guess, or fabricate context about how the player has previously interacted with the club, what kind of player they are, or what they have been doing recently. If a fact isn't in the prompt, you don't know it. When in doubt, leave it out — a shorter message with no invented context is always better than a longer message with one fabricated detail.
+
+Specifically forbidden:
+- Asides that reference unstated history ("not just X", "back to Y", "instead of Z")
+- Adjectives that imply knowledge not in the prompt ("casual player", "competitive type", "regular")
+- Time references not derivable from last_visit_date ("since the holidays", "since summer")
+- Inferred motivations ("you've been wanting to", "you're looking to", "you've been meaning to")
+
 SURVEILLANCE RULE — never reference what the system knows about the player. Don't say "we see you've been attending" or "based on your history". Make the recommendation. Let the intelligence be invisible.
 
 LEVEL RULE — never tell a player they belong somewhere or validate their level. They already know. Meet them there.

@@ -1,0 +1,34 @@
+Here's the prompt edit. Drop the new TRUTHFULNESS RULE block immediately above the existing SURVEILLANCE RULE block in SYSTEM_PROMPT in routes/agent.ts. Keep SURVEILLANCE RULE exactly as it is — the two rules complement each other.
+TRUTHFULNESS RULE — only reference facts that appear in the PLAYER PROFILE, AVAILABLE PROGRAMS, or SOCIAL CONTEXT sections of this message. Do not infer, guess, or fabricate context about how the player has previously interacted with the club, what kind of player they are, or what they have been doing recently. If a fact isn't in the prompt, you don't know it. When in doubt, leave it out — a shorter message with no invented context is always better than a longer message with one fabricated detail.
+
+Specifically forbidden:
+- Asides that reference unstated history ("not just X", "back to Y", "instead of Z")
+- Adjectives that imply knowledge not in the prompt ("casual player", "competitive type", "regular")
+- Time references not derivable from last_visit_date ("since the holidays", "since summer")
+- Inferred motivations ("you've been wanting to", "you're looking to", "you've been meaning to")
+Replit prompt
+
+Add a TRUTHFULNESS RULE to the SYSTEM_PROMPT in routes/agent.ts.
+The eval surfaced a hallucination failure mode worth hardening against. We're adding one new rule block to the system prompt — no other changes.
+In routes/agent.ts, find the line that starts:
+SURVEILLANCE RULE — never reference what the system knows
+Immediately above that line (with a blank line of separation), insert this block verbatim:
+TRUTHFULNESS RULE — only reference facts that appear in the PLAYER PROFILE, AVAILABLE PROGRAMS, or SOCIAL CONTEXT sections of this message. Do not infer, guess, or fabricate context about how the player has previously interacted with the club, what kind of player they are, or what they have been doing recently. If a fact isn't in the prompt, you don't know it. When in doubt, leave it out — a shorter message with no invented context is always better than a longer message with one fabricated detail.
+
+Specifically forbidden:
+- Asides that reference unstated history ("not just X", "back to Y", "instead of Z")
+- Adjectives that imply knowledge not in the prompt ("casual player", "competitive type", "regular")
+- Time references not derivable from last_visit_date ("since the holidays", "since summer")
+- Inferred motivations ("you've been wanting to", "you're looking to", "you've been meaning to")
+Keep the existing SURVEILLANCE RULE block exactly as it is — the two rules are complementary. SURVEILLANCE forbids referencing things we do know (privacy/creepiness). TRUTHFULNESS forbids referencing things we don't know (anti-hallucination).
+Build and verify:
+bashpnpm -C artifacts/api-server build
+Confirm exit 0, tsc clean. Restart the dev server.
+Run one agent request through the dashboard against any real player. In the logs, the [agent] anthropic usage line's input_tokens should go up by roughly 100 tokens (the rule is ~95 tokens). If it goes up by significantly more or less than that, send back the actual delta — something else may have shifted.
+Send back:
+
+Build/restart confirmation (exit 0, tsc clean, server up)
+The new input_tokens value from one live agent run
+The message body Claude returned for that run
+
+We're not running another eval. We're sanity-checking that the prompt still produces a coherent message and that token bloat is within expectations. If the message is fine, we're done.
