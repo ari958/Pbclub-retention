@@ -1,0 +1,74 @@
+Same N+1 pattern fix as Tier 1 #4, applied to importAllPlayers.js. The toUpsert sequential UPDATE loop currently runs ~2,000 individual round trips on every nightly sync (~400s/night at current scale). Reference implementation: the parallel-batch .update() pattern in churnScore.ts.
+
+CONTEXT
+- File: artifacts/api-server/src/importAllPlayers.js
+- Bug location: lines 364–378 (the toUpsert loop) — sequential .update() per linked player
+- Reference: artifacts/api-server/src/lib/churnScore.ts uses 25-concurrent .update() batches
+- This file is .js, not .ts. Manages its own Supabase client. Same rules as before — service_role, no anon fallback.
+
+GROUND RULES
+- Only modify importAllPlayers.js. Don't touch the scheduler, the route, or any other file.
+- Preserve every existing behavior: row count semantics, error handling (per-row errors logged and counted, import continues), logging via the passed-in `log` function (which is appendJobLog from the scheduler).
+- Don't touch the byExtId classification, the new-player INSERT path, or the DUPR sync. Stay scoped to the toUpsert loop.
+- Don't reintroduce the URL-length issue. The toUpsert loop is doing UPDATEs (POST/PATCH, not GET) so URL length isn't a constraint — but if your refactor introduces a SELECT with an IN clause anywhere, chunk to 100.
+- Don't try to use upsert. The runbook noted (and the churnScore work confirmed) that partial-column upsert hits NOT NULL constraints on the players table. Stick with .update().
+
+STEP 1 — READ-BACK
+Send back:
+  a. The full toUpsert loop (lines 364–378 ish) with line numbers
+  b. The variable definitions feeding it (what's in `toUpsert`, what fields each row has)
+  c. The reference pattern from churnScore.ts — the parallel-batch update block, with line numbers
+  d. Any per-row delay or sleep call in the current loop (the runbook mentioned per-player 50ms delays in the old jobs; check)
+
+STOP after step 1 if you see anything unexpected. Otherwise (pre-approved) continue.
+
+STEP 2 — IMPLEMENT
+Replace the sequential toUpsert loop with parallel-batch .update() calls. Match the churnScore pattern:
+  - Chunk size: 25 concurrent
+  - Use Promise.all per chunk
+  - Each .update() targets a single row by id (or external_id, whichever the current code uses)
+  - Per-row errors caught individually; counted; log line per error; loop continues
+  - Aggregate counters preserved (whatever the current code reports back: updated count, error count, etc.)
+
+Keep all log lines that exist today. The shape can change (e.g. log per batch instead of per row) but the information surfaced to the scheduler should be a superset of what's there now. If the current code logs every successful update, that's fine to drop — log every error, log progress every batch, log a final summary line.
+
+STEP 3 — VERIFY
+  a. node --check artifacts/api-server/src/importAllPlayers.js — must pass
+  b. Confirm diff is contained to the file: git status
+  c. Inspect the diff yourself and verify:
+     - No new SELECT-with-IN clauses introduced (or if there are, chunked to 100)
+     - No upsert calls introduced
+     - Error handling still per-row, not whole-batch-fail
+     - Log function still being called with the right shape (the scheduler passes appendJobLog; calling pattern must match)
+
+STEP 4 — DRY-RUN VERIFICATION
+You can't run the actual import unattended (it modifies production). Two checks instead:
+
+  a. Static analysis: count round trips. The current code does N round trips for N linked players. The new code should do ceil(N/25) round trips. At 2,000 players: 2,000 → 80. Confirm the math by reading the diff.
+
+  b. Construct a fake input: write a small inline script (node -e or a temp file you delete) that calls JUST the toUpsert section with a fake supabase object whose .update() returns a resolved promise after a 5ms timeout. Pass in 100 fake rows. Confirm:
+     - Total wall-clock < 50ms (4 batches × ~5ms = ~20ms with parallelism; sequential would be 500ms)
+     - All 100 rows had .update() called on them
+     - Per-row errors are surfaced correctly: inject a rejected promise on row index 47, confirm it's logged and the other 99 still complete
+
+Don't commit the test harness. Delete after.
+
+STEP 5 — REPORT
+Send back:
+  - Diff (just the diff, not the full file)
+  - node --check result
+  - git status
+  - Static analysis: round-trip count before/after at 2,000 players
+  - Dry-run results: wall-clock and error-handling test outcomes
+  - Tier 1 follow-up status: "CLOSED" if everything passes
+
+GO-AHEAD POLICY
+Pre-approved through steps 2–5 if:
+  - Step 1 read-back doesn't surface structural surprises (e.g. toUpsert loop is wildly different from what the audit reported)
+  - node --check passes
+  - The dry-run wall-clock check shows parallelism is actually working (sequential code with Promise.all wrapped around it is a common bug that "looks parallel but isn't")
+
+If any of those fails: STOP, revert, write a note. Don't ship a "parallel" loop that's actually serial — it'd look fine in code review and only show up under load.
+
+EXPECTED OUTCOME
+Diff should be ~20 lines. node --check clean. Dry-run shows ~50ms for 100 rows (vs 500ms sequential). Status: CLOSED.

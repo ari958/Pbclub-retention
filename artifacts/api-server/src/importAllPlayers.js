@@ -361,21 +361,28 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] Classification: ${toUpsert.length} to update, ${toLink.length} to link, ${toInsert.length} to create`);
 
-  // 5a. Update already-linked players — individual UPDATE by pk to satisfy RLS
-  //     (upsert uses INSERT ON CONFLICT DO UPDATE which fails the anon key INSERT policy)
-  for (const p of toUpsert) {
-    if (await isCancelled()) throw new CancelledError();
-    const payload = { name: p.name, membership_status: p.membership_status };
-    if (p.email) payload.email = p.email;
-    const { error } = await supabase
-      .from("players")
-      .update(payload)
-      .eq("id", p.id);
-    if (error) {
-      log(`[import] UPDATE ERROR for id=${p.id}: ${error.message}`);
-      stats.errors++;
-    } else {
-      stats.updated++;
+  // 5a. Update already-linked players — parallel batches of 25
+  //     Individual UPDATE by pk; upsert avoided — partial-column upsert hits NOT NULL on players.
+  {
+    const PARALLEL = 25;
+    for (let i = 0; i < toUpsert.length; i += PARALLEL) {
+      if (await isCancelled()) throw new CancelledError();
+      const batch = toUpsert.slice(i, i + PARALLEL);
+      const results = await Promise.all(
+        batch.map((p) => {
+          const payload = { name: p.name, membership_status: p.membership_status };
+          if (p.email) payload.email = p.email;
+          return supabase.from("players").update(payload).eq("id", p.id);
+        })
+      );
+      for (let j = 0; j < results.length; j++) {
+        if (results[j].error) {
+          log(`[import] UPDATE ERROR for id=${batch[j].id}: ${results[j].error.message}`);
+          stats.errors++;
+        } else {
+          stats.updated++;
+        }
+      }
     }
   }
   if (toUpsert.length > 0) log(`[import] Updated ${stats.updated} already-linked players`);
