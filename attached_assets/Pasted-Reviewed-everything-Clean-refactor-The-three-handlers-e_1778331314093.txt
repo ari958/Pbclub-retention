@@ -1,0 +1,39 @@
+Reviewed everything. Clean refactor.
+The three handlers — exact shape we wanted. 7 lines each, identical error-handling pattern, { logger: req.log } forwarded in all three. Response wrapping preserved ({ buddies }, { upcoming }, { registrations }).
+Greps — surviving PodPlay references are all expected: helper definitions at the top of the file (lines 8, 13, 16, 30, 31), fetchPlayerRegistrations at line 72 (called by Route F's old code path, now orphaned), and Route D at lines 240/247 (staff-intro-cards, intentionally untouched). Zero matches in the three refactored routes. ✓
+tsc --noEmit — clean. ✓
+Line count — 135 lines collapsed to 21 across the three handlers. The 114 lines that disappeared were all the duplicate work we set out to eliminate.
+One thing to fix before deploy
+The greps surfaced something the prompt didn't explicitly ask Replit to look for: dead code.
+
+Line 72 references fetchEventSignupsRaw from inside fetchPlayerRegistrations (a helper)
+fetchPlayerRegistrations was the helper called by the old Route F implementation
+After the refactor, Route F calls getPlayerSocialContext directly, so fetchPlayerRegistrations likely has no callers left
+
+Same question applies to the helpers in general:
+
+fetchUpcomingEvents (line 13) — used by Route D at line 240 ✓ still called
+fetchEventSignupsRaw (line 30) — used by Route D at line 247 and by fetchPlayerRegistrations at line 72
+fetchPlayerRegistrations (likely defined around line 60-80) — was called by old Route F. Probably dead now.
+
+Dead code is cheap to leave but not free: it confuses future readers (someone will assume it's still wired up), and it's a maintenance hazard if the schema or PodPlay API changes (someone updates the live getPlayerSocialContext and forgets the dead twin in this file).
+Cleanest path: confirm what's actually dead and remove it in the same commit. Costs Replit one more grep + a delete.
+Replit prompt (small follow-up)
+Paste this:
+
+The three-handler refactor looks good. Before deploying, do one cleanup pass to remove dead code from the same file.
+Step 1 — Identify dead helpers.
+In artifacts/api-server/src/routes/socialGraph.ts, run a grep for each of the helper functions defined in this file (the ones that survived the refactor). For each one, list every call site:
+bashgrep -n "fetchUpcomingEvents\|fetchEventSignupsRaw\|fetchPlayerRegistrations" artifacts/api-server/src/routes/socialGraph.ts
+Also grep across the whole api-server/src tree to make sure nothing outside this file imports these helpers (they should be file-local, but verify):
+bashgrep -rn "fetchUpcomingEvents\|fetchEventSignupsRaw\|fetchPlayerRegistrations" artifacts/api-server/src
+Step 2 — Report back what you found.
+For each helper, tell me:
+
+Is it still called from any surviving route in this file (D, the test routes)?
+Is it imported by any other file?
+If neither: it's dead.
+
+Step 3 — Wait for my confirmation before deleting anything.
+I want to see the call-site map before we delete code. Some helpers may share signup-fetching logic between Route D and the now-removed paths; those stay. Others may be fully orphaned; those go.
+Do not delete anything yet. Send back the grep output and a one-line "alive/dead" verdict per helper.
