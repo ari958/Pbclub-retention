@@ -199,6 +199,18 @@ Make it feel warm and personal. Reference their court partners by first name and
 
   if (convErr || !conv) throw new Error(convErr?.message ?? "failed to create conversation");
 
+  // 10. Record monthly_recap row FIRST — acts as the idempotency marker.
+  // If a crash follows and the job is re-run, the existence check at the top of
+  // this function will short-circuit before generating or sending a second SMS.
+  // Trade-off: if the message INSERT below fails, the player misses this month's
+  // recap SMS. That is the correct failure mode — one missed recap beats two.
+  await supabase
+    .from("monthly_recaps")
+    .upsert(
+      { player_id: playerId, recap_month: recapKey, message_queued: true },
+      { onConflict: "player_id,recap_month", ignoreDuplicates: true }
+    );
+
   // 9. Insert message
   const { error: msgErr } = await supabase
     .from("messages")
@@ -211,14 +223,6 @@ Make it feel warm and personal. Reference their court partners by first name and
       status: "pending",
     });
   if (msgErr) throw new Error(msgErr.message);
-
-  // 10. Record monthly_recap row
-  await supabase
-    .from("monthly_recaps")
-    .upsert(
-      { player_id: playerId, recap_month: recapKey, message_queued: true },
-      { onConflict: "player_id,recap_month", ignoreDuplicates: true }
-    );
 
   return { skipped: false, message_body: messageBody, stats };
 }

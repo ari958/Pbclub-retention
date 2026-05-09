@@ -1,0 +1,133 @@
+Five items left in the backlog. Three small ordering/rule-compliance fixes from today's audits, plus two structural items from earlier tiers. Work them in order — small first, structural last. Each is independent; if one fails its checks, revert that one and continue.
+
+GROUND RULES
+- tsc / node --check after every code change. Revert and continue on failure.
+- Don't expand scope. Each item is surgical.
+- Single report at the end with diffs and a five-line status block.
+- Do not modify files outside what each item names.
+
+────────────────────────────────────────────────────────────
+ITEM 1 — monthlyRecap.ts idempotency ordering
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/lib/monthlyRecap.ts
+
+Bug: Crash window between message INSERT (~line 203) and monthly_recaps upsert (~line 218) leaves no recap_month row, so a re-run inserts a second SMS for the same player+month. Player gets two recap messages.
+
+Fix: Reorder so the monthly_recaps upsert happens BEFORE the message insert. The recap_month row acts as the idempotency marker — if it exists, the existence check at the top of the function short-circuits and the second message never gets generated.
+
+Edge case: if the recap_month upsert succeeds but the message insert fails, you have a recap_month row with no associated SMS. That's the right failure mode — the player just doesn't get that month's recap SMS, which is far better than getting two. Document this in a one-line comment near the upsert.
+
+Verify: tsc clean. Walk through three scenarios in your head:
+  1. Happy path: recap_month upsert succeeds → message insert succeeds → done
+  2. Crash after recap_month, before message: re-run sees existing recap_month → exits early → no double-send ✓
+  3. Crash before recap_month: re-run sees nothing → fully regenerates → fine ✓
+
+STATUS: CLOSED if reordered, tsc clean, scenarios walked.
+
+────────────────────────────────────────────────────────────
+ITEM 2 — postSessionFeedback.ts Twilio-before-insert ordering
+────────────────────────────────────────────────────────────
+File: artifacts/api-server/src/jobs/postSessionFeedback.ts (path approximate)
+
+Bug: Twilio SMS send (~line 192) happens before the DB INSERT (~line 202). If Twilio succeeds but the DB insert fails, the SMS is delivered but never recorded — player can reply and the inbound handler has no row to match against.
+
+Fix shape: write the message row first with status "pending" and twilio_sid null, send via Twilio, then UPDATE the row with the real twilio_sid and status "sent". Three DB ops instead of one, but the row exists from the moment Twilio is invoked.
+
+Specific requirements:
+  - The initial INSERT must include player_id (NOT NULL FK), conversation_id, body, direction "outbound", sent_at: null, status: "pending"
+  - On successful Twilio response: UPDATE the row with twilio_sid and status "sent" and sent_at: now()
+  - On Twilio failure: UPDATE the row with status "failed" and the error message in whatever error field exists. Do NOT delete the row — the row is the audit trail, even on failure.
+  - Keep the existing per-player try/catch error handling. A single failure doesn't abort the batch.
+
+Verify: tsc clean. Walk through three scenarios:
+  1. Twilio succeeds: row inserted pending → SMS sent → row updated to sent ✓
+  2. Twilio fails: row inserted pending → SMS fails → row updated to failed ✓
+  3. DB INSERT itself fails: caught by per-player try/catch, no Twilio call made, batch continues ✓
+
+If implementing this requires changing the messages table schema (e.g. there's no error field to write to): STOP and DEFER. Pick the closest existing field or just put the error in the body / status; don't add a column.
+
+STATUS: CLOSED if implemented and three scenarios verified; DEFERRED if schema change required.
+
+────────────────────────────────────────────────────────────
+ITEM 3 — postSessionFeedback.ts IN chunk size
+────────────────────────────────────────────────────────────
+File: same as Item 2.
+
+Bug: Line ~144 chunks the player IN clause at 500. Documented rule (from the churnScore work) is 100 for SELECT IN clauses to stay under Supabase's GET URL length limit (~18KB).
+
+In practice this never fires — the event has <30 attendees so a single batch covers it. But the rule violation is real and the code looks like a trap for the next person who copies the pattern.
+
+Fix: change 500 → 100. One-line edit. Add a brief comment near it citing the URL-length reason, matching the comment style used in churnScore.ts.
+
+Verify: tsc clean. Confirm no other 500-row IN clauses snuck into postSessionFeedback during today's earlier work — grep for "slice(i, i + 500)" or "chunkSize = 500" and similar patterns in this file only.
+
+STATUS: CLOSED if changed and grep confirms no other instances.
+
+────────────────────────────────────────────────────────────
+ITEM 4 — confirm Tier 4 and Tier 3 are fully closed
+────────────────────────────────────────────────────────────
+This is a bookkeeping check, not an edit. Two questions to answer:
+
+  a. Tier 4 — is anything actually unaudited? The runbook listed importAllPlayers.js (audited and N+1 fixed), monthlyRecap.ts (audited today), postSessionFeedback.ts (audited today). Run a quick sweep:
+     find artifacts/api-server/src -name "*.ts" -o -name "*.js" | xargs grep -l "supabase\.from" | sort
+     Check whether any file in that list has NOT been touched or referenced in audit work this week. Send back the list and flag anything unfamiliar.
+
+  b. Tier 3 — are there any remaining items? The known list was:
+       #7 scoreToLinkStrategy typo (closed)
+       #8 dirty player names (closed)
+       #9 sanitizeScheduledSendAt redundant ternary (closed)
+       #10 tool_use migration (closed)
+     Plus follow-ups from audits: email trim (closed today), misleading comment in importAllPlayers (fixed alongside N+1 work), the three items in this prompt (in progress).
+     Confirm nothing's been overlooked. If you find something, list it; don't fix it.
+
+STATUS: report only, no STATUS line needed.
+
+────────────────────────────────────────────────────────────
+ITEM 5 — programs canonical taxonomy migration
+────────────────────────────────────────────────────────────
+This is the largest remaining item and the most likely to surface scope. It's been alluded to throughout but never scheduled.
+
+Background: attendances.program_name is a free-text field today. Programs are referenced by name across the system. The programs table exists (0 rows, never populated) and was designed to be the canonical taxonomy. Until it's wired, program names appear under multiple variants in attendances (e.g. "Path to Advanced Intermediate - 4 Weeks" vs "Path to Advanced Intermediate") and the warm-score "exact program match" signal is fragile.
+
+This item is too big to implement in one session. The goal here is to PRODUCE A PLAN, not to implement.
+
+Step A — Survey the current state:
+  1. SELECT DISTINCT program_name FROM attendances ORDER BY program_name. Send back the list.
+  2. Group by visual similarity. How many true canonical programs are there vs how many variant strings?
+  3. SELECT DISTINCT program_type FROM attendances ORDER BY program_type. Same.
+  4. Read the programs table schema. What columns does it have? What was the design intent?
+  5. Find every place program_name is consumed — agent route (slim programs view), warm score, dashboard, sync. List them.
+
+Step B — Propose a migration plan. Three viable shapes; pick one and defend the choice:
+  Option 1: ETL pass — populate programs from distinct attendances.program_name values, add program_id FK on attendances, backfill, deprecate program_name as authoritative.
+  Option 2: Sync from PodPlay — if PodPlay has a programs/events catalog, sync that to populate programs; map attendances to it via event_id.
+  Option 3: Lightweight normalization — keep program_name as-is but add a normalize step in the sync layer (similar to normalizeName) so future imports collapse variants. Don't add programs FK; just clean the strings.
+
+For the chosen option, write a step-by-step migration plan as comments in a NEW file: artifacts/api-server/migrations/PROGRAMS_CANONICAL_PLAN.md
+  - Schema changes required
+  - Data migration steps in order
+  - Rollback strategy
+  - Estimated rows touched / downtime
+  - Risk assessment (what breaks if this goes wrong mid-migration)
+  - Open questions that need answers before implementation
+
+STATUS: PLANNED if a plan document exists with all sections filled; DEFERRED if the survey surfaces something that changes the shape of the problem (e.g. PodPlay has a programs catalog we didn't know about).
+
+────────────────────────────────────────────────────────────
+GO-AHEAD POLICY
+────────────────────────────────────────────────────────────
+Pre-approved through all five items. Each is independent — failure or defer in one doesn't block the rest.
+
+For each item, end with one of:
+  STATUS: CLOSED      — implemented, verified
+  STATUS: PLANNED     — Item 5 specifically; plan written, not implemented
+  STATUS: DEFERRED    — clean state, here's why
+  STATUS: REVERTED    — broke something, reverted, here's the cause
+
+Final summary:
+  - Five-line status block
+  - Total files touched
+  - For Item 4: list of unaudited files (if any) and unaccounted-for Tier 3 items (if any)
+  - For Item 5: which option you chose and a one-line summary of the plan
+
+If everything goes well, the backlog (excluding Twilio-gated work) is empty after this session.

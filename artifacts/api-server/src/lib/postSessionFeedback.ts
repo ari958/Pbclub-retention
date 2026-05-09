@@ -139,10 +139,10 @@ export async function sendFeedbackForEvent(
     return stats;
   }
 
-  // Fetch player details (chunked to avoid IN() limits)
+  // Fetch player details (chunked to 100 — Supabase GET URL limit ~18KB)
   const eligible: any[] = [];
-  for (let i = 0; i < playerIds.length; i += 500) {
-    const chunk = playerIds.slice(i, i + 500);
+  for (let i = 0; i < playerIds.length; i += 100) {
+    const chunk = playerIds.slice(i, i + 100);
     const { data: players } = await supabase
       .from("players")
       .select("id, name, phone, sms_opt_in, club_id, last_outbound_at")
@@ -185,29 +185,46 @@ export async function sendFeedbackForEvent(
         continue;
       }
 
-      let twilio_sid: string | null = null;
+      // Insert message row BEFORE calling Twilio — guarantees a DB row exists from
+      // the moment we invoke Twilio. If Twilio succeeds but the subsequent UPDATE
+      // fails, the row is at least auditable. If the INSERT itself fails, we skip
+      // Twilio entirely (caught by the per-player try/catch below).
+      const { data: msgRow, error: msgInsertErr } = await supabase
+        .from("messages")
+        .insert({
+          conversation_id: conv.id,
+          player_id: player.id,
+          body: messageBody,
+          direction: "outbound",
+          sent_by: "system",
+          status: "pending",
+        })
+        .select("id")
+        .single();
+
+      if (msgInsertErr || !msgRow) {
+        log(`[feedback] Failed to insert message row for player ${player.id}: ${msgInsertErr?.message}`);
+        stats.errors++;
+        continue;
+      }
+
       const sentAt = new Date().toISOString();
 
       if (twilioAvailable) {
         try {
-          twilio_sid = await sendViaTwilio(player.phone, messageBody);
+          const twilio_sid = await sendViaTwilio(player.phone, messageBody);
+          await supabase
+            .from("messages")
+            .update({ twilio_message_sid: twilio_sid, status: "sent", sent_at: sentAt })
+            .eq("id", msgRow.id);
         } catch (err: any) {
           log(`[feedback] Twilio send failed for player ${player.id}: ${err.message}`);
+          // Do NOT delete the row — it is the audit trail even on failure
+          await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
           stats.errors++;
           continue;
         }
       }
-
-      // Record the outbound message
-      await supabase.from("messages").insert({
-        conversation_id: conv.id,
-        player_id: player.id,
-        body: messageBody,
-        direction: "outbound",
-        sent_by: "system",
-        status: twilio_sid ? "sent" : "pending",
-        ...(twilio_sid ? { twilio_message_sid: twilio_sid, sent_at: sentAt } : {}),
-      });
 
       await expectReply({
         playerId: player.id,
