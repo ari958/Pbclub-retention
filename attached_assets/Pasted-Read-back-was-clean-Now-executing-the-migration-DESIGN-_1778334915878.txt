@@ -1,0 +1,83 @@
+Read-back was clean. Now executing the migration.
+
+DESIGN DECISIONS (locked, do not relitigate):
+1. Tool name: `send_retention_message`
+2. Tool schema fields: `message` (string), `recommended_programs` (string[]). Drop `reasoning` — it's never read downstream.
+3. `recommended_programs` items must be exact program name strings as they appear in AVAILABLE PROGRAMS. The downstream lookup is `p.name === firstRecommendedName` string equality. The schema description must make this explicit so Claude doesn't paraphrase.
+4. Use `tool_choice: { type: "tool", name: "send_retention_message" }` to force the tool call. No fallback to text mode.
+5. Keep `max_tokens: 1024` and the 30s timeout unchanged.
+6. The OUTPUT FORMAT block at the end of SYSTEM_PROMPT (lines ~92–98) gets deleted entirely. The tool schema is the contract now.
+7. Server-computed fields (`warm_score`, `engagement_state`) keep their existing handling — stapled onto the response body after the spread. Don't touch lines 500 and 505.
+
+CHANGES — make them in this order:
+
+Step A — Define the tool schema.
+Add a top-level `const` near SYSTEM_PROMPT (in the same file). Name it `RETENTION_MESSAGE_TOOL`. Shape:
+
+const RETENTION_MESSAGE_TOOL = {
+  name: "send_retention_message",
+  description: "Send a retention SMS to the player. Use the rules in the system prompt to construct the message and pick a recommended program.",
+  input_schema: {
+    type: "object",
+    properties: {
+      message: {
+        type: "string",
+        description: "The SMS text only — no quotes around it. Follow all tone rules, banned words, and length limits in the system prompt.",
+      },
+      recommended_programs: {
+        type: "array",
+        items: { type: "string" },
+        description: "Array of program names being recommended. Each entry MUST be the exact program name string as it appears in AVAILABLE PROGRAMS — these are used for exact string-equality lookup downstream. Do not paraphrase, abbreviate, or reformat. Typically one program; can be empty if no recommendation fits (e.g. new player welcome message).",
+      },
+    },
+    required: ["message", "recommended_programs"],
+  },
+} as const;
+
+Step B — Edit SYSTEM_PROMPT.
+Delete the entire OUTPUT FORMAT block — the line "OUTPUT FORMAT — return a JSON object with these fields:" and the JSON example that follows it. Stop the prompt at the end of the ENGAGEMENT STATE OPENERS section. Don't add any replacement language; the tool schema is the contract.
+
+Step C — Update the anthropic.messages.create call (lines 391–401).
+Add `tools: [RETENTION_MESSAGE_TOOL]` and `tool_choice: { type: "tool", name: "send_retention_message" }` to the params object. Everything else stays.
+
+Step D — Replace the JSON parsing block (lines 403–411).
+Replace with tool_use block extraction. Shape:
+
+const toolUseBlock = completion.content.find(
+  (block): block is Anthropic.ToolUseBlock => block.type === "tool_use",
+);
+if (!toolUseBlock || toolUseBlock.name !== "send_retention_message") {
+  req.log.error(
+    { stop_reason: completion.stop_reason, content_types: completion.content.map(b => b.type) },
+    "[agent] Claude did not call send_retention_message tool",
+  );
+  throw new Error("Claude did not return expected tool_use block");
+}
+agentResponse = toolUseBlock.input as { message: string; recommended_programs: string[] };
+
+Use whatever import path for the type alias is already conventional in this file. If `Anthropic.ToolUseBlock` isn't already imported, add the import. Don't invent new types — use what the SDK exports.
+
+Step E — Verify nothing downstream breaks.
+The downstream consumers are:
+- Line 428: `agentResponse.recommended_programs?.[0]` — still works, schema produces same shape
+- Line 476: `agentResponse.message` — still works
+- Line 504: `...agentResponse` spread — now spreads `{message, recommended_programs}` instead of `{message, reasoning, recommended_programs}`. The dashboard response body loses the `reasoning` field. Confirm no dashboard or test code depends on `reasoning` in the response. Run:
+
+  grep -rn "\"reasoning\"\|\.reasoning\b" artifacts/dashboard/src artifacts/api-server/src
+
+  Send back any matches before we ship. If the only match is the line we're deleting from SYSTEM_PROMPT, we're clear.
+
+Step F — Token usage check after the edit.
+After the changes are in, run one agent request against a known test player (use the same player the prior audit used if you can identify them from logs) and send back the [agent] anthropic usage log line. Compare:
+- Input tokens: should drop slightly (deleted OUTPUT FORMAT block, ~50 tokens)
+- Output tokens: should drop noticeably (no reasoning preamble, no `reasoning` field, no JSON braces/quotes/whitespace — Claude emits structured input directly)
+- Wall-clock: should drop by the output-token delta × ~25ms/token
+
+Don't bother optimizing further if numbers move the right direction. We're not chasing milliseconds.
+
+STOP CONDITIONS — pause and ask before proceeding if:
+- Step E grep returns matches outside the SYSTEM_PROMPT line we're deleting
+- The SDK doesn't export a `ToolUseBlock` type under the expected import path (use the actual exported type — don't fabricate one)
+- Step F shows token counts moved the wrong direction (something's off; don't paper over it)
+
+Otherwise: make all changes, run the test request, send back diffs + the usage log line.

@@ -88,14 +88,27 @@ FAMILIARITY RULE — you will receive a program_familiarity value for each avail
 ENGAGEMENT STATE OPENERS — vary the opener based on state passed in the player context:
   active: get straight to the recommendation. They're engaged — no re-engagement framing needed.
   lapsing: acknowledge the gap naturally without making it awkward. "Haven't seen you in a bit" is fine. "We've missed you" is not.
-  dormant: keep it light and low-pressure. One simple option. No guilt, no urgency.
+  dormant: keep it light and low-pressure. One simple option. No guilt, no urgency.`;
 
-OUTPUT FORMAT — return a JSON object with these fields:
-{
-  "message": "the SMS text only — no quotes around it",
-  "reasoning": "one sentence explaining the recommendation",
-  "recommended_programs": ["program name"]
-}`;
+const RETENTION_MESSAGE_TOOL: Anthropic.Messages.Tool = {
+  name: "send_retention_message",
+  description: "Send a retention SMS to the player. Use the rules in the system prompt to construct the message and pick a recommended program.",
+  input_schema: {
+    type: "object",
+    properties: {
+      message: {
+        type: "string",
+        description: "The SMS text only — no quotes around it. Follow all tone rules, banned words, and length limits in the system prompt.",
+      },
+      recommended_programs: {
+        type: "array",
+        items: { type: "string" },
+        description: "Array of program names being recommended. Each entry MUST be the exact program name string as it appears in AVAILABLE PROGRAMS — these are used for exact string-equality lookup downstream. Do not paraphrase, abbreviate, or reformat. Typically one program; can be empty if no recommendation fits (e.g. new player welcome message).",
+      },
+    },
+    required: ["message", "recommended_programs"],
+  },
+};
 
 router.post("/agent/run", agentRateLimit, async (req, res) => {
   const parsed = AgentRunSchema.safeParse(req.body);
@@ -393,6 +406,8 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
         model: "claude-sonnet-4-6",
         max_tokens: 1024,
         system: SYSTEM_PROMPT,
+        tools: [RETENTION_MESSAGE_TOOL],
+        tool_choice: { type: "tool", name: "send_retention_message" },
         messages: [{ role: "user", content: userMessage }],
       },
       {
@@ -400,15 +415,17 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       },
     );
 
-    const text = (completion.content[0] as { type: string; text: string }).text;
-    const start = text.indexOf("{");
-    const end = text.lastIndexOf("}");
-    if (start === -1 || end === -1 || end < start) {
-      req.log.error({ rawText: text.slice(0, 500) }, "[agent] Claude returned no JSON");
-      throw new Error("No JSON object found in Claude response");
+    const toolUseBlock = completion.content.find(
+      (block): block is Anthropic.Messages.ToolUseBlock => block.type === "tool_use",
+    );
+    if (!toolUseBlock || toolUseBlock.name !== "send_retention_message") {
+      req.log.error(
+        { stop_reason: completion.stop_reason, content_types: completion.content.map(b => b.type) },
+        "[agent] Claude did not call send_retention_message tool",
+      );
+      throw new Error("Claude did not return expected tool_use block");
     }
-    const raw = text.slice(start, end + 1);
-    agentResponse = JSON.parse(raw);
+    agentResponse = toolUseBlock.input as { message: string; recommended_programs: string[] };
     req.log.info(
       {
         input_tokens: completion.usage?.input_tokens,
