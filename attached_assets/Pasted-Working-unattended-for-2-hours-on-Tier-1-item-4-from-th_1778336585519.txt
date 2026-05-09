@@ -1,0 +1,110 @@
+Working unattended for ~2 hours on Tier 1 item #4 from the runbook: N+1 batch job optimization for `churnScore.ts` and `milestoneCheck.ts`.
+
+CONTEXT
+Both jobs run a per-player loop with multiple Supabase queries each. At current scale (~1,000 players) churn takes ~6m and milestones takes ~15m. At 5,000 players they project to 30m and 75m. The fix pattern is the same for both: bulk-fetch input data once, process in memory, write in batches. Apply the pattern to both files.
+
+GROUND RULES
+- Do not modify any file outside `artifacts/api-server/src/jobs/churnScore.ts` and `artifacts/api-server/src/jobs/milestoneCheck.ts` and their direct test fixtures (if any exist). If a refactor seems to require changes elsewhere, STOP and write a note explaining why — don't make the change.
+- Do not change the public job entry point signatures. Whatever exports these jobs today (likely a default async function or a named export consumed by the scheduler) keeps the same name, parameters, and return shape.
+- Do not change job semantics. The set of players written, the values written, the order of writes within a single player — all preserved. We're changing HOW the work happens, not WHAT it produces.
+- Use the shared Supabase singleton from `lib/supabaseClient.ts`. No inline `createClient` calls.
+- Use `appendJobLog` for log lines so progress is observable. Don't add `console.log` calls; remove any you add for debugging before finishing.
+- Don't touch the agent route, the sync layer, or the scheduler. Stay in your lane.
+
+STEP 1 — READ-BACK ONLY (no edits)
+Send back, in this order:
+  a. Full contents of `churnScore.ts` with line numbers
+  b. Full contents of `milestoneCheck.ts` with line numbers
+  c. The scheduler call sites that invoke these two jobs (just the lines that import and call them — find via `grep -rn "churnScore\|milestoneCheck" artifacts/api-server/src`)
+  d. Any test files that import either job
+  e. For each job, list every Supabase query inside the per-player loop. Format:
+       LINE NN: supabase.from("X").select(...).eq("player_id", ...)  → returns: <shape>
+     I want to see exactly which queries run per player. This is the inventory we'll bulk-replace.
+
+STOP after step 1. Do not proceed to step 2 until I've reviewed the read-back. If I haven't responded by the time you're done with step 1, that's fine — wait.
+
+(If I HAVE pre-approved continuation by saying "go ahead through all steps unattended" in this prompt: that approval is given. Continue.)
+
+STEP 2 — PLAN BEFORE EDITING
+For each job, write a short plan as a comment block at the top of the file (will be removed in step 5):
+
+  /*
+   * REFACTOR PLAN — remove before commit
+   * Bulk fetches:
+   *   - players: SELECT id, churn_risk, last_visit_date, ... FROM players WHERE club_id = ?
+   *   - attendances: SELECT player_id, attended_at, program_type FROM attendances WHERE player_id IN (?)
+   *   - <etc>
+   * In-memory processing:
+   *   - Group attendances by player_id into Map<string, Attendance[]>
+   *   - <etc>
+   * Batch writes:
+   *   - upsert players in chunks of 500
+   *   - <etc>
+   */
+
+This forces the design to be explicit before code starts moving. It also gives me something to review if I check in mid-run.
+
+STEP 3 — IMPLEMENT churnScore.ts FIRST
+Pattern:
+  1. Fetch all players for the club in one query. Select only the columns the job actually reads.
+  2. Fetch all attendances for those players in one query, with a `WHERE player_id IN (...)` or equivalent. If the player set is >1,000, chunk the IN clause to 500 IDs per query and union results.
+  3. Fetch any other inputs (messages, level_confidence, whatever the job reads) the same way — one query per table, scoped to the player set.
+  4. Build per-player lookup maps in memory: `Map<player_id, Attendance[]>`, etc.
+  5. Loop over players in memory. Compute churn score from the in-memory data. Accumulate updates into an array.
+  6. Write updates in batches via Supabase upsert with `onConflict: "id"`. Chunk to 500 rows per upsert.
+  7. Log progress every batch via `appendJobLog`. Do NOT log every player.
+
+Preserve every existing log line's intent (start, finish, total players processed, any error path). The shape of `appendJobLog` calls can change but the information surfaced should be a superset of today's.
+
+After implementing, run:
+  - `npx tsc --noEmit` — must pass clean
+  - The job locally if there's a way to invoke it (`npm run job:churn` or similar — check package.json scripts; if there's no script, don't invent one, just confirm tsc passes)
+
+If tsc fails: fix it. Don't commit broken types. If you can't fix it in 15 minutes, revert the file and STOP with a note.
+
+STEP 4 — IMPLEMENT milestoneCheck.ts
+Same pattern. The shape of "what gets fetched" will differ (milestones use player_milestones table for dedup, etc.), but the bulk-fetch / in-memory-process / batch-write structure is identical.
+
+One thing specific to milestones: the dedup against `player_milestones (player_id, milestone_type)` UNIQUE constraint. Bulk-fetch existing milestone rows once at the start; check membership in memory; only insert new rows. Do not rely on `ON CONFLICT DO NOTHING` to do per-row dedup — that's still a roundtrip per player.
+
+Same tsc + script check as step 3.
+
+STEP 5 — CLEANUP
+  - Remove the REFACTOR PLAN comment blocks from both files.
+  - Remove any temporary `console.log` debugging.
+  - Make sure no unused imports remain (`npx tsc --noEmit` will catch most; `eslint` if configured).
+  - Confirm the diff is contained to the two job files. Run `git status` and send back the output.
+
+STEP 6 — VERIFICATION RUN
+Trigger each job against the live PB Club data. The runbook lists the current baselines:
+  - churn_score:    1,159 players, 6m15s, ~324ms/player
+  - milestone_check: 1,130 players, 15m25s, ~820ms/player
+
+Run each job. Capture from the `jobs` and `job_logs` tables:
+  - Total wall-clock duration
+  - Total rows written / updated
+  - Any error rows
+
+For correctness, compare row outputs against the prior run if possible. Two checks that don't require keeping a snapshot:
+  1. Total count of updated `players.churn_score` rows should equal the count of players that had attendances or messages (i.e. eligible-for-scoring set). It should not be zero, and should not be wildly different from the prior 1,159.
+  2. Total count of new `player_milestones` rows on a fresh run should be 0 or very small (the prior run already wrote them; only newly-eligible players should fire).
+
+If churn-eligible count differs by more than ~5% from the prior baseline, STOP and report. That's a semantic regression, not a perf win.
+
+STEP 7 — REPORT
+Send back:
+  - Diff for both files (just the diff, not the full files)
+  - Wall-clock before/after for each job
+  - Per-player ms before/after for each job
+  - Row counts written for each job
+  - Any anomalies, even small ones
+
+GO-AHEAD POLICY
+You are pre-approved to proceed through steps 2–7 without checking in, AS LONG AS:
+  - tsc passes after each file edit
+  - The verification run in step 6 doesn't trip the >5% semantic regression check
+  - You don't need to modify files outside the two job files
+
+If any of those conditions fails: STOP, revert to a known-good state, and write a clear note explaining what happened and what you tried. Don't paper over a problem to "make progress." I'd rather come back to a clean state with a question than a broken state with a fix attempt.
+
+If everything goes well, the final report at step 7 is the deliverable. I'll review it when I'm back.
