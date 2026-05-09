@@ -1,0 +1,55 @@
+The agent hot path was already consolidated to call lib/socialGraph.ts:getPlayerSocialContext() directly. The three corresponding route handlers in routes/socialGraph.ts (or social-graph.ts — whichever the actual file is) still have their original implementations and duplicate the same PodPlay work when called by external consumers (dashboard, scheduler step 4, etc.).
+Refactor exactly the three route handlers below to be thin wrappers around getPlayerSocialContext. Do not change any other routes in this file — compute-buddy-pairs, staff-intro, test/compute-now, and any others stay untouched.
+Step 1 — Read the file first.
+Open artifacts/api-server/src/routes/socialGraph.ts (or social-graph.ts — use whichever exists). Identify the three route handlers:
+
+GET /buddies/:id (or /player/:id/buddies — whichever path it actually uses)
+GET /upcoming-with-buddies/:id
+GET /registrations/:id (or /player/:id/registrations)
+
+For each one, capture the exact response JSON shape the current handler returns. We need to preserve these shapes byte-for-byte since the dashboard parses them.
+Send back a quick summary before making any changes:
+
+The route paths (exact)
+The current response shape for each (just the top-level structure — e.g. { buddies: [...] } or [{...}] or whatever it is)
+Confirm lib/socialGraph.ts:getPlayerSocialContext is imported or available
+
+Wait for me to confirm the response shapes look right before refactoring. If they need projection or wrapping (e.g., the lib function returns { buddies, upcoming, registrations } as a unified object but the route returns { buddies: [...] } only) we need to make sure the wrappers do that projection correctly.
+Step 2 — After my confirmation, do the refactor.
+For each of the three handlers, replace the body with:
+
+Extract the player ID from req.params
+Call getPlayerSocialContext(playerId, { logger: req.log })
+Project out the relevant field (.buddies, .upcoming, or .registrations)
+Return it in the exact same response shape as today
+
+Example shape (adjust to match what the actual routes return):
+typescriptrouter.get("/buddies/:id", async (req, res) => {
+  try {
+    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    return res.json({ buddies: social.buddies });
+  } catch (err: any) {
+    req.log.error({ err: err.message }, "[socialGraph] /buddies failed");
+    return res.status(500).json({ error: err.message });
+  }
+});
+Use the same error-handling pattern the file already uses for its other routes — match local style.
+Step 3 — Verify and report back.
+After the refactor:
+
+Run tsc --noEmit and confirm clean compile
+Run a grep to confirm no PodPlay calls remain in the three refactored handlers — they should be calling getPlayerSocialContext only:
+
+bash   grep -n "fetchUpcomingEvents\|fetchEventSignups\|PODPLAY_BASE" artifacts/api-server/src/routes/socialGraph.ts
+Any matches that survive must be in routes we're not refactoring (compute-buddy-pairs, staff-intro, etc.). If they're inside the refactored three, that's a bug.
+
+Send back:
+
+The full diff of the file (or before/after of just the three handlers)
+The grep output
+The tsc output
+Confirmation that no other routes were modified
+
+
+
+Do not restart the server. I'll review before deploy.
