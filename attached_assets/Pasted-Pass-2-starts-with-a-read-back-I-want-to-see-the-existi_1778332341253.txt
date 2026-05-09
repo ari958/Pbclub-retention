@@ -1,0 +1,26 @@
+Pass 2 starts with a read-back. I want to see the existing implementation of the buddy pair compute before extracting it. Don't modify anything in this step.
+Step 1 — Read the full implementation of POST /social-graph/compute-buddy-pairs in routes/socialGraph.ts.
+Send back the complete handler — every line from the route declaration through its closing brace, with line numbers. Include any helper functions defined elsewhere in the file that this handler calls (if any). I need to see the whole thing before I can write the extraction prompt.
+Step 2 — Identify what the handler imports / depends on.
+Specifically:
+
+Which Supabase client is in scope? (the shared supabase import or something else?)
+Does it use req.log for logging, or a file-level logger, or both?
+Does it reference any helpers defined inside routes/socialGraph.ts (like loadPlayerMap from earlier in our session) or only externally-imported things?
+Does it use appendJobLog or any nightly_sync job state? (The read-back said no, but confirm by grepping for it inside this handler specifically.)
+
+Step 3 — Confirm the response shape.
+Today's response is reportedly { pairs_updated, pairs_above_threshold, pairs_below_threshold, upsert_errors? }. Confirm those four fields are exactly what the handler builds and returns. Note the order they're computed in (so we know what counters the function maintains internally).
+Step 4 — Check the existing lib/socialGraph.ts for collisions.
+The extraction is going to add a new exported function — likely named computeBuddyPairs() — to lib/socialGraph.ts (the same file that already has getPlayerSocialContext). Quick grep:
+bashgrep -n "computeBuddyPairs\|computePairs\|recomputeBuddyPairs" artifacts/api-server/src/lib/socialGraph.ts
+If anything already matches, tell me — I want to know if there's a stub or a half-finished version of this function already in the lib file. Likely zero matches, but worth checking.
+
+Send back:
+
+The complete handler code (all ~100 lines, verbatim, with line numbers)
+The dependency / scope notes from Step 2
+The confirmed response shape from Step 3
+The grep result from Step 4
+
+Don't modify any files. Once I have the read-back, I'll write the extraction prompt with the right level of detail.
