@@ -45,6 +45,13 @@ interface Attendance {
   attended_at: string;
 }
 
+interface BuddyRow {
+  player_id: string;
+  name: string;
+  shared_sessions: number;
+  last_shared_at: string | null;
+}
+
 interface MessageRow {
   id: string;
   body: string;
@@ -143,6 +150,10 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
   const [confidence, setConfidence] = useState<LevelConfidenceRow[]>([]);
   const [loadingConfidence, setLoadingConfidence] = useState(false);
 
+  // Court Crew (buddy pairs)
+  const [buddies, setBuddies] = useState<BuddyRow[]>([]);
+  const [buddiesLoading, setBuddiesLoading] = useState(false);
+
   // Agent inline result
   const [agentResult, setAgentResult] = useState<string | null>(null);
   const [editingResult, setEditingResult] = useState(false);
@@ -178,6 +189,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       setAttendance([]);
       setConversations([]);
       setNotesDraft("");
+      setBuddies([]);
       return;
     }
     setLoadingData(true);
@@ -231,6 +243,14 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       .then((data) => setConfidence(Array.isArray(data) ? data : []))
       .catch(() => setConfidence([]))
       .finally(() => setLoadingConfidence(false));
+
+    // Fetch Court Crew (buddy pairs) in parallel
+    setBuddiesLoading(true);
+    fetch(`/api/social-graph/player/${playerId}/buddies`)
+      .then((r) => r.ok ? r.json() : { buddies: [] })
+      .then((data) => setBuddies(data.buddies ?? []))
+      .catch(() => setBuddies([]))
+      .finally(() => setBuddiesLoading(false));
   }, [playerId]);
 
   // Taxonomy depends on clubId — waits until club is known before fetching
@@ -824,6 +844,54 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                       );
                     })}
                   </div>
+                )}
+              </div>
+
+              {/* Court Crew */}
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ display: "block", fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 8 }}>
+                  Court Crew
+                </label>
+                {buddiesLoading ? (
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>Loading…</div>
+                ) : buddies.length === 0 ? (
+                  <div style={{ fontSize: 12, color: "var(--text-tertiary)", fontStyle: "italic" }}>
+                    No regular playing partners identified yet
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginBottom: 8 }}>
+                      Players with 3+ shared sessions
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {buddies.slice(0, 5).map((b) => (
+                        <div
+                          key={b.player_id}
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            padding: "6px 10px",
+                            background: "#0f1117",
+                            border: "1px solid #30363d",
+                            borderRadius: 5,
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 12, color: "#e6edf3" }}>{b.name}</div>
+                            {b.last_shared_at && (
+                              <div style={{ fontSize: 11, color: "#8b949e", marginTop: 1 }}>
+                                Last played {relativeTime(b.last_shared_at)}
+                              </div>
+                            )}
+                          </div>
+                          <div style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "#8b949e", flexShrink: 0, marginLeft: 10 }}>
+                            {b.shared_sessions} sessions
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
                 )}
               </div>
 

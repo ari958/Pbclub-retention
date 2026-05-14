@@ -1,0 +1,168 @@
+Add a "Court Crew" section to PlayerDrawer.tsx showing each player's identified buddy pairs, then test it against real players. Three phases: build → verify API → test in UI.
+
+═══════════════════════════════════════════
+PHASE 1 — READ BEFORE TOUCHING ANYTHING
+═══════════════════════════════════════════
+
+1a. Read the full file: artifacts/dashboard/src/components/PlayerDrawer.tsx
+    Note: the line numbers for:
+    - The useEffect that fires when playerId changes (fetches level_confidence)
+    - Where level_confidence state is declared
+    - Where the level confidence section renders in the JSX
+    - The section header style used (font size, color, weight, margin)
+    - Where buddies state should be added alongside level_confidence state
+
+1b. Read: artifacts/dashboard/src/lib/types.ts
+    Check if a BuddyRow or buddy_pairs type already exists.
+
+1c. Read: artifacts/dashboard/src/lib/helpers.ts
+    Confirm that relativeTime() is exported and available.
+
+STOP — do not edit anything until you have read all three files and noted the exact line numbers above.
+
+═══════════════════════════════════════════
+PHASE 2 — VERIFY THE API ENDPOINT IS LIVE
+═══════════════════════════════════════════
+
+Before writing any frontend code, confirm the buddy API returns data.
+
+Run these two curl commands:
+
+# Get Carlota's player ID
+curl -s "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev/api/players?search=carlota" | head -c 500
+
+# Then hit the buddies endpoint with her ID
+curl -s "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev/api/social-graph/player/4703d133-9a5b-49e4-a2e7-a3953087eb0a/buddies"
+
+Expected response shape: { buddies: [{ player_id, name, shared_sessions, last_shared_at }] }
+Carlota's top buddy (Kavita) should appear with ~29 shared sessions.
+
+Also run the buddy pair resync to make sure the graph is current before testing:
+
+curl -s -X POST "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev/api/social-graph/test/compute-now"
+
+Expected: { pairs_updated: 178 } (or higher if attendance data has grown)
+
+If the buddies endpoint returns an error or empty array for Carlota, STOP and diagnose before proceeding to Phase 3.
+
+═══════════════════════════════════════════
+PHASE 3 — BUILD THE COURT CREW SECTION
+═══════════════════════════════════════════
+
+FILE TO EDIT: artifacts/dashboard/src/components/PlayerDrawer.tsx
+DO NOT EDIT any other file unless a type needs to be added to types.ts.
+
+STEP A — Add the BuddyRow interface
+If BuddyRow doesn't exist in types.ts, add it at the top of PlayerDrawer.tsx:
+
+  interface BuddyRow {
+    player_id: string;
+    name: string;
+    shared_sessions: number;
+    last_shared_at: string | null;
+  }
+
+STEP B — Add state
+Next to the existing level_confidence state declarations, add:
+
+  const [buddies, setBuddies] = useState<BuddyRow[]>([]);
+  const [buddiesLoading, setBuddiesLoading] = useState(false);
+
+STEP C — Fetch buddies in the existing playerId useEffect
+In the same useEffect that fetches level_confidence:
+- In the reset block (where !playerId clears state), add: setBuddies([]);
+- In the fetch block, fire the buddy fetch IN PARALLEL with the existing fetches — do not make it sequential.
+
+Fetch pattern:
+  setBuddiesLoading(true);
+  fetch(`/api/social-graph/player/${playerId}/buddies`)
+    .then(r => r.ok ? r.json() : { buddies: [] })
+    .then(data => setBuddies(data.buddies ?? []))
+    .catch(() => setBuddies([]))
+    .finally(() => setBuddiesLoading(false));
+
+STEP D — Render the Court Crew section
+Place the Court Crew section DIRECTLY BELOW the level confidence section in the JSX.
+
+Match the visual style of the adjacent sections exactly:
+- Section header: same font size, weight, color, margin as neighboring section headers
+- Sub-label when data is present: small muted text reading "Players with 3+ shared sessions"
+- Dark card aesthetic: bg #0f1117, border #30363d, primary text #e6edf3, muted text #8b949e, accent #E8A838
+
+Loading state:
+  Show "Loading..." in muted text while buddiesLoading is true
+
+Empty state (buddies.length === 0 and !buddiesLoading):
+  Show: "No regular playing partners identified yet" in muted text (#8b949e)
+
+Populated state — show top 5 buddies only (API returns them sorted by shared_sessions DESC):
+  Each row layout:
+    Left side: buddy name (primary text, normal weight)
+              below name: "Last played {relativeTime(last_shared_at)}" in small muted text
+              (if last_shared_at is null, omit the "last played" line)
+    Right side: "{shared_sessions} sessions" in monospace muted text
+
+  Row spacing: compact — same density as the level confidence rows above
+  No interactive elements — read-only display
+
+═══════════════════════════════════════════
+PHASE 4 — VERIFY NO TYPESCRIPT ERRORS
+═══════════════════════════════════════════
+
+After editing PlayerDrawer.tsx:
+
+  cd artifacts/dashboard && npx tsc --noEmit 2>&1 | head -40
+
+If any errors appear, fix them before proceeding. Do not move to Phase 5 with TypeScript errors.
+
+═══════════════════════════════════════════
+PHASE 5 — TEST AGAINST REAL PLAYERS
+═══════════════════════════════════════════
+
+First, look up the player IDs for the test set by querying the API:
+
+  curl -s "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev/api/social-graph/player/4703d133-9a5b-49e4-a2e7-a3953087eb0a/buddies"
+
+Then find IDs for Kerrie, Alfonso, AJ Flores, and Jared Lombach:
+
+  curl -s "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev/api/players" | python3 -c "
+import sys, json
+players = json.load(sys.stdin)
+targets = ['kerrie', 'alfonso', 'aj flores', 'jared lombach', 'carlota']
+for p in players.get('players', players if isinstance(players, list) else []):
+    name = p.get('name','').lower()
+    if any(t in name for t in targets):
+        print(p.get('id'), p.get('name'))
+"
+
+Hit the buddies endpoint for each player found and report the result:
+  - How many buddies were returned?
+  - Who is the top buddy and how many shared sessions?
+  - Did any player return 0 buddies? (If so, that's expected if they have fewer than 3 shared sessions with anyone)
+
+Expected results based on known data:
+  - Carlota (4703d133): top buddy Kavita, ~29 sessions — should show 5+ buddies
+  - Kerrie: should have some buddies given her attendance history
+  - Alfonso: should have buddies
+  - AJ Flores / Jared Lombach: may have fewer if they play less regularly
+
+Report the full curl output for each player. If any endpoint returns an error (not just empty buddies), include the full error response.
+
+═══════════════════════════════════════════
+PHASE 6 — SCREENSHOT THE DRAWER
+═══════════════════════════════════════════
+
+Take a screenshot of the dashboard with a player drawer open showing the Court Crew section populated with real buddies. Carlota's drawer is the best candidate since she has the most buddies.
+
+Open the dashboard, open Carlota's drawer, and screenshot it. The Court Crew section should appear below level confidence with real names and session counts.
+
+═══════════════════════════════════════════
+ARCHITECTURE RULES — DO NOT VIOLATE
+═══════════════════════════════════════════
+
+- DO NOT write directly to Supabase from the dashboard — reads only via the anon client
+- The buddy fetch goes to /api/social-graph/player/:id/buddies (existing API endpoint)
+- DO NOT add a new API endpoint — one already exists
+- DO NOT change any file other than PlayerDrawer.tsx (and types.ts only if BuddyRow is missing)
+- DO NOT change the fetch pattern for level_confidence — only add alongside it
+- If the buddies endpoint returns a non-200, fail silently: setBuddies([]) and hide the section loading state
