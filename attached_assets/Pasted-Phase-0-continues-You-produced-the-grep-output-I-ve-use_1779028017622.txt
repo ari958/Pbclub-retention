@@ -1,0 +1,102 @@
+Phase 0 continues. You produced the grep output; I've used it to 
+scope the work. Three additions to the bundle:
+
+  - migrations/001_clubs_slug_v2.sql  (replaces v1 — DO use v2)
+  - api-server/podplayUrls.ts          (new helper)
+  - docs/STEP_4_API_PATCHES.md         (the patch plan)
+
+═══════════════════════════════════════════════════════════════
+EXECUTION
+═══════════════════════════════════════════════════════════════
+
+STEP 1 — Run migration v2 in Supabase SQL editor
+
+The original migration never executed (slug column doesn't 
+exist). Run 001_clubs_slug_v2.sql instead — it adds slug AND 
+platform_subdomain in a single shot, so we can fix the 11 
+hardcoded "pbclub.podplay.app" sites in the same pass.
+
+Expected final notice:
+  Migration v2 complete. PB Club slug=pb-club, platform_subdomain=pbclub
+
+Verify with:
+  SELECT id, slug, platform_subdomain, name FROM clubs;
+
+Paste the result back. Do NOT proceed to Step 2 until I 
+confirm the migration ran.
+
+STEP 2 — Drop in the three new code files
+
+  artifacts/api-server/src/lib/clubResolver.ts      (from bundle)
+  artifacts/api-server/src/lib/podplayUrls.ts       (NEW from bundle)
+  artifacts/dashboard/src/lib/ClubContext.tsx       (from bundle)
+  artifacts/dashboard/src/components/ClubSwitcher.tsx (from bundle)
+
+Plus merge routes_clubs_additions.ts into 
+artifacts/api-server/src/routes/clubs.ts as previously instructed.
+
+Confirm both TypeScript compilations pass:
+  cd artifacts/api-server && npx tsc --noEmit
+  cd artifacts/dashboard && npx tsc --noEmit
+
+STEP 3 — Apply file patches per docs/STEP_4_API_PATCHES.md
+
+Read STEP_4_API_PATCHES.md in full first. Then apply patches 
+to API server files in the order listed (Files 1–14).
+
+CRITICAL — DO NOT TOUCH in this step:
+  - artifacts/api-server/src/lib/scheduler.ts   (handled in Step 7)
+  - artifacts/api-server/src/routes/agent.ts    (handled in Step 8)
+  - Any dashboard file                          (handled in Step 5)
+
+Apply patches file-by-file. After each file, run:
+  cd artifacts/api-server && npx tsc --noEmit
+
+If TypeScript breaks, do not move on — fix that file before 
+continuing. Type errors propagate; one bad file makes the 
+next ten harder to diagnose.
+
+When all API files are patched, run verification greps:
+  grep -rn "CLUB_ID" artifacts/api-server/src/
+  grep -rn "c8976e15-e002-4619-bb4b-b1a70f5cd7ab" artifacts/api-server/src/
+  grep -rn "pbclub\.podplay\.app" artifacts/api-server/src/
+
+Acceptable remaining hits — ONLY:
+  - lib/scheduler.ts (excluded by design)
+  - routes/agent.ts  (excluded by design)
+
+Any other hits = a missed site. Fix them.
+
+Paste the final grep output + tsc results.
+
+═══════════════════════════════════════════════════════════════
+RULES — REPEATING THE IMPORTANT ONES
+═══════════════════════════════════════════════════════════════
+
+1. Shared Supabase client only in .ts files. The .js files 
+   (importAllPlayers, syncEventAttendance, assembleProfile, 
+   fetchAvailablePrograms, importPhoneNumbers) keep their own 
+   clients per the runbook architectural rules.
+
+2. Cross-tenant guard on any route that accepts a player_id 
+   from URL/body — verify the player belongs to the resolved 
+   club before returning data.
+
+3. Do not "improve" anything outside Phase 0 scope. Tier 1 
+   open items (socialGraph consolidation, etc.) explicitly 
+   wait.
+
+4. When in doubt — paste the relevant code and ask. Do not 
+   guess at patterns.
+
+═══════════════════════════════════════════════════════════════
+WHAT TO REPORT BACK
+═══════════════════════════════════════════════════════════════
+
+After Step 1: SELECT result from clubs table.
+After Step 2: tsc results for both projects.
+After Step 3: final grep output + final tsc results.
+
+Then STOP. Wait for dashboard instructions (Step 5).
+
+Begin with Step 1.
