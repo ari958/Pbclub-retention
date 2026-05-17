@@ -1,0 +1,174 @@
+You are applying Phase 0 of a multi-tenant refactor to this 
+codebase. The goal is to turn the hardcoded CLUB_ID constant 
+into a request-scoped value so the system is ready to serve 
+multiple clubs. PB Club continues to work end-to-end after 
+this change with zero user-facing differences.
+
+═══════════════════════════════════════════════════════════════
+READ THESE FIRST — DO NOT SKIP
+═══════════════════════════════════════════════════════════════
+
+Read in this exact order before writing any code:
+
+1. RUNBOOK.md (in the project root or wherever it lives) — pay 
+   attention to: "Architectural rules", "Schema reference", 
+   "Write paths and how they're routed", and "Common debugging 
+   scenarios". The rules in there are non-negotiable.
+
+2. SUPABASE_SCHEMA_EXPORT.md — the current database state, 
+   relationships, RLS policies. Phase 0 adds one column and 
+   reuses everything else.
+
+3. /mnt/skills/user/pb-club-level-confidence/SKILL.md — the 
+   level confidence system. You will touch routes that read 
+   from this; the architectural rules in the skill (shared 
+   Supabase client, pagination, etc.) apply.
+
+4. The six attached Phase 0 files I'm providing in this prompt 
+   (see below). They include a step-by-step guide.
+
+═══════════════════════════════════════════════════════════════
+THE FILES — PASTE THESE INTO THE PROJECT
+═══════════════════════════════════════════════════════════════
+
+I'm providing six files. Place them as follows:
+
+A) migrations/001_clubs_slug.sql
+   → Run this in Supabase SQL Editor for project 
+     knblhxfwvebxntoshiqm. Do NOT save to the repo; it's a 
+     one-time migration.
+
+B) clubResolver.ts
+   → artifacts/api-server/src/lib/clubResolver.ts (new file)
+
+C) routes_clubs_additions.ts
+   → Merge contents into artifacts/api-server/src/routes/clubs.ts
+   → If routes/clubs.ts doesn't exist yet, create it and 
+     register the router in routes/index.ts with:
+       import clubsRouter from "./clubs";
+       router.use("/clubs", clubsRouter);
+   → Mount /by-slug/:slug BEFORE any /:id handler in the same 
+     router, or :id will swallow it.
+
+D) ClubContext.tsx
+   → artifacts/dashboard/src/lib/ClubContext.tsx (new file)
+
+E) ClubSwitcher.tsx
+   → artifacts/dashboard/src/components/ClubSwitcher.tsx (new file)
+
+F) PHASE_0_GUIDE.md
+   → docs/PHASE_0_GUIDE.md in the repo (for future reference)
+   → This is your operating manual. Reference it as you work.
+
+═══════════════════════════════════════════════════════════════
+EXECUTION PLAN — DO IN THIS EXACT ORDER
+═══════════════════════════════════════════════════════════════
+
+STEP 1 — Confirm migration ran. Run this query in Supabase and 
+paste the result back to me:
+
+  SELECT id, slug, name FROM clubs;
+
+Expected: PB Club row with slug = 'pb-club'. If the slug column 
+doesn't exist or the value is null, STOP and tell me — the 
+migration didn't run cleanly.
+
+STEP 2 — Add the four new code files (B, C, D, E above). 
+Pure additions, no existing code touched yet. Confirm the 
+TypeScript compiler is happy with each. Then run:
+
+  cd artifacts/api-server && npx tsc --noEmit
+  cd artifacts/dashboard && npx tsc --noEmit
+
+Paste any errors. If clean, continue.
+
+STEP 3 — Run these two greps and paste the FULL output back 
+to me. Do not modify anything yet:
+
+  grep -rn "CLUB_ID" artifacts/
+  grep -rn "c8976e15-e002-4619-bb4b-b1a70f5cd7ab" artifacts/
+  grep -rn '\.from("clubs")\.select.*limit(1)' artifacts/
+  grep -rn '\.from(.clubs.).select.*maybeSingle' artifacts/
+  grep -rn "pbclub\.podplay\.app" artifacts/
+  grep -rn "playpbclub\.com" artifacts/
+
+The size of this output determines the next step. STOP HERE 
+and wait for me to review before doing route audits or 
+dashboard rewiring.
+
+═══════════════════════════════════════════════════════════════
+RULES THAT APPLY THROUGHOUT
+═══════════════════════════════════════════════════════════════
+
+1. SHARED SUPABASE CLIENT ONLY in .ts files. Never inline 
+   createClient(). Import from src/lib/supabaseClient. (The 
+   .js files — syncEventAttendance.js, importAllPlayers.js, 
+   assembleProfile.js — manage their own clients; that's fine.)
+
+2. ROUTE CHANGES use the requireClub middleware pattern:
+   
+     import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+     
+     router.get("/players", requireClub, async (req, res) => {
+       const clubId = (req as ClubScopedRequest).clubId;
+       const { data } = await supabase
+         .from("players")
+         .select("*")
+         .eq("club_id", clubId)
+         ...
+     });
+
+3. CROSS-TENANT GUARD on routes that accept a player_id from 
+   the URL or body:
+   
+     const { data: player } = await supabase
+       .from("players")
+       .select("id, club_id")
+       .eq("id", playerId)
+       .eq("club_id", clubId)
+       .maybeSingle();
+     if (!player) return res.status(404).json(...);
+
+4. DASHBOARD QUERIES read clubId from useClub() context. 
+   Every useEffect that hits Supabase has club.id in the 
+   dependency array.
+
+5. DO NOT TOUCH lib/scheduler.ts or any nightly batch job 
+   YET. The fan-out-to-all-clubs change for those is the 
+   most error-prone part and we handle it carefully in a 
+   later step, not in the first pass.
+
+6. DO NOT TOUCH the agent.ts route YET. It's the hot path 
+   with timing baselines; we patch it last with a small 
+   focused edit.
+
+7. NO CODE CHANGES without showing me the grep results from 
+   STEP 3 first. The audit is mechanical but only after I 
+   see the scope.
+
+═══════════════════════════════════════════════════════════════
+WHAT TO REPORT BACK
+═══════════════════════════════════════════════════════════════
+
+After Step 1: the SELECT result.
+After Step 2: TypeScript compilation results, any errors.
+After Step 3: the FULL grep output, every line.
+
+Then STOP. Wait for instructions before continuing to the 
+route audits.
+
+═══════════════════════════════════════════════════════════════
+WHAT NOT TO DO
+═══════════════════════════════════════════════════════════════
+
+- Do not add user authentication or login screens. That's 
+  Phase 0.5.
+- Do not add RLS policies. The existing uniform RLS stays.
+- Do not "improve" anything outside Phase 0 scope.
+- Do not delete the CLUB_ID constant yet — we'll do that 
+  surgically once the routes are migrated.
+- Do not refactor the agent route, scheduler, or batch jobs.
+- Do not assume — if something is ambiguous, paste the relevant 
+  code and ask.
+
+Begin with Step 1.
