@@ -1,9 +1,9 @@
 # Pulse / PB Club — Technical Developer Documentation
 
-> Generated: 2026-05-03  
+> Updated: 2026-05-17 (Phase 0 multi-tenant refactor)  
 > Stack: React + TypeScript + Vite (dashboard) · Express 5 + Supabase (API server) · pnpm monorepo  
 > Supabase project ref: `knblhxfwvebxntoshiqm`  
-> Club ID (constant): `c8976e15-e002-4619-bb4b-b1a70f5cd7ab`
+> Club ID (PB Club): `c8976e15-e002-4619-bb4b-b1a70f5cd7ab` — no longer hardcoded in routes; resolved via `requireClub` middleware from `?clubId=` or `?slug=` query param
 
 ---
 

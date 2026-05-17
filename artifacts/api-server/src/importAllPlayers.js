@@ -7,8 +7,6 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
-const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const IPP = 100;
 const UPSERT_BATCH = 100;
 
@@ -38,18 +36,18 @@ class CancelledError extends Error {
   }
 }
 
-// ─── PodPlay fetch: all users (already paginated correctly) ───────────────────
+// ─── PodPlay fetch: all users ─────────────────────────────────────────────────
 
-async function fetchAllPodPlayUsers(isCancelled) {
+async function fetchAllPodPlayUsers(podplayBase, apiKey, isCancelled) {
   const allUsers = [];
   let page = 1;
 
   while (true) {
     if (await isCancelled()) throw new CancelledError();
 
-    const url = `${PODPLAY_BASE}/users?page=${page}&ipp=${IPP}`;
+    const url = `${podplayBase}/apis/v2/users?page=${page}&ipp=${IPP}`;
     const res = await fetch(url, {
-      headers: { "x-api-key": process.env.PODPLAY_API_KEY },
+      headers: { "x-api-key": apiKey },
     });
 
     if (!res.ok) {
@@ -70,7 +68,7 @@ async function fetchAllPodPlayUsers(isCancelled) {
   return allUsers;
 }
 
-// ─── Supabase fetch: all existing players (paginated past 1,000 row cap) ─────
+// ─── Supabase fetch: all existing players ─────────────────────────────────────
 
 async function fetchAllSupabasePlayers(log) {
   const all = [];
@@ -94,18 +92,26 @@ async function fetchAllSupabasePlayers(log) {
 }
 
 // ─── DUPR ratings sync ────────────────────────────────────────────────────────
-// Runs as a separate pass after all player upserts complete.
-// Calls GET /apis/v2/users/{external_id}/ratings, finds the DUPR item,
-// and writes doubles rating + lastUpdated to players.dupr_rating / dupr_updated_at.
-// Rate limited to ~4 req/sec (250 ms delay) — well under PodPlay's 300 req/min cap.
-// Failures are logged and skipped; never blocks the main import.
 
-export async function syncDuprRatings(log, isCancelled) {
+export async function syncDuprRatings(clubId, log = console.log, isCancelled = () => false) {
+  if (!clubId) throw new Error("syncDuprRatings requires clubId");
+
+  // Fetch club details for API key and base URL
+  const { data: club } = await supabase
+    .from("clubs")
+    .select("platform_api_key, platform_subdomain")
+    .eq("id", clubId)
+    .maybeSingle();
+  if (!club?.platform_subdomain) {
+    throw new Error(`Club ${clubId} has no platform_subdomain`);
+  }
+  const podplayBase = `https://${club.platform_subdomain}.podplay.app`;
+  const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
+
   const DELAY_MS = 250;
   const stats = { fetched: 0, updated: 0, skipped: 0, errors: 0 };
   let firstResponseLogged = false;
 
-  // Paginate all players that have a PodPlay external_id
   const players = [];
   {
     let offset = 0;
@@ -114,6 +120,7 @@ export async function syncDuprRatings(log, isCancelled) {
       const { data, error } = await supabase
         .from("players")
         .select("id, external_id")
+        .eq("club_id", clubId)
         .not("external_id", "is", null)
         .range(offset, offset + PAGE - 1);
       if (error) {
@@ -128,8 +135,8 @@ export async function syncDuprRatings(log, isCancelled) {
 
   log(`[dupr] Starting DUPR sync for ${players.length} players (250 ms delay between calls)…`);
 
-  const updates = []; // { id, dupr_rating, dupr_updated_at }
-  const seenTypes = new Set(); // track all item.type values we encounter
+  const updates = [];
+  const seenTypes = new Set();
   let firstDuprItemLogged = false;
 
   for (let i = 0; i < players.length; i++) {
@@ -137,12 +144,11 @@ export async function syncDuprRatings(log, isCancelled) {
 
     const p = players[i];
     try {
-      const res = await fetch(`${PODPLAY_BASE}/users/${p.external_id}/ratings`, {
-        headers: { "x-api-key": process.env.PODPLAY_API_KEY },
+      const res = await fetch(`${podplayBase}/apis/v2/users/${p.external_id}/ratings`, {
+        headers: { "x-api-key": apiKey },
         signal: AbortSignal.timeout(15_000),
       });
 
-      // 404 = no ratings record at all — silent skip
       if (res.status === 404) {
         stats.skipped++;
         if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped: ${stats.skipped} rated: ${updates.length}`);
@@ -160,7 +166,6 @@ export async function syncDuprRatings(log, isCancelled) {
       const data = await res.json();
       stats.fetched++;
 
-      // Track every type value we see across all players
       for (const item of (data.items ?? [])) {
         if (item.type && !seenTypes.has(item.type)) {
           seenTypes.add(item.type);
@@ -168,16 +173,13 @@ export async function syncDuprRatings(log, isCancelled) {
         }
       }
 
-      // Log full response on first successful call (any type) for shape reference
       if (!firstResponseLogged) {
         log(`[dupr] First /ratings response: ${JSON.stringify(data)}`);
         firstResponseLogged = true;
       }
 
-      // Only act on type === "DUPR" — skip CUSTOM and anything else
       const duprItem = (data.items ?? []).find(item => item.type === "DUPR");
 
-      // Log the first DUPR item we actually find so we can verify the rating field
       if (duprItem && !firstDuprItemLogged) {
         log(`[dupr] First DUPR item found (player ${p.id}): ${JSON.stringify(duprItem)}`);
         firstDuprItemLogged = true;
@@ -189,7 +191,6 @@ export async function syncDuprRatings(log, isCancelled) {
         continue;
       }
 
-      // Accept whichever numeric field is present: doubles takes priority, then singles
       const rating = duprItem.doubles ?? duprItem.singles ?? null;
       if (typeof rating !== "number") {
         log(`[dupr] DUPR item for player ${p.id} has no numeric rating — fields: ${Object.keys(duprItem).join(", ")}`);
@@ -215,8 +216,6 @@ export async function syncDuprRatings(log, isCancelled) {
   }
 
   log(`[dupr] Types seen across all players: ${[...seenTypes].join(", ")}`);
-
-
   log(`[dupr] Fetch pass complete — writing ${updates.length} ratings to DB…`);
 
   for (const u of updates) {
@@ -240,16 +239,19 @@ export async function syncDuprRatings(log, isCancelled) {
 // ─── Main import ──────────────────────────────────────────────────────────────
 
 /**
+ * @param {string} clubId
  * @param {(msg: string) => void} log
  * @param {() => boolean | Promise<boolean>} isCancelled
  * @param {boolean} skipAttendanceSync
  */
-export async function importAllPlayers(log = console.log, isCancelled = () => false, skipAttendanceSync = false) {
+export async function importAllPlayers(clubId, log = console.log, isCancelled = () => false, skipAttendanceSync = false) {
+  if (!clubId) throw new Error("importAllPlayers requires clubId");
+
   const stats = {
     processed: 0,
     created: 0,
     updated: 0,
-    linked: 0,       // matched by phone/email, external_id now set
+    linked: 0,
     errors: 0,
     duprUpdated: 0,
     duprErrors: 0,
@@ -257,12 +259,19 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     attendanceErrors: 0,
   };
 
-  // 1. Read club context for logging
+  // 1. Read club context for API key and base URL
   const { data: clubRow } = await supabase
     .from("clubs")
-    .select("id, name, scheduled_sync_time, timezone")
-    .eq("id", CLUB_ID)
+    .select("id, name, scheduled_sync_time, timezone, platform_api_key, platform_subdomain")
+    .eq("id", clubId)
     .maybeSingle();
+
+  if (!clubRow?.platform_subdomain) {
+    throw new Error(`Club ${clubId} has no platform_subdomain set`);
+  }
+
+  const podplayBase = `https://${clubRow.platform_subdomain}.podplay.app`;
+  const apiKey = clubRow.platform_api_key ?? process.env.PODPLAY_API_KEY;
 
   if (clubRow?.scheduled_sync_time) {
     log(`[import] Club: ${clubRow.name} | Scheduled sync: ${clubRow.scheduled_sync_time} ${clubRow.timezone ?? "UTC"}`);
@@ -272,7 +281,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   log(`[import] Fetching PodPlay users…`);
   let podplayUsers;
   try {
-    podplayUsers = await fetchAllPodPlayUsers(isCancelled);
+    podplayUsers = await fetchAllPodPlayUsers(podplayBase, apiKey, isCancelled);
   } catch (err) {
     if (err.name === "CancelledError") throw err;
     log(`[import] FATAL: Failed to fetch PodPlay users: ${err.message}`);
@@ -280,8 +289,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   }
   log(`[import] Fetched ${podplayUsers.length} PodPlay users across ${Math.ceil(podplayUsers.length / IPP)} page(s)`);
 
-  // 3. Pre-load all existing Supabase players into memory — one paginated fetch,
-  //    no per-player queries. Bypasses the 1,000 row cap.
+  // 3. Pre-load all existing Supabase players
   log(`[import] Loading all existing Supabase players…`);
   let existingPlayers;
   try {
@@ -292,10 +300,9 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   }
   log(`[import] Loaded ${existingPlayers.length} existing Supabase players`);
 
-  // Build lookup maps for O(1) matching
-  const byExtId = new Map();   // external_id  → player row
-  const byPhone = new Map();   // phone        → player row
-  const byEmail = new Map();   // email        → player row
+  const byExtId = new Map();
+  const byPhone = new Map();
+  const byEmail = new Map();
 
   for (const p of existingPlayers) {
     if (p.external_id) byExtId.set(p.external_id, p);
@@ -303,10 +310,10 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     if (p.email)       byEmail.set(p.email, p);
   }
 
-  // 4. Classify every PodPlay user — no per-player DB queries needed
-  const toUpsert = [];    // already linked by external_id → UPDATE via upsert
-  const toLink   = [];    // matched by phone/email        → UPDATE individual (set external_id)
-  const toInsert = [];    // brand new                     → INSERT
+  // 4. Classify every PodPlay user
+  const toUpsert = [];
+  const toLink   = [];
+  const toInsert = [];
 
   for (const user of podplayUsers) {
     if (await isCancelled()) throw new CancelledError();
@@ -320,8 +327,6 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
     const linked = byExtId.get(extId);
     if (linked) {
-      // Already linked — queue an UPDATE (name, email, membership_status).
-      // This was previously a SKIP — fixed. Store id so we UPDATE by pk, not upsert.
       toUpsert.push({
         id:                linked.id,
         name,
@@ -331,7 +336,6 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
       continue;
     }
 
-    // Try to match by phone, then email, for players not yet linked
     const phoneMatch = phone ? byPhone.get(phone) : null;
     const emailMatch = email ? byEmail.get(email) : null;
     const match = phoneMatch || emailMatch;
@@ -344,13 +348,12 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
         email,
         membership_status: membership,
       });
-      // Keep Maps consistent so a second PodPlay user doesn't double-match
       byExtId.set(extId, match);
       if (phone) byPhone.set(phone, match);
       if (email) byEmail.set(email, match);
     } else {
       toInsert.push({
-        club_id:           CLUB_ID,
+        club_id:           clubId,
         external_id:       extId,
         name,
         phone,
@@ -362,8 +365,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] Classification: ${toUpsert.length} to update, ${toLink.length} to link, ${toInsert.length} to create`);
 
-  // 5a. Update already-linked players — parallel batches of 25
-  //     Individual UPDATE by pk; upsert avoided — partial-column upsert hits NOT NULL on players.
+  // 5a. Update already-linked players
   {
     const PARALLEL = 25;
     for (let i = 0; i < toUpsert.length; i += PARALLEL) {
@@ -388,7 +390,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   }
   if (toUpsert.length > 0) log(`[import] Updated ${stats.updated} already-linked players`);
 
-  // 5b. Link players matched by phone/email (individual updates — needs id)
+  // 5b. Link players matched by phone/email
   for (const p of toLink) {
     if (await isCancelled()) throw new CancelledError();
     const updatePayload = { external_id: p.external_id, membership_status: p.membership_status, name: p.name };
@@ -408,7 +410,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     }
   }
 
-  // 5c. Batch insert brand-new players — use supabaseAdmin (service role) to bypass RLS INSERT policy
+  // 5c. Batch insert brand-new players
   if (toInsert.length > 0) {
     for (let i = 0; i < toInsert.length; i += UPSERT_BATCH) {
       if (await isCancelled()) throw new CancelledError();
@@ -429,10 +431,10 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
   log(`[import] ── Player import complete ──`);
   log(`[import] Processed: ${stats.processed} | Updated: ${stats.updated} | Linked: ${stats.linked} | Created: ${stats.created} | Errors: ${stats.errors}`);
 
-  // 5d. DUPR ratings sync — separate pass, never blocks import on failure
+  // 5d. DUPR ratings sync
   log(`[import] ── Starting DUPR ratings sync ──`);
   try {
-    const duprStats = await syncDuprRatings(log, isCancelled);
+    const duprStats = await syncDuprRatings(clubId, log, isCancelled);
     stats.duprUpdated = duprStats.updated;
     stats.duprErrors  = duprStats.errors;
   } catch (err) {
@@ -440,7 +442,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
     log(`[import] DUPR sync failed (non-fatal): ${err.message}`);
   }
 
-  // 6. Sync attendance for all linked players (skipped when called from nightly chain)
+  // 6. Sync attendance
   if (skipAttendanceSync) {
     log(`[import] Skipping attendance sync (handled by nightly event sync step)`);
     return stats;
@@ -450,7 +452,6 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
 
   log(`[import] Starting attendance sync…`);
 
-  // Paginate linked players to bypass 1,000 row cap
   const linkedPlayers = [];
   {
     let offset = 0;
@@ -459,6 +460,7 @@ export async function importAllPlayers(log = console.log, isCancelled = () => fa
       const { data, error } = await supabase
         .from("players")
         .select("id, external_id")
+        .eq("club_id", clubId)
         .not("external_id", "is", null)
         .range(offset, offset + PAGE - 1);
       if (error) {

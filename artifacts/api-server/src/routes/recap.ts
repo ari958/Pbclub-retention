@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getJob } from "../lib/jobStore";
 import { generateMonthlyRecap, runMonthlyRecapBatch } from "../lib/monthlyRecap";
 import { checkPlayerMilestones, runMilestoneBatch } from "../lib/milestoneCheck";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
@@ -23,7 +24,12 @@ const MonthlyBatchSchema = z.object({
   year:  z.number().int().min(2020).optional(),
 });
 
-router.post("/recap/monthly", async (req, res) => {
+// NOTE: clubId is resolved here and ready for when runMonthlyRecapBatch is
+// updated in Step 7 to accept clubId.
+router.post("/recap/monthly", requireClub, async (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _clubId = (req as ClubScopedRequest).clubId; // TODO Step 7: pass to runMonthlyRecapBatch
+
   const parsed = MonthlyBatchSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -51,7 +57,7 @@ const MonthlyTestSchema = z.object({
   dry_run: z.boolean().optional().default(true),
 });
 
-router.post("/recap/monthly/test", async (req, res) => {
+router.post("/recap/monthly/test", requireClub, async (req, res) => {
   const parsed = MonthlyTestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -71,7 +77,12 @@ router.post("/recap/monthly/test", async (req, res) => {
 
 // ─── Milestones ────────────────────────────────────────────────────────────────
 
-router.post("/recap/milestones", async (req, res) => {
+// NOTE: clubId is resolved here and ready for when runMilestoneBatch is
+// updated in Step 7 to accept clubId.
+router.post("/recap/milestones", requireClub, async (req, res) => {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const _clubId = (req as ClubScopedRequest).clubId; // TODO Step 7: pass to runMilestoneBatch
+
   runMilestoneBatch().catch((err) =>
     req.log.error({ err }, "[recap] milestone batch error")
   );
@@ -88,7 +99,7 @@ const MilestoneTestSchema = z.object({
   dry_run: z.boolean().optional().default(true),
 });
 
-router.post("/recap/milestones/test", async (req, res) => {
+router.post("/recap/milestones/test", requireClub, async (req, res) => {
   const parsed = MilestoneTestSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });

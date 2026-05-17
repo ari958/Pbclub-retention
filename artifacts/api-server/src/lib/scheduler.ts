@@ -230,7 +230,7 @@ export function startScheduler(): void {
   setInterval(async () => {
     try {
       const fbLog = (msg: string) => logger.info(msg);
-      const result = await sendFeedbackForRecentEvents(fbLog, 0.5);
+      const result = await sendFeedbackForRecentEvents(undefined, fbLog, 0.5);
       // windowHours = 0.5 = look back 30 minutes only
       if (result.eventsFound > 0) {
         logger.info(result, "[feedback-poller] Feedback texts triggered");

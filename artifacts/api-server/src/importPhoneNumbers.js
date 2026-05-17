@@ -2,12 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
-  process.env.SUPABASE_ANON_KEY
+  process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const DELAY_MS = 200;
-const BATCH_SIZE = 500; // fetch players in pages to avoid huge payloads
+const BATCH_SIZE = 500;
 
 class CancelledError extends Error {
   constructor() {
@@ -18,28 +17,21 @@ class CancelledError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * Normalise a raw phone string from PodPlay to E.164 +1XXXXXXXXXX.
- * PodPlay already returns E.164 for US numbers; this is a safety net.
- */
 function formatPhone(raw) {
   if (!raw) return null;
   const digits = raw.replace(/\D/g, "");
   if (digits.length === 10) return `+1${digits}`;
   if (digits.length === 11 && digits.startsWith("1")) return `+${digits}`;
-  // Non-US or unexpected — store as-is but only if it looks phone-like
   if (digits.length >= 7) return raw.startsWith("+") ? raw : `+${digits}`;
   return null;
 }
 
 /**
  * Fetches phone number from PodPlay for a single user.
- * Returns { phoneNumber, smsOptIn } or null on 404.
- * Retries once on 429 after a 3 second back-off.
  */
-async function fetchPhoneNumber(externalId) {
-  const url = `${PODPLAY_BASE}/users/${externalId}/phone-number`;
-  const headers = { "x-api-key": process.env.PODPLAY_API_KEY };
+async function fetchPhoneNumber(podplayBase, apiKey, externalId) {
+  const url = `${podplayBase}/apis/v2/users/${externalId}/phone-number`;
+  const headers = { "x-api-key": apiKey };
 
   let res = await fetch(url, { headers });
 
@@ -57,18 +49,35 @@ async function fetchPhoneNumber(externalId) {
 /**
  * Import phone numbers for all players that have an external_id but no phone.
  *
+ * @param {string} clubId
  * @param {(msg: string) => void} log
  * @param {() => boolean} isCancelled
  */
-export async function importPhoneNumbers(log = console.log, isCancelled = () => false) {
+export async function importPhoneNumbers(clubId, log = console.log, isCancelled = () => false) {
+  if (!clubId) throw new Error("importPhoneNumbers requires clubId");
+
   const stats = {
     total: 0,
     updated: 0,
-    skipped: 0,   // phoneNumber was null in PodPlay response
+    skipped: 0,
     errors: 0,
   };
 
-  // ── Load all eligible players in pages ────────────────────────────────────
+  // Fetch club details
+  const { data: club } = await supabase
+    .from("clubs")
+    .select("platform_api_key, platform_subdomain")
+    .eq("id", clubId)
+    .maybeSingle();
+
+  if (!club?.platform_subdomain) {
+    throw new Error(`Club ${clubId} has no platform_subdomain`);
+  }
+
+  const podplayBase = `https://${club.platform_subdomain}.podplay.app`;
+  const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
+
+  // Load all eligible players in pages
   log("[phone-import] Querying players without phone numbers…");
 
   const players = [];
@@ -79,6 +88,7 @@ export async function importPhoneNumbers(log = console.log, isCancelled = () => 
     const { data, error } = await supabase
       .from("players")
       .select("id, name, external_id")
+      .eq("club_id", clubId)
       .not("external_id", "is", null)
       .is("phone", null)
       .range(from, from + pageSize - 1);
@@ -99,7 +109,6 @@ export async function importPhoneNumbers(log = console.log, isCancelled = () => 
     return stats;
   }
 
-  // ── Process each player ───────────────────────────────────────────────────
   for (let i = 0; i < players.length; i++) {
     if (await isCancelled()) throw new CancelledError();
 
@@ -110,7 +119,7 @@ export async function importPhoneNumbers(log = console.log, isCancelled = () => 
 
     let apiData;
     try {
-      apiData = await fetchPhoneNumber(player.external_id);
+      apiData = await fetchPhoneNumber(podplayBase, apiKey, player.external_id);
     } catch (err) {
       log(`[phone-import] ${progress} ERROR for "${player.name}": ${err.message}`);
       stats.errors++;
@@ -125,7 +134,6 @@ export async function importPhoneNumbers(log = console.log, isCancelled = () => 
       continue;
     }
 
-    // sms_opt_in = true when PodPlay has a phone number on record
     const sms_opt_in = true;
     const last4 = phone.slice(-4);
 

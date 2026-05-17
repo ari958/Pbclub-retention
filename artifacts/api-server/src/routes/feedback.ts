@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { sendFeedbackForEvent, sendFeedbackForRecentEvents } from "../lib/postSessionFeedback";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
@@ -9,10 +10,9 @@ const router: IRouter = Router();
  * Body (optional): { event_id: string }
  *   - With event_id: process that specific event only
  *   - Without:       process all events that ended in the last 2 hours
- *
- * Returns 202 immediately; processing runs in the background.
  */
-router.post("/feedback/send-post-session", async (req, res) => {
+router.post("/feedback/send-post-session", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { event_id } = req.body as { event_id?: string };
   const log = (msg: string) => req.log.info(msg);
 
@@ -26,9 +26,9 @@ router.post("/feedback/send-post-session", async (req, res) => {
   (async () => {
     try {
       if (event_id) {
-        await sendFeedbackForEvent(event_id, log);
+        await sendFeedbackForEvent(event_id, clubId, log);
       } else {
-        await sendFeedbackForRecentEvents(log);
+        await sendFeedbackForRecentEvents(clubId, log);
       }
     } catch (err: any) {
       req.log.error({ err }, "[feedback] send-post-session background error");
@@ -38,12 +38,8 @@ router.post("/feedback/send-post-session", async (req, res) => {
 
 // ─── Test / dev routes ────────────────────────────────────────────────────────
 
-/**
- * POST /api/feedback/test/send-event
- * Body: { event_id: string }
- * Sends feedback texts for a specific event immediately.
- */
-router.post("/feedback/test/send-event", async (req, res) => {
+router.post("/feedback/test/send-event", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { event_id } = req.body as { event_id?: string };
 
   if (!event_id) {
@@ -53,7 +49,7 @@ router.post("/feedback/test/send-event", async (req, res) => {
 
   try {
     const log = (msg: string) => req.log.info(msg);
-    const stats = await sendFeedbackForEvent(event_id, log);
+    const stats = await sendFeedbackForEvent(event_id, clubId, log);
     res.json({ success: true, stats });
   } catch (err: any) {
     req.log.error({ err }, "[feedback/test] send-event failed");
@@ -61,15 +57,11 @@ router.post("/feedback/test/send-event", async (req, res) => {
   }
 });
 
-/**
- * POST /api/feedback/test/poll-now
- * Triggers a 2-hour lookback immediately — useful for testing against
- * events that already ended without waiting for the 30-minute poller.
- */
-router.post("/feedback/test/poll-now", async (req, res) => {
+router.post("/feedback/test/poll-now", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
     const log = (msg: string) => req.log.info(msg);
-    const result = await sendFeedbackForRecentEvents(log, 2);
+    const result = await sendFeedbackForRecentEvents(clubId, log, 2);
     res.json({ success: true, result });
   } catch (err: any) {
     req.log.error({ err }, "[feedback/test] poll-now failed");

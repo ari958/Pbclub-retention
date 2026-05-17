@@ -12,12 +12,10 @@ function getSupabase() {
   return _supabase;
 }
 
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const SYNC_START_DATE = "2025-01-01T00:00:00.000Z";
 const IPP = 100;
 const UPSERT_BATCH = 100;
 const SIGNUP_FETCH_DELAY_MS = 300;
-const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const DEFAULT_TIMEZONE = "America/New_York";
 
 // Canonical skill-level tags on PodPlay events — order matters (most specific first)
@@ -31,10 +29,6 @@ const SKILL_LEVEL_TAGS = [
   "All Level",
 ];
 
-/**
- * Return the first skill-level tag found in an event's tags array, or null.
- * Identical logic to fetchAvailablePrograms.js — keep in sync if tags change.
- */
 function extractSkillLevel(tags) {
   if (!Array.isArray(tags)) return null;
   for (const level of SKILL_LEVEL_TAGS) {
@@ -43,39 +37,18 @@ function extractSkillLevel(tags) {
   return null;
 }
 
-// ─── Program name normalisation ───────────────────────────────────────────────
-// Only accidental formatting differences belong here — intentional program
-// distinctions (pricing, duration) must NOT be collapsed.
 const PROGRAM_NAME_CANONICAL_MAP = {
   "Advanced Intermediate Open Play (3.50-3.99)": "Advanced Intermediate Open Play (3.5-3.99)",
   "Advanced Intermediate Open Play 3.5+":        "Advanced Intermediate Open Play (3.5-3.99)",
 };
 
-// Track which (raw → canonical) pairs have already been logged so we only emit
-// one line per unique mapping per process lifetime.
 const _programNameLoggedPairs = new Set();
 
-/**
- * Normalise a PodPlay event name before writing to the attendances table.
- *  1. Trims leading/trailing whitespace.
- *  2. Collapses runs of internal whitespace to a single space.
- *  3. Applies PROGRAM_NAME_CANONICAL_MAP for known DUPR-range formatting variants.
- *
- * Logs on the first occurrence of each (input → output) pair.
- *
- * @param {string|null|undefined} name - raw event.name from PodPlay
- * @param {function} log - the sync job log callback
- * @returns {string|null}
- */
 function normalizeProgramName(name, log) {
   if (name === null || name === undefined) return name;
 
   const original = name;
-
-  // Step 1: trim + collapse internal whitespace
   let normalized = name.trim().replace(/\s{2,}/g, " ");
-
-  // Step 2: canonical replacements
   const canonical = PROGRAM_NAME_CANONICAL_MAP[normalized];
   if (canonical) normalized = canonical;
 
@@ -90,8 +63,6 @@ function normalizeProgramName(name, log) {
   return normalized;
 }
 
-// Win-back window: if a player attends within this many days of receiving a message,
-// count it as a conversion
 const WINBACK_WINDOW_DAYS = 14;
 
 function toLocalDateString(isoString, timezone) {
@@ -110,15 +81,15 @@ class CancelledError extends Error {
   }
 }
 
-async function fetchEventPage(page, endTime, startTime = SYNC_START_DATE) {
+async function fetchEventPage(podplayBase, apiKey, page, endTime, startTime = SYNC_START_DATE) {
   const url =
-    `${PODPLAY_BASE}/events` +
+    `${podplayBase}/apis/v2/events` +
     `?startTime=${encodeURIComponent(startTime)}` +
     `&endTime=${encodeURIComponent(endTime)}` +
     `&page=${page}&ipp=${IPP}`;
 
   const res = await fetch(url, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY },
+    headers: { "x-api-key": apiKey },
   });
   if (!res.ok) throw new Error(`PodPlay GET /events page=${page} returned ${res.status}: ${await res.text()}`);
   return res.json();
@@ -126,10 +97,10 @@ async function fetchEventPage(page, endTime, startTime = SYNC_START_DATE) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function fetchEventSignups(eventId) {
-  const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
+async function fetchEventSignups(podplayBase, apiKey, eventId) {
+  const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
   const attempt = async () =>
-    fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY } });
+    fetch(url, { headers: { "x-api-key": apiKey } });
 
   let res = await attempt();
   if (res.status === 429) { await sleep(3000); res = await attempt(); }
@@ -141,16 +112,10 @@ async function fetchEventSignups(eventId) {
 
 // ─── Win-back attribution ─────────────────────────────────────────────────────
 
-/**
- * For a player who just attended an event, check if they received an outbound
- * message while lapsing/dormant within the win-back window. If so, mark the
- * message as converted and update the player's engagement state.
- */
 async function checkAndMarkWinback(playerId, attendedAt, log) {
   const attendedDate = new Date(attendedAt);
   const windowStart = new Date(attendedDate.getTime() - WINBACK_WINDOW_DAYS * 86400000);
 
-  // Find conversations for this player triggered during lapsing/dormant
   const { data: convs } = await getSupabase()
     .from("conversations")
     .select("id, triggered_by")
@@ -161,7 +126,6 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
 
   const convIds = convs.map((c) => c.id);
 
-  // Find an outbound message sent in the win-back window with no conversion yet
   const { data: msgs } = await getSupabase()
     .from("messages")
     .select("id, sent_at")
@@ -176,7 +140,6 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
 
   if (!msgs?.length) return false;
 
-  // Mark the message as converted
   await getSupabase()
     .from("messages")
     .update({ converted_at: attendedAt })
@@ -186,14 +149,13 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   return true;
 }
 
-// Signup statuses that represent actual confirmed attendance.
-// INVALID = dropped/rejected registration; DRAFT = not yet confirmed.
-// Anything not in this set is excluded from the attendance record.
 const VALID_SIGNUP_STATUSES = new Set(["CONFIRMED", "CHECKED_IN"]);
 
 // ─── Main sync ────────────────────────────────────────────────────────────────
 
-export async function syncEventAttendance(log = console.log, isCancelled = () => false, sinceDays = 0) {
+export async function syncEventAttendance(clubId, log = console.log, isCancelled = () => false, sinceDays = 0) {
+  if (!clubId) throw new Error("syncEventAttendance requires clubId");
+
   const stats = {
     eventsScanned: 0,
     eventsPast: 0,
@@ -206,16 +168,22 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
     errors: 0,
   };
 
-  // Step 0: Resolve club timezone
+  // Step 0: Resolve club details
   const { data: clubRow } = await getSupabase()
     .from("clubs")
-    .select("timezone")
-    .eq("id", CLUB_ID)
+    .select("platform_api_key, platform_subdomain, timezone")
+    .eq("id", clubId)
     .maybeSingle();
-  const clubTimezone = clubRow?.timezone ?? DEFAULT_TIMEZONE;
+
+  if (!clubRow) throw new Error(`No club with id=${clubId}`);
+  if (!clubRow.platform_subdomain) throw new Error(`Club ${clubId} has no platform_subdomain`);
+
+  const podplayBase = `https://${clubRow.platform_subdomain}.podplay.app`;
+  const apiKey = clubRow.platform_api_key ?? process.env.PODPLAY_API_KEY;
+  const clubTimezone = clubRow.timezone ?? DEFAULT_TIMEZONE;
   log(`[sync/events] Using timezone: ${clubTimezone}`);
 
-  // Step 1: Build player lookup map — paginate to bypass Supabase's 1,000 row cap
+  // Step 1: Build player lookup map
   log("[sync/events] Loading players from Supabase…");
   const allPlayers = [];
   {
@@ -225,6 +193,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       const { data, error } = await getSupabase()
         .from("players")
         .select("id, external_id, name, last_visit_date")
+        .eq("club_id", clubId)
         .not("external_id", "is", null)
         .range(offset, offset + PAGE - 1);
       if (error) throw new Error(`Failed to load players (offset ${offset}): ${error.message}`);
@@ -235,10 +204,9 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
   }
 
   const playerMap = new Map(allPlayers.map((p) => [p.external_id, p]));
-  log(`[sync/events] Loaded ${playerMap.size} linked players into lookup map (${Math.ceil(playerMap.size / 1000)} page(s))`);
+  log(`[sync/events] Loaded ${playerMap.size} linked players into lookup map`);
 
-  // Track which players got new attendances this sync for win-back checks
-  const newAttendancesByPlayer = new Map(); // player_id -> most recent attended_at
+  const newAttendancesByPlayer = new Map();
 
   // Step 2: Paginate through all past events
   const endTime = new Date().toISOString();
@@ -277,7 +245,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
     let pageData;
     try {
-      pageData = await fetchEventPage(page, endTime, syncStartTime);
+      pageData = await fetchEventPage(podplayBase, apiKey, page, endTime, syncStartTime);
     } catch (err) {
       log(`[sync/events] ERROR fetching events page ${page}: ${err.message}`);
       stats.errors++;
@@ -305,7 +273,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
       let signups;
       try {
-        signups = await fetchEventSignups(event.id);
+        signups = await fetchEventSignups(podplayBase, apiKey, event.id);
       } catch (err) {
         log(`[sync/events] ERROR fetching signups for event ${event.id} (${event.name}): ${err.message}`);
         stats.errors++;
@@ -324,8 +292,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         const player = playerMap.get(externalId);
         if (!player) { unmatched++; continue; }
 
-        // Skip signups that aren't confirmed attendance — INVALID means canceled
-        // or rejected registration; DRAFT means not yet confirmed.
         const signupStatus = (signup.status ?? "").toUpperCase();
         if (signupStatus && !VALID_SIGNUP_STATUSES.has(signupStatus)) {
           unmatched++;
@@ -333,9 +299,8 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         }
 
         matched++;
-        const attendedAt = event.startTime; // Full ISO timestamp; preserves time-of-day for playerTiming
+        const attendedAt = event.startTime;
 
-        // Map session type from structured PodPlay field (not from tags/program name)
         const rawSessionType = event.sessionType ?? null;
         const SESSION_TYPE_WHITELIST = new Set(["clinic", "open_play", "drilling", "trial", "intro"]);
         const session_type =
@@ -343,7 +308,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
             ? rawSessionType.toLowerCase()
             : null;
 
-        // Real booking timestamp — nested inside signup.summary.invitation.createdDate
         const bookedAt = signup.summary?.invitation?.createdDate ?? null;
 
         pendingUpserts.push({
@@ -357,7 +321,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
           booked_at: bookedAt,
         });
 
-        // Track newest attendance per player for win-back check
         const existing = newAttendancesByPlayer.get(player.id);
         if (!existing || attendedAt > existing) {
           newAttendancesByPlayer.set(player.id, attendedAt);
@@ -385,7 +348,7 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
 
   await flushUpserts();
 
-  // Step 3: Update last_visit_date + check win-backs + cancel pending messages
+  // Step 3: Update last_visit_date + check win-backs
   log("[sync/events] Updating last_visit_date and checking win-backs…");
   let visitUpdates = 0;
 
@@ -401,7 +364,6 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
       .maybeSingle();
 
     if (latest?.attended_at) {
-      // last_visit_date is a date column — project the timestamp to a local calendar date
       const localDate = toLocalDateString(latest.attended_at, clubTimezone);
       await getSupabase()
         .from("players")
@@ -409,21 +371,18 @@ export async function syncEventAttendance(log = console.log, isCancelled = () =>
         .eq("id", player.id);
       visitUpdates++;
 
-      // Recompute timing profile overnight so it's warm when the agent runs
       try {
         await computePlayerTiming(player.id, true);
       } catch (err) {
         log(`[sync/events] WARN: computePlayerTiming failed for ${player.id}: ${err?.message ?? err}`);
       }
 
-      // Win-back check: only for players who got a new attendance this sync
       const newAttendance = newAttendancesByPlayer.get(player.id);
       if (newAttendance) {
         const wasWinback = await checkAndMarkWinback(player.id, newAttendance, log);
         if (wasWinback) {
           stats.winbacksDetected++;
 
-          // Cancel any pending queued messages — player is already re-engaged
           const { data: convs } = await getSupabase()
             .from("conversations")
             .select("id")

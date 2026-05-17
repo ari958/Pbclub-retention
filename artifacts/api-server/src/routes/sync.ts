@@ -9,6 +9,7 @@ import { runNightlyChain } from "../lib/scheduler";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { computeChurnScore, computeChurnScoreAndReturn, runChurnScoreBatch, JOB_CHURN } from "../lib/churnScore";
 import { supabase } from "../lib/supabaseClient";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
@@ -17,8 +18,6 @@ const STALE_HOURS = 6;
 
 const JOB_SYNC_ALL    = "sync_all";
 const JOB_SYNC_EVENTS = "sync_events";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -32,9 +31,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
-// ─── Background sync runner ───────────────────────────────────────────────────
-
-async function runSyncAll() {
+async function runSyncAll(clubId: string) {
   const staleThreshold = new Date(
     Date.now() - STALE_HOURS * 60 * 60 * 1000
   ).toISOString();
@@ -42,10 +39,10 @@ async function runSyncAll() {
   let players: any[] = [];
   let hasLastSyncedAt = true;
 
-  // Probe whether last_synced_at column exists with a single-row check
   const probe = await supabase
     .from("players")
     .select("id, external_id, last_synced_at")
+    .eq("club_id", clubId)
     .not("external_id", "is", null)
     .limit(1);
 
@@ -57,6 +54,7 @@ async function runSyncAll() {
       const { data, error } = await supabase
         .from("players")
         .select("id, external_id")
+        .eq("club_id", clubId)
         .not("external_id", "is", null)
         .range(offset, offset + 999);
       if (error) throw new Error(error.message);
@@ -73,6 +71,7 @@ async function runSyncAll() {
       const { data, error } = await supabase
         .from("players")
         .select("id, external_id, last_synced_at")
+        .eq("club_id", clubId)
         .not("external_id", "is", null)
         .range(offset, offset + 999);
       if (error) throw new Error(error.message);
@@ -95,7 +94,6 @@ async function runSyncAll() {
   let timeouts = 0;
 
   for (let i = 0; i < eligible.length; i++) {
-    // Check cancellation flag in DB
     if (await isCancelled(JOB_SYNC_ALL)) {
       await appendJobLog(JOB_SYNC_ALL, "Cancelled — stopping after current player");
       throw Object.assign(new Error("Sync cancelled by operator"), { name: "CancelledError" });
@@ -136,7 +134,8 @@ const SyncPlayerSchema = z.object({
   external_id: z.string().min(1, "external_id is required"),
 });
 
-router.post("/sync/player", async (req, res) => {
+router.post("/sync/player", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const parsed = SyncPlayerSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -147,6 +146,19 @@ router.post("/sync/player", async (req, res) => {
   }
 
   const { player_id, external_id } = parsed.data;
+
+  // Cross-tenant guard
+  const { data: player } = await supabase
+    .from("players")
+    .select("id")
+    .eq("id", player_id)
+    .eq("club_id", clubId)
+    .maybeSingle();
+  if (!player) {
+    res.status(404).json({ error: "Player not found in this club" });
+    return;
+  }
+
   try {
     const result = await syncSinglePlayer(player_id, external_id);
     req.log.info({ player_id, external_id, ...result }, "Manual player sync completed");
@@ -158,7 +170,8 @@ router.post("/sync/player", async (req, res) => {
   }
 });
 
-router.post("/sync/all", async (_req, res) => {
+router.post("/sync/all", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_SYNC_ALL, { withLogs: true });
 
   if (current.status === "running") {
@@ -179,7 +192,7 @@ router.post("/sync/all", async (_req, res) => {
     startedAt: new Date().toISOString(),
   });
 
-  runSyncAll()
+  runSyncAll(clubId)
     .then(async (stats) => {
       await finishJob(JOB_SYNC_ALL, "done", stats);
       await appendJobLog(JOB_SYNC_ALL, `Done — synced=${stats.synced} skipped=${stats.skipped} errors=${stats.errors} timeouts=${stats.timeouts}`);
@@ -229,7 +242,8 @@ router.get("/sync/status", async (_req, res) => {
 
 // ─── Event-centric sync ───────────────────────────────────────────────────────
 
-router.post("/sync/events", async (_req, res) => {
+router.post("/sync/events", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_SYNC_EVENTS);
 
   if (current.status === "running") {
@@ -242,6 +256,7 @@ router.post("/sync/events", async (_req, res) => {
   (async () => {
     try {
       const stats = await syncEventAttendance(
+        clubId,
         (msg: string) => appendJobLog(JOB_SYNC_EVENTS, msg),
         () => isCancelled(JOB_SYNC_EVENTS)
       );
@@ -318,7 +333,8 @@ router.get("/sync/nightly/status", async (_req, res) => {
 
 const JOB_CONFIDENCE = "compute_confidence";
 
-router.post("/sync/level-confidence", async (_req, res) => {
+router.post("/sync/level-confidence", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_CONFIDENCE);
   if (current.status === "running") {
     return res.status(409).json({ error: "Confidence compute already running" });
@@ -333,19 +349,33 @@ router.post("/sync/level-confidence", async (_req, res) => {
         .from("attendances")
         .select("player_id")
         .not("player_id", "is", null)
-        .not("level", "is", null);          // only players with tagged attendance
+        .not("level", "is", null);
 
       if (error) throw new Error(error.message);
 
-      const playerIds = [...new Set((rows ?? []).map((r: any) => r.player_id as string))];
-      await appendJobLog(JOB_CONFIDENCE, `Computing confidence for ${playerIds.length} players`);
+      // Scope to this club's players
+      const allIds = [...new Set((rows ?? []).map((r: any) => r.player_id as string))];
+
+      // Filter to players belonging to this club
+      const clubPlayerIds: string[] = [];
+      for (let i = 0; i < allIds.length; i += 100) {
+        const chunk = allIds.slice(i, i + 100);
+        const { data: clubPlayers } = await supabase
+          .from("players")
+          .select("id")
+          .eq("club_id", clubId)
+          .in("id", chunk);
+        clubPlayerIds.push(...(clubPlayers ?? []).map((p: any) => p.id));
+      }
+
+      await appendJobLog(JOB_CONFIDENCE, `Computing confidence for ${clubPlayerIds.length} players`);
 
       let count = 0;
-      for (const playerId of playerIds) {
+      for (const playerId of clubPlayerIds) {
         await computeLevelConfidence(playerId);
         count++;
         if (count % 50 === 0) {
-          await appendJobLog(JOB_CONFIDENCE, `Computed confidence for ${count}/${playerIds.length} players...`);
+          await appendJobLog(JOB_CONFIDENCE, `Computed confidence for ${count}/${clubPlayerIds.length} players...`);
         }
       }
 
@@ -378,8 +408,6 @@ router.get("/sync/level-confidence/status", async (_req, res) => {
 // ─── Churn Score routes ────────────────────────────────────────────────────────
 
 router.post("/sync/churn-scores", async (_req, res) => {
-  // Detached IIFE preserves the 202-immediately contract for the dashboard.
-  // The lib function owns the JOB_CHURN lifecycle (startJob, finishJob, logs).
   (async () => {
     await runChurnScoreBatch();
   })();
@@ -407,10 +435,21 @@ router.post("/sync/churn-scores/cancel", async (_req, res) => {
   res.json({ message: "Cancel requested" });
 });
 
-router.post("/sync/churn-scores/test", async (req, res) => {
+router.post("/sync/churn-scores/test", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { player_id } = req.body ?? {};
   if (!player_id || typeof player_id !== "string") {
     return res.status(400).json({ error: "player_id is required" });
+  }
+  // Cross-tenant guard
+  const { data: player } = await supabase
+    .from("players")
+    .select("id")
+    .eq("id", player_id)
+    .eq("club_id", clubId)
+    .maybeSingle();
+  if (!player) {
+    return res.status(404).json({ error: "Player not found in this club" });
   }
   try {
     const result = await computeChurnScoreAndReturn(player_id);

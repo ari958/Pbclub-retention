@@ -5,6 +5,7 @@ import { importAllPlayers, syncDuprRatings } from "../importAllPlayers.js";
 import { importPhoneNumbers } from "../importPhoneNumbers.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
 import { supabase } from "../lib/supabaseClient";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
@@ -14,7 +15,8 @@ const JOB_IMPORT_DUPR    = "import_dupr";
 
 // ─── Player import ────────────────────────────────────────────────────────────
 
-router.post("/import/players", async (req, res) => {
+router.post("/import/players", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_IMPORT_PLAYERS, { withLogs: true });
 
   if (current.status === "running") {
@@ -26,13 +28,12 @@ router.post("/import/players", async (req, res) => {
     return;
   }
 
-  // Read club info for logging
   let club: { name?: string; scheduled_sync_time?: string; timezone?: string } | null = null;
   try {
     const { data } = await supabase
       .from("clubs")
       .select("name, scheduled_sync_time, timezone")
-      .limit(1)
+      .eq("id", clubId)
       .maybeSingle();
     club = data;
   } catch { /* non-fatal */ }
@@ -54,6 +55,7 @@ router.post("/import/players", async (req, res) => {
   });
 
   importAllPlayers(
+    clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_PLAYERS, msg),
     () => isCancelled(JOB_IMPORT_PLAYERS)
   )
@@ -106,7 +108,8 @@ router.get("/import/status", async (_req, res) => {
 
 // ─── Phone number import ──────────────────────────────────────────────────────
 
-router.post("/import/phone-numbers", async (_req, res) => {
+router.post("/import/phone-numbers", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_IMPORT_PHONES, { withLogs: true });
 
   if (current.status === "running") {
@@ -128,6 +131,7 @@ router.post("/import/phone-numbers", async (_req, res) => {
   });
 
   importPhoneNumbers(
+    clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_PHONES, msg),
     () => isCancelled(JOB_IMPORT_PHONES)
   )
@@ -176,7 +180,8 @@ router.post("/import/phone-numbers/cancel", async (_req, res) => {
 
 // ─── DUPR ratings sync ────────────────────────────────────────────────────────
 
-router.post("/import/dupr", async (_req, res) => {
+router.post("/import/dupr", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const current = await getJob(JOB_IMPORT_DUPR, { withLogs: true });
 
   if (current.status === "running") {
@@ -199,6 +204,7 @@ router.post("/import/dupr", async (_req, res) => {
   });
 
   syncDuprRatings(
+    clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_DUPR, msg),
     () => isCancelled(JOB_IMPORT_DUPR)
   )

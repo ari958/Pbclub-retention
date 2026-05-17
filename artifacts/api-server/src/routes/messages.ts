@@ -5,6 +5,7 @@ import { getTwilioClient, sendViaTwilio } from "../lib/twilio";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { parseFeedbackReply } from "../lib/postSessionFeedback";
 import { findActiveExpectation, resolveExpectation } from "../lib/replyExpectations";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
@@ -30,7 +31,11 @@ function findUnresolvedVars(body: string): string[] {
   return matches.map((m) => m.slice(2, -2).trim());
 }
 
-function interpolate(body: string, player: any): string {
+/**
+ * Interpolate per-player template variables.
+ * clubName comes from the clubs table — never hardcoded.
+ */
+function interpolate(body: string, player: any, clubName: string): string {
   const firstName = (player.name as string).split(" ")[0];
   const skillLevel = player.skill_level ?? "your level";
   const lastVisit = player.last_visit_date
@@ -43,7 +48,7 @@ function interpolate(body: string, player: any): string {
     .replace(/\{\{first_name\}\}/gi, firstName)
     .replace(/\{\{skill_level\}\}/gi, skillLevel)
     .replace(/\{\{last_visit\}\}/gi, lastVisit)
-    .replace(/\{\{club_name\}\}/gi, "PB Club");
+    .replace(/\{\{club_name\}\}/gi, clubName);
 }
 
 // ─── POST /api/messages/send ─────────────────────────────────────────────────
@@ -52,7 +57,9 @@ const SendSchema = z.object({
   message_id: z.string().uuid("message_id must be a valid UUID"),
 });
 
-router.post("/messages/send", async (req, res) => {
+router.post("/messages/send", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+
   const parsed = SendSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -83,7 +90,7 @@ router.post("/messages/send", async (req, res) => {
 
   const { data: conversation, error: convErr } = await supabase
     .from("conversations")
-    .select("player_id")
+    .select("player_id, club_id")
     .eq("id", message.conversation_id)
     .single();
 
@@ -92,14 +99,26 @@ router.post("/messages/send", async (req, res) => {
     return;
   }
 
+  // Cross-tenant guard: conversation must belong to this club
+  if (conversation.club_id && conversation.club_id !== clubId) {
+    res.status(403).json({ error: "Message does not belong to this club" });
+    return;
+  }
+
   const { data: player, error: playerErr } = await supabase
     .from("players")
-    .select("id, name, phone, sms_opt_in, last_outbound_at")
+    .select("id, name, phone, sms_opt_in, last_outbound_at, club_id")
     .eq("id", conversation.player_id)
     .single();
 
   if (playerErr || !player) {
     res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
+  // Cross-tenant guard: player must belong to this club
+  if (player.club_id !== clubId) {
+    res.status(403).json({ error: "Player does not belong to this club" });
     return;
   }
 
@@ -192,11 +211,29 @@ router.post("/messages/send", async (req, res) => {
 
 // ─── POST /api/messages/skip ─────────────────────────────────────────────────
 
-router.post("/messages/skip", async (req, res) => {
+router.post("/messages/skip", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { message_id } = req.body as { message_id?: string };
 
   if (!message_id) {
     res.status(400).json({ error: "message_id is required" });
+    return;
+  }
+
+  // Cross-tenant guard: verify the message's player belongs to this club
+  const { data: msg } = await supabase
+    .from("messages")
+    .select("player_id, players!inner(club_id)")
+    .eq("id", message_id)
+    .maybeSingle();
+
+  if (!msg) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+  const playerClubId = (msg.players as any)?.club_id;
+  if (playerClubId && playerClubId !== clubId) {
+    res.status(403).json({ error: "Message does not belong to this club" });
     return;
   }
 
@@ -216,7 +253,9 @@ router.post("/messages/skip", async (req, res) => {
 
 // ─── POST /api/messages/bulk ─────────────────────────────────────────────────
 
-router.post("/messages/bulk", async (req, res) => {
+router.post("/messages/bulk", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+
   const { player_ids, message_body, template_id } = req.body as {
     player_ids?: string[];
     message_body?: string;
@@ -242,11 +281,20 @@ router.post("/messages/bulk", async (req, res) => {
     return;
   }
 
-  // Fetch eligible players
+  // Fetch club name for {{club_name}} interpolation
+  const { data: clubRow } = await supabase
+    .from("clubs")
+    .select("name")
+    .eq("id", clubId)
+    .maybeSingle();
+  const clubName = clubRow?.name ?? "your club";
+
+  // Fetch eligible players scoped to this club
   const { data: players, error: fetchErr } = await supabase
     .from("players")
     .select("id, name, skill_level, last_visit_date, phone, club_id, sms_opt_in, last_outbound_at")
     .in("id", player_ids)
+    .eq("club_id", clubId)
     .eq("sms_opt_in", true);
 
   if (fetchErr) {
@@ -260,8 +308,6 @@ router.post("/messages/bulk", async (req, res) => {
     res.json({ sent: 0, skipped_cooldown: 0, failed: 0, errors: [] });
     return;
   }
-
-  const club_id: string | null = eligible[0]?.club_id ?? null;
 
   let twilioClient: ReturnType<typeof getTwilioClient> | null = null;
   try { twilioClient = getTwilioClient(); } catch { /* Twilio not configured */ }
@@ -284,7 +330,7 @@ router.post("/messages/bulk", async (req, res) => {
       }
     }
 
-    const interpolated = interpolate(message_body, player);
+    const interpolated = interpolate(message_body, player, clubName);
 
     // Final unresolved check after per-player interpolation
     const stillUnresolved = findUnresolvedVars(interpolated);
@@ -298,7 +344,7 @@ router.post("/messages/bulk", async (req, res) => {
     // Create conversation record
     const { data: convData, error: convErr } = await supabase
       .from("conversations")
-      .insert({ player_id: player.id, club_id, triggered_by: "bulk" })
+      .insert({ player_id: player.id, club_id: clubId, triggered_by: "bulk" })
       .select("id")
       .single();
 
@@ -369,6 +415,7 @@ router.post("/messages/bulk", async (req, res) => {
 // ─── POST /api/messages/webhook/status ───────────────────────────────────────
 // Twilio calls this for delivery status AND link click events.
 // Body is application/x-www-form-urlencoded (already parsed by app.ts).
+// NO requireClub — Twilio posts without club context.
 
 router.post("/messages/webhook/status", async (req, res) => {
   const { MessageSid, MessageStatus, ErrorCode, ErrorMessage, event } =
@@ -420,8 +467,7 @@ router.post("/messages/webhook/status", async (req, res) => {
 
 // ─── POST /api/messages/webhook/inbound ──────────────────────────────────────
 // Twilio posts here when a member replies or sends STOP.
-// Configure in Twilio Console → Phone Numbers → your number
-//   "A message comes in" → Webhook → POST → https://yourdomain.com/api/messages/webhook/inbound
+// NO requireClub — Twilio posts without club context; player lookup resolves club.
 
 router.post("/messages/webhook/inbound", async (req, res) => {
   const { From, Body } = req.body as { From?: string; Body?: string };
@@ -639,17 +685,35 @@ router.post("/messages/webhook/inbound", async (req, res) => {
 // ─── PATCH /api/messages/:id/draft ───────────────────────────────────────────
 // Edit the body of a pending (unsent) message. Only works while status=pending.
 
-router.patch("/messages/:id/draft", async (req, res) => {
+router.patch("/messages/:id/draft", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { body } = req.body as { body?: unknown };
   if (!body || typeof body !== "string" || !body.trim()) {
     res.status(400).json({ error: "body is required and must be a non-empty string" });
     return;
   }
 
+  // Cross-tenant guard: verify the message belongs to a player in this club
+  const { data: existing } = await supabase
+    .from("messages")
+    .select("player_id, players!inner(club_id)")
+    .eq("id", req.params.id as string)
+    .maybeSingle();
+
+  if (!existing) {
+    res.status(404).json({ error: "Message not found" });
+    return;
+  }
+  const playerClubId = (existing.players as any)?.club_id;
+  if (playerClubId && playerClubId !== clubId) {
+    res.status(403).json({ error: "Message does not belong to this club" });
+    return;
+  }
+
   const { data, error } = await supabase
     .from("messages")
     .update({ body: body.trim() })
-    .eq("id", req.params.id)
+    .eq("id", req.params.id as string)
     .eq("status", "pending")
     .select("id, body, status")
     .single();

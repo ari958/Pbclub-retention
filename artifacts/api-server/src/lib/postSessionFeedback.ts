@@ -3,20 +3,13 @@
  *
  * Polls every 30 minutes for sessions ending in the last 30 minutes and queues
  * a "did everyone belong at this level?" feedback prompt to each attendee.
- *
- * The outbound message itself goes into `messages` with status='pending'.
- * Separately, we register a reply_expectations entry via expectReply() so
- * that when the player replies "1" or "2", the inbound webhook handler in
- * routes/messages.ts can route the reply back to this specific (player,
- * event, level) context. See lib/replyExpectations.ts for the pattern.
  */
 import { supabase } from "./supabaseClient";
 import { sendViaTwilio } from "./twilio";
 import { extractSkillLevel, isFeedbackLevel } from "./skillLevel";
 import { logger } from "./logger";
 import { expectReply, findActiveExpectation } from "./replyExpectations";
-
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
+import { getPodPlayBaseUrl } from "./podplayUrls";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -38,9 +31,6 @@ async function getFeedbackTemplate(): Promise<string> {
 
 /**
  * Parse a two-part feedback reply.
- * First token = self_fit, second token = others_fit.
- * Accepts: Y/N, YES/NO, 1/2 (case-insensitive).
- * Returns null if the reply cannot be parsed into exactly two valid answers.
  */
 export function parseFeedbackReply(body: string): { self_fit: 0 | 1; others_fit: 0 | 1 } | null {
   const tokens = body.trim().toLowerCase().split(/[\s,/|]+/).filter(Boolean);
@@ -60,8 +50,8 @@ export function parseFeedbackReply(body: string): { self_fit: 0 | 1; others_fit:
 
 // ─── PodPlay fetchers ─────────────────────────────────────────────────────────
 
-async function fetchEventById(eventId: string): Promise<any> {
-  const res = await fetch(`${PODPLAY_BASE}/events/${eventId}`, {
+async function fetchEventById(eventId: string, podplayBase: string): Promise<any> {
+  const res = await fetch(`${podplayBase}/apis/v2/events/${eventId}`, {
     headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
     signal: AbortSignal.timeout(10_000),
   });
@@ -69,12 +59,15 @@ async function fetchEventById(eventId: string): Promise<any> {
   return res.json();
 }
 
-async function fetchEventsEndingInWindow(windowStartMs: number, windowEndMs: number): Promise<any[]> {
-  // Search 4h back for start times so we catch 1-3h sessions that end within our window
+async function fetchEventsEndingInWindow(
+  windowStartMs: number,
+  windowEndMs: number,
+  podplayBase: string,
+): Promise<any[]> {
   const from = new Date(windowStartMs - 4 * 60 * 60 * 1000).toISOString();
   const to = new Date(windowEndMs).toISOString();
   const url =
-    `${PODPLAY_BASE}/events` +
+    `${podplayBase}/apis/v2/events` +
     `?startTime=${encodeURIComponent(from)}&endTime=${encodeURIComponent(to)}&ipp=100`;
 
   const res = await fetch(url, {
@@ -91,25 +84,51 @@ async function fetchEventsEndingInWindow(windowStartMs: number, windowEndMs: num
   });
 }
 
+// ─── Resolve PodPlay base URL ─────────────────────────────────────────────────
+
+async function resolvePodPlayBase(clubId: string | undefined): Promise<string> {
+  if (clubId) {
+    return getPodPlayBaseUrl(clubId);
+  }
+  // Transitional backward compat: scheduler doesn't pass clubId yet (Step 7).
+  const { data } = await supabase
+    .from("clubs")
+    .select("platform_subdomain")
+    .limit(1)
+    .maybeSingle();
+  if (!data?.platform_subdomain) {
+    throw new Error("No club platform_subdomain available for PodPlay requests");
+  }
+  return `https://${data.platform_subdomain}.podplay.app`;
+}
+
 // ─── Core send logic ──────────────────────────────────────────────────────────
 
 export async function sendFeedbackForEvent(
   eventId: string,
-  log: (msg: string) => void = (m) => logger.info(m)
+  clubId?: string,
+  log: (msg: string) => void = (m) => logger.info(m),
 ): Promise<{ sent: number; skipped: number; errors: number }> {
   const stats = { sent: 0, skipped: 0, errors: 0 };
 
-  // Fetch event from PodPlay
+  let podplayBase: string;
+  try {
+    podplayBase = await resolvePodPlayBase(clubId);
+  } catch (err: any) {
+    log(`[feedback] Could not resolve PodPlay base URL: ${err.message}`);
+    stats.errors++;
+    return stats;
+  }
+
   let event: any;
   try {
-    event = await fetchEventById(eventId);
+    event = await fetchEventById(eventId, podplayBase);
   } catch (err: any) {
     log(`[feedback] Cannot fetch event ${eventId}: ${err.message}`);
     stats.errors++;
     return stats;
   }
 
-  // Only send for events with a specific skill level
   const level = extractSkillLevel(event.tags);
   if (!isFeedbackLevel(level)) {
     log(`[feedback] Event ${eventId} "${event.name}" — level="${level ?? "none"}" is not feedbackable — skipping`);
@@ -117,7 +136,6 @@ export async function sendFeedbackForEvent(
     return stats;
   }
 
-  // Get all player_ids that attended this event
   const { data: attRows, error: attErr } = await supabase
     .from("attendances")
     .select("player_id")
@@ -139,7 +157,6 @@ export async function sendFeedbackForEvent(
     return stats;
   }
 
-  // Fetch player details (chunked to 100 — Supabase GET URL limit ~18KB)
   const eligible: any[] = [];
   for (let i = 0; i < playerIds.length; i += 100) {
     const chunk = playerIds.slice(i, i + 100);
@@ -163,7 +180,6 @@ export async function sendFeedbackForEvent(
   for (const player of eligible) {
     const existing = await findActiveExpectation(player.id, "session_feedback");
     if (existing && (existing.metadata as { event_id?: string })?.event_id === eventId) {
-      // Already dispatched a feedback prompt for this (player, event); skip.
       continue;
     }
     const firstName = (player.name as string).split(" ")[0];
@@ -172,7 +188,6 @@ export async function sendFeedbackForEvent(
       .replace(/\{\{level\}\}/g, level!);
 
     try {
-      // Create a conversation tagged as session_feedback
       const { data: conv, error: convErr } = await supabase
         .from("conversations")
         .insert({ player_id: player.id, club_id: player.club_id, triggered_by: "session_feedback" })
@@ -185,10 +200,6 @@ export async function sendFeedbackForEvent(
         continue;
       }
 
-      // Insert message row BEFORE calling Twilio — guarantees a DB row exists from
-      // the moment we invoke Twilio. If Twilio succeeds but the subsequent UPDATE
-      // fails, the row is at least auditable. If the INSERT itself fails, we skip
-      // Twilio entirely (caught by the per-player try/catch below).
       const { data: msgRow, error: msgInsertErr } = await supabase
         .from("messages")
         .insert({
@@ -219,7 +230,6 @@ export async function sendFeedbackForEvent(
             .eq("id", msgRow.id);
         } catch (err: any) {
           log(`[feedback] Twilio send failed for player ${player.id}: ${err.message}`);
-          // Do NOT delete the row — it is the audit trail even on failure
           await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
           stats.errors++;
           continue;
@@ -233,7 +243,6 @@ export async function sendFeedbackForEvent(
         conversationId: conv.id,
       });
 
-      // Advance cooldown timestamp
       await supabase.from("players").update({ last_outbound_at: sentAt }).eq("id", player.id);
 
       stats.sent++;
@@ -248,15 +257,24 @@ export async function sendFeedbackForEvent(
 }
 
 export async function sendFeedbackForRecentEvents(
+  clubId?: string,
   log: (msg: string) => void = (m) => logger.info(m),
-  windowHours = 2
+  windowHours = 2,
 ): Promise<{ eventsFound: number; totalSent: number; totalSkipped: number; totalErrors: number }> {
   const now = Date.now();
   const windowStart = now - windowHours * 60 * 60 * 1000;
 
+  let podplayBase: string;
+  try {
+    podplayBase = await resolvePodPlayBase(clubId);
+  } catch (err: any) {
+    log(`[feedback] Could not resolve PodPlay base URL: ${err.message}`);
+    return { eventsFound: 0, totalSent: 0, totalSkipped: 0, totalErrors: 1 };
+  }
+
   let events: any[];
   try {
-    events = await fetchEventsEndingInWindow(windowStart, now);
+    events = await fetchEventsEndingInWindow(windowStart, now, podplayBase);
   } catch (err: any) {
     log(`[feedback] Failed to fetch recent events: ${err.message}`);
     return { eventsFound: 0, totalSent: 0, totalSkipped: 0, totalErrors: 1 };
@@ -266,7 +284,7 @@ export async function sendFeedbackForRecentEvents(
 
   let totalSent = 0, totalSkipped = 0, totalErrors = 0;
   for (const ev of events) {
-    const s = await sendFeedbackForEvent(ev.id, log);
+    const s = await sendFeedbackForEvent(ev.id, clubId, log);
     totalSent += s.sent;
     totalSkipped += s.skipped;
     totalErrors += s.errors;

@@ -1,13 +1,16 @@
 import { Router, type IRouter } from "express";
 import { supabase } from "../lib/supabaseClient";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
 // GET /api/templates
-router.get("/templates", async (_req, res) => {
+router.get("/templates", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { data, error } = await supabase
     .from("message_templates")
     .select("*")
+    .eq("club_id", clubId)
     .order("is_builtin", { ascending: false })
     .order("created_at", { ascending: true });
 
@@ -20,7 +23,8 @@ router.get("/templates", async (_req, res) => {
 });
 
 // POST /api/templates
-router.post("/templates", async (req, res) => {
+router.post("/templates", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { name, body, use_case_tags } = req.body as {
     name?: string;
     body?: string;
@@ -35,6 +39,7 @@ router.post("/templates", async (req, res) => {
   const { data, error } = await supabase
     .from("message_templates")
     .insert({
+      club_id: clubId,
       name: name.trim(),
       body: body.trim(),
       use_case_tags: use_case_tags ?? [],
@@ -52,7 +57,8 @@ router.post("/templates", async (req, res) => {
 });
 
 // PATCH /api/templates/:id
-router.patch("/templates/:id", async (req, res) => {
+router.patch("/templates/:id", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   const { id } = req.params;
   const { name, body, use_case_tags } = req.body as {
     name?: string;
@@ -65,12 +71,17 @@ router.patch("/templates/:id", async (req, res) => {
     return;
   }
 
-  // Prevent editing built-ins
+  // Cross-tenant guard + built-in check
   const { data: existing } = await supabase
     .from("message_templates")
-    .select("is_builtin")
+    .select("is_builtin, club_id")
     .eq("id", id)
-    .single();
+    .maybeSingle();
+
+  if (!existing || existing.club_id !== clubId) {
+    res.status(404).json({ error: "Template not found" });
+    return;
+  }
 
   if (existing?.is_builtin) {
     res.status(403).json({ error: "Built-in templates cannot be edited" });

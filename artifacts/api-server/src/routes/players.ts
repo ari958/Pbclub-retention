@@ -4,12 +4,34 @@ import { z } from "zod";
 import { assembleProfile } from "../assembleProfile.js";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { supabase } from "../lib/supabaseClient";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
+// ─── Cross-tenant guard ───────────────────────────────────────────────────────
+
+async function verifyPlayerBelongsToClub(
+  playerId: string,
+  clubId: string,
+): Promise<boolean> {
+  const { data } = await supabase
+    .from("players")
+    .select("id")
+    .eq("id", playerId)
+    .eq("club_id", clubId)
+    .maybeSingle();
+  return !!data;
+}
+
 // ─── GET /api/players/:id/profile ────────────────────────────────────────────
 
-router.get("/players/:id/profile", async (req, res) => {
+router.get("/players/:id/profile", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
   try {
     const data = await assembleProfile(req.params.id);
     res.json(data);
@@ -43,7 +65,14 @@ router.get("/players/:id/profile", async (req, res) => {
 
 // ─── POST /api/players/:id/progression ───────────────────────────────────────
 
-router.post("/players/:id/progression", async (req, res) => {
+router.post("/players/:id/progression", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const { status, assessed_by } = req.body as {
     status: string | null;
     assessed_by?: string;
@@ -87,7 +116,14 @@ const CoachLevelSchema = z.object({
   coach_level_set_by: z.string().optional(),
 });
 
-router.patch("/players/:id/coach-level", async (req, res) => {
+router.patch("/players/:id/coach-level", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const parsed = CoachLevelSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -95,14 +131,12 @@ router.patch("/players/:id/coach-level", async (req, res) => {
   }
   const { coach_assigned_level, coach_level_notes, coach_level_set_by } = parsed.data;
 
-  // Taxonomy validation only when setting a non-null level
   if (coach_assigned_level !== null) {
-    const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
     const { data: taxRow } = await supabase
       .from("level_taxonomy")
       .select("level")
       .eq("level", coach_assigned_level)
-      .eq("club_id", CLUB_ID)
+      .eq("club_id", clubId)
       .maybeSingle();
 
     if (!taxRow) {
@@ -128,10 +162,8 @@ router.patch("/players/:id/coach-level", async (req, res) => {
     return;
   }
 
-  // Recompute confidence for all levels this player has attended
-  computeLevelConfidence(req.params.id).catch(() => {});
+  computeLevelConfidence(req.params.id as string).catch(() => {});
 
-  // Return updated player + fresh confidence rows
   const { data: confidence } = await supabase
     .from("level_confidence")
     .select("level, score, certainty, sessions, peer_positive, peer_total, last_computed")
@@ -146,7 +178,14 @@ const NotesSchema = z.object({
   notes: z.string().nullable(),
 });
 
-router.patch("/players/:id/notes", async (req, res) => {
+router.patch("/players/:id/notes", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const parsed = NotesSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -172,7 +211,14 @@ const CoachLevelNotesSchema = z.object({
   coach_level_notes: z.string().nullable(),
 });
 
-router.patch("/players/:id/coach-level-notes", async (req, res) => {
+router.patch("/players/:id/coach-level-notes", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const parsed = CoachLevelNotesSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -194,7 +240,14 @@ router.patch("/players/:id/coach-level-notes", async (req, res) => {
 
 // ─── GET /api/players/:id/confidence ─────────────────────────────────────────
 
-router.get("/players/:id/confidence", async (req, res) => {
+router.get("/players/:id/confidence", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const { data: confidence, error } = await supabase
     .from("level_confidence")
     .select("level, score, certainty, sessions, peer_positive, peer_total, last_computed")
@@ -206,11 +259,10 @@ router.get("/players/:id/confidence", async (req, res) => {
     return;
   }
 
-  // Fetch taxonomy for rank ordering (scoped to this club)
   const { data: taxonomy } = await supabase
     .from("level_taxonomy")
     .select("level, rank")
-    .eq("club_id", "c8976e15-e002-4619-bb4b-b1a70f5cd7ab")
+    .eq("club_id", clubId)
     .order("rank", { ascending: true });
 
   const taxMap = new Map<string, number>(
@@ -232,7 +284,14 @@ const PlayerPatchSchema = z.object({
   dupr_rating: z.number().min(1).max(6).optional(),
 }).passthrough();
 
-router.patch("/players/:id", async (req, res) => {
+router.patch("/players/:id", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const belongs = await verifyPlayerBelongsToClub(req.params.id as string, clubId);
+  if (!belongs) {
+    res.status(404).json({ error: "Player not found" });
+    return;
+  }
+
   const parsed = PlayerPatchSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", issues: parsed.error.issues });
@@ -262,16 +321,15 @@ router.patch("/players/:id", async (req, res) => {
     return;
   }
 
-  // Recompute confidence after DUPR change
-  computeLevelConfidence(req.params.id).catch(() => {});
+  computeLevelConfidence(req.params.id as string).catch(() => {});
 
   res.json(updated);
 });
 
 // ─── GET /api/players/winback-stats ──────────────────────────────────────────
-// Wrapped in try/catch so a missing column or empty data never crashes the dashboard
 
-router.get("/players/winback-stats", async (_req, res) => {
+router.get("/players/winback-stats", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
 
@@ -279,6 +337,7 @@ router.get("/players/winback-stats", async (_req, res) => {
       supabase
         .from("messages")
         .select("id", { count: "exact", head: true })
+        .eq("club_id", clubId)
         .eq("direction", "outbound")
         .eq("status", "sent")
         .not("converted_at", "is", null)
@@ -286,6 +345,7 @@ router.get("/players/winback-stats", async (_req, res) => {
       supabase
         .from("messages")
         .select("id", { count: "exact", head: true })
+        .eq("club_id", clubId)
         .eq("direction", "outbound")
         .eq("status", "sent")
         .gte("created_at", thirtyDaysAgo),
@@ -302,8 +362,7 @@ router.get("/players/winback-stats", async (_req, res) => {
       conversions: converted,
       conversion_rate_pct: conversionRate,
     });
-  } catch (err: unknown) {
-    // Never let this endpoint crash the dashboard — return null stats
+  } catch (_err: unknown) {
     res.json({
       period_days: 30,
       messages_sent: 0,

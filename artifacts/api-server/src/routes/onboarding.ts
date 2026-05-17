@@ -1,24 +1,51 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
 const router: IRouter = Router();
 
-const CLUB_ID = process.env.CLUB_ID ?? "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const CR_BASE = "https://api.courtreserve.com/api/v1";
 
 // ─── GET /api/onboarding/status ───────────────────────────────────────────────
+// Transitional: accepts ?slug= or ?clubId= (Step 5 will always pass slug).
+// Falls back to first club if neither provided, for backward compat with
+// old dashboard clients that don't pass slug yet. Remove fallback in Step 5.
 
 router.get("/onboarding/status", async (req, res) => {
+  let clubId: string | null = null;
+
+  if (typeof req.query.slug === "string") {
+    const { data } = await supabase
+      .from("clubs")
+      .select("id")
+      .eq("slug", req.query.slug)
+      .maybeSingle();
+    clubId = data?.id ?? null;
+  } else if (typeof req.query.clubId === "string") {
+    clubId = req.query.clubId;
+  } else {
+    // Backward compat: Step 5 TODO — remove this branch once dashboard passes slug
+    const { data } = await supabase
+      .from("clubs")
+      .select("id")
+      .limit(1)
+      .maybeSingle();
+    clubId = data?.id ?? null;
+  }
+
+  if (!clubId) {
+    res.json({ onboarded: true, platform: "podplay", name: null });
+    return;
+  }
+
   const { data, error } = await supabase
     .from("clubs")
     .select("id, name, onboarded, platform")
-    .eq("id", CLUB_ID)
+    .eq("id", clubId)
     .maybeSingle();
 
   if (error) {
-    // Migration not yet applied — treat as onboarded so the dashboard keeps working
     if (
       error.message?.includes("onboarded") ||
       error.message?.includes("platform") ||
@@ -41,10 +68,13 @@ router.get("/onboarding/status", async (req, res) => {
 });
 
 // ─── POST /api/onboarding/validate ────────────────────────────────────────────
+// Pre-club credential check — does not require an existing club in context.
+// For PodPlay, `subdomain` is required so we can test against the correct host.
 
 const ValidateSchema = z.object({
   platform: z.enum(["podplay", "courtreserve"]),
   apiKey: z.string().min(1, "API key is required"),
+  subdomain: z.string().optional(), // required for platform=podplay
   orgId: z.string().optional(),
 });
 
@@ -58,11 +88,16 @@ router.post("/onboarding/validate", async (req, res) => {
     return;
   }
 
-  const { platform, apiKey, orgId } = parsed.data;
+  const { platform, apiKey, subdomain, orgId } = parsed.data;
 
   try {
     if (platform === "podplay") {
-      const r = await fetch(`${PODPLAY_BASE}/users?page=1&ipp=1`, {
+      if (!subdomain) {
+        res.status(400).json({ error: "subdomain is required for PodPlay validation" });
+        return;
+      }
+      const podplayBase = `https://${subdomain}.podplay.app/apis/v2`;
+      const r = await fetch(`${podplayBase}/users?page=1&ipp=1`, {
         headers: { "x-api-key": apiKey },
       });
       if (!r.ok) {
@@ -123,11 +158,14 @@ const CompleteSchema = z.object({
   scheduled_sync_time: z.string().min(1, "Sync time is required"),
   platform: z.enum(["podplay", "courtreserve"]),
   apiKey: z.string().min(1, "API key is required"),
+  subdomain: z.string().optional(),
   orgId: z.string().optional(),
   crRatingCategoryId: z.string().optional(),
 });
 
-router.post("/onboarding/complete", async (req, res) => {
+router.post("/onboarding/complete", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+
   const parsed = CompleteSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -143,6 +181,7 @@ router.post("/onboarding/complete", async (req, res) => {
     scheduled_sync_time,
     platform,
     apiKey,
+    subdomain,
     orgId,
     crRatingCategoryId,
   } = parsed.data;
@@ -155,11 +194,12 @@ router.post("/onboarding/complete", async (req, res) => {
       scheduled_sync_time,
       platform,
       platform_api_key: apiKey,
+      platform_subdomain: subdomain ?? null,
       platform_org_id: orgId ?? null,
       cr_rating_category_id: crRatingCategoryId ?? null,
       onboarded: true,
     })
-    .eq("id", CLUB_ID);
+    .eq("id", clubId);
 
   if (error) {
     req.log.error({ err: error.message }, "Failed to complete onboarding");
@@ -167,7 +207,7 @@ router.post("/onboarding/complete", async (req, res) => {
     return;
   }
 
-  req.log.info({ club_id: CLUB_ID, platform }, "Club onboarding completed");
+  req.log.info({ club_id: clubId, platform }, "Club onboarding completed");
   res.json({ ok: true });
 });
 

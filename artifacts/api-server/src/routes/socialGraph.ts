@@ -3,17 +3,18 @@ import { supabase } from "../lib/supabaseClient";
 import { extractSkillLevel } from "../lib/skillLevel";
 import { logger } from "../lib/logger";
 import { getPlayerSocialContext, computeBuddyPairs } from "../lib/socialGraph";
+import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { getPodPlayBaseUrl } from "../lib/podplayUrls";
 
 const router: IRouter = Router();
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// ─── PodPlay helpers ──────────────────────────────────────────────────────────
+// ─── PodPlay helpers (local to this route file) ───────────────────────────────
 
-async function fetchUpcomingEvents(daysAhead = 7): Promise<any[]> {
+async function fetchUpcomingEvents(podplayBase: string, daysAhead = 7): Promise<any[]> {
   const now = new Date().toISOString();
   const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
-  const url = `${PODPLAY_BASE}/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
+  const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
   const res = await fetch(url, {
     headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
     signal: AbortSignal.timeout(15_000),
@@ -27,8 +28,8 @@ async function fetchUpcomingEvents(daysAhead = 7): Promise<any[]> {
   });
 }
 
-async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
-  const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
+async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promise<string[]> {
+  const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -59,13 +60,14 @@ async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
 
 type PlayerRow = { id: string; external_id: string; name: string };
 
-async function loadPlayerMap(): Promise<Map<string, PlayerRow>> {
+async function loadPlayerMap(clubId: string): Promise<Map<string, PlayerRow>> {
   const map = new Map<string, PlayerRow>();
   let offset = 0;
   while (true) {
     const { data, error } = await supabase
       .from("players")
       .select("id, external_id, name")
+      .eq("club_id", clubId)
       .not("external_id", "is", null)
       .range(offset, offset + 999);
     if (error) throw new Error(`Failed to load players: ${error.message}`);
@@ -79,7 +81,7 @@ async function loadPlayerMap(): Promise<Map<string, PlayerRow>> {
 
 // ─── Route A: POST /api/social-graph/compute-buddy-pairs ─────────────────────
 
-router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
+router.post("/social-graph/compute-buddy-pairs", requireClub, async (req, res) => {
   try {
     const result = await computeBuddyPairs({ logger: req.log });
     res.json(result.details);
@@ -91,9 +93,10 @@ router.post("/social-graph/compute-buddy-pairs", async (req, res) => {
 
 // ─── Route B: GET /api/social-graph/player/:id/buddies ───────────────────────
 
-router.get("/social-graph/player/:id/buddies", async (req, res) => {
+router.get("/social-graph/player/:id/buddies", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    const social = await getPlayerSocialContext(req.params.id as string, { logger: req.log, clubId });
     res.json({ buddies: social.buddies });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] buddies error");
@@ -103,9 +106,10 @@ router.get("/social-graph/player/:id/buddies", async (req, res) => {
 
 // ─── Route C: GET /api/social-graph/upcoming-with-buddies/:id ────────────────
 
-router.get("/social-graph/upcoming-with-buddies/:id", async (req, res) => {
+router.get("/social-graph/upcoming-with-buddies/:id", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    const social = await getPlayerSocialContext(req.params.id as string, { logger: req.log, clubId });
     res.json({ upcoming: social.upcoming });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] upcoming-with-buddies error");
@@ -115,20 +119,22 @@ router.get("/social-graph/upcoming-with-buddies/:id", async (req, res) => {
 
 // ─── Route D: GET /api/social-graph/staff-intro-cards ────────────────────────
 
-router.get("/social-graph/staff-intro-cards", async (req, res) => {
+router.get("/social-graph/staff-intro-cards", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const playerMap = await loadPlayerMap();
+    const podplayBase = await getPodPlayBaseUrl(clubId);
+    const playerMap = await loadPlayerMap(clubId);
     const playerById = new Map<string, PlayerRow>();
     for (const p of playerMap.values()) playerById.set(p.id, p);
 
-    const events = await fetchUpcomingEvents(7);
+    const events = await fetchUpcomingEvents(podplayBase, 7);
 
     type EventBundle = { event: any; attendeePlayerIds: string[] };
     const bundles: EventBundle[] = [];
 
     for (const event of events) {
       await sleep(250);
-      const externalIds = await fetchEventSignupsRaw(event.id);
+      const externalIds = await fetchEventSignupsRaw(podplayBase, event.id);
       const attendeePlayerIds = externalIds
         .map((eid) => playerMap.get(eid)?.id)
         .filter(Boolean) as string[];
@@ -138,7 +144,7 @@ router.get("/social-graph/staff-intro-cards", async (req, res) => {
     const allAttendeeIds = [...new Set(bundles.flatMap((b) => b.attendeePlayerIds))];
     const visitCountMap = new Map<string, number>();
     if (allAttendeeIds.length > 0) {
-      for (let i = 0; i < allAttendeeIds.length; i += 100) {  // 100 max — Supabase GET URL limit ~18KB
+      for (let i = 0; i < allAttendeeIds.length; i += 100) {
         const chunk = allAttendeeIds.slice(i, i + 100);
         const { data: attRows } = await supabase
           .from("attendances")
@@ -213,9 +219,10 @@ router.get("/social-graph/staff-intro-cards", async (req, res) => {
 
 // ─── Route F: GET /api/social-graph/player/:id/registrations ─────────────────
 
-router.get("/social-graph/player/:id/registrations", async (req, res) => {
+router.get("/social-graph/player/:id/registrations", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const social = await getPlayerSocialContext(req.params.id, { logger: req.log });
+    const social = await getPlayerSocialContext(req.params.id as string, { logger: req.log, clubId });
     res.json({ registrations: social.registrations });
   } catch (err: any) {
     req.log.error({ err: err.message }, "[social-graph] player-registrations error");
@@ -225,12 +232,15 @@ router.get("/social-graph/player/:id/registrations", async (req, res) => {
 
 // ─── Route G: POST /api/social-graph/test/player-registrations/:id ───────────
 
-router.post("/social-graph/test/player-registrations/:id", async (req, res) => {
+router.post("/social-graph/test/player-registrations/:id", requireClub, async (req, res) => {
   const port = process.env.PORT ?? "8080";
   const { id } = req.params;
+  const slug = req.query.slug as string | undefined;
+  const clubId = req.query.clubId as string | undefined;
+  const qs = slug ? `?slug=${slug}` : clubId ? `?clubId=${clubId}` : "";
   try {
     const result = await fetch(
-      `http://localhost:${port}/api/social-graph/player/${id}/registrations`,
+      `http://localhost:${port}/api/social-graph/player/${id}/registrations${qs}`,
       { signal: AbortSignal.timeout(30_000) }
     );
     const data = await result.json();
@@ -242,7 +252,7 @@ router.post("/social-graph/test/player-registrations/:id", async (req, res) => {
 
 // ─── Route E: POST /api/social-graph/test/compute-now ────────────────────────
 
-router.post("/social-graph/test/compute-now", async (req, res) => {
+router.post("/social-graph/test/compute-now", requireClub, async (req, res) => {
   try {
     const result = await computeBuddyPairs({ logger: req.log });
     res.json(result.details);

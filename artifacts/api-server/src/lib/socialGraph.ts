@@ -1,9 +1,9 @@
 import { supabase } from "./supabaseClient";
 import { extractSkillLevel } from "./skillLevel";
 import { logger as defaultLogger } from "./logger";
+import { getPodPlayBaseUrl } from "./podplayUrls";
 import type { BatchResult } from "./milestoneCheck";
 
-const PODPLAY_BASE = "https://pbclub.podplay.app/apis/v2";
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -36,16 +36,17 @@ export interface PlayerSocialContext {
 }
 
 interface ContextOptions {
+  clubId?: string;
   logger?: { warn: Function; info: Function; error: Function };
   daysAhead?: number;
   maxEvents?: number;
 }
 
 // ─── PodPlay helpers (private) ────────────────────────────────────────────────
-async function fetchUpcomingEventsRaw(daysAhead: number): Promise<any[]> {
+async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number): Promise<any[]> {
   const now = new Date().toISOString();
   const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
-  const url = `${PODPLAY_BASE}/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
+  const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
   const res = await fetch(url, {
     headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
     signal: AbortSignal.timeout(15_000),
@@ -55,8 +56,8 @@ async function fetchUpcomingEventsRaw(daysAhead: number): Promise<any[]> {
   return (data.items ?? []).filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
 }
 
-async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
-  const url = `${PODPLAY_BASE}/events/${eventId}/signups`;
+async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promise<string[]> {
+  const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
   let res: Response;
   try {
     res = await fetch(url, {
@@ -81,6 +82,25 @@ async function fetchEventSignupsRaw(eventId: string): Promise<string[]> {
   if (!res.ok) return [];
   const data = await res.json() as any;
   return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+}
+
+// ─── Resolve PodPlay base URL ─────────────────────────────────────────────────
+
+async function resolvePodPlayBase(clubId: string | undefined): Promise<string> {
+  if (clubId) {
+    return getPodPlayBaseUrl(clubId);
+  }
+  // Transitional backward compat: used by agent.ts until Step 8 passes clubId.
+  // Queries the first club's platform_subdomain rather than hardcoding a tenant.
+  const { data } = await supabase
+    .from("clubs")
+    .select("platform_subdomain")
+    .limit(1)
+    .maybeSingle();
+  if (!data?.platform_subdomain) {
+    throw new Error("No club platform_subdomain available for PodPlay requests");
+  }
+  return `https://${data.platform_subdomain}.podplay.app`;
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -121,7 +141,6 @@ export async function getPlayerSocialContext(
   }
   const pairs = pairsResult.data ?? [];
 
-  // Build buddy ID list and shared_sessions map
   const buddyIds = pairs.map((p: any) => (p.player_a === playerId ? p.player_b : p.player_a));
   const sharedSessionsByBuddy = new Map<string, number>();
   for (const p of pairs as any[]) {
@@ -129,7 +148,7 @@ export async function getPlayerSocialContext(
     sharedSessionsByBuddy.set(otherId, p.shared_sessions);
   }
 
-  // ── 2. Fetch buddy player rows (one query) ──────────────────────────────
+  // ── 2. Fetch buddy player rows ──────────────────────────────────────────
   let buddyPlayers: { id: string; name: string; external_id: string | null }[] = [];
   if (buddyIds.length > 0) {
     const { data, error } = await supabase
@@ -143,7 +162,6 @@ export async function getPlayerSocialContext(
     }
   }
 
-  // Build buddies output (top 10, sorted by shared_sessions desc — already sorted from query)
   const buddyById = new Map(buddyPlayers.map((p) => [p.id, p]));
   const buddies: BuddyEntry[] = pairs
     .slice(0, 10)
@@ -159,7 +177,6 @@ export async function getPlayerSocialContext(
       };
     });
 
-  // Build buddy-by-external-id map for upcoming-with-buddies lookup
   const buddyByExternalId = new Map<string, { id: string; name: string; shared_sessions: number }>();
   for (const p of buddyPlayers) {
     if (p.external_id) {
@@ -171,19 +188,27 @@ export async function getPlayerSocialContext(
     }
   }
 
-  // ── 3. Fetch upcoming events ONCE ───────────────────────────────────────
+  // ── 3. Resolve base URL + fetch upcoming events ─────────────────────────
   const playerExternalId = playerResult.data?.external_id ?? null;
+
+  let podplayBase: string;
+  try {
+    podplayBase = await resolvePodPlayBase(options.clubId);
+  } catch (err: any) {
+    (log as any).warn?.({ err: err.message }, "[socialGraph] could not resolve PodPlay base URL");
+    return { buddies, upcoming: [], registrations: [] };
+  }
 
   let allEvents: any[] = [];
   try {
-    allEvents = await fetchUpcomingEventsRaw(daysAhead);
+    allEvents = await fetchUpcomingEventsRaw(podplayBase, daysAhead);
   } catch (err: any) {
     (log as any).warn?.({ err: err.message }, "[socialGraph] upcoming events fetch failed");
     return { buddies, upcoming: [], registrations: [] };
   }
   const events = allEvents.slice(0, maxEvents);
 
-  // ── 4. Fetch signups for those events ONCE (parallel batches of 3 with throttle) ──
+  // ── 4. Fetch signups (parallel batches of 3 with throttle) ──────────────
   type EventSignups = { event: any; externalIds: string[] };
   const signupsByEvent: EventSignups[] = [];
   for (let i = 0; i < events.length; i += 3) {
@@ -191,7 +216,7 @@ export async function getPlayerSocialContext(
     const batch = events.slice(i, i + 3);
     const results = await Promise.all(
       batch.map((event) =>
-        fetchEventSignupsRaw(event.id)
+        fetchEventSignupsRaw(podplayBase, event.id)
           .then((externalIds) => ({ event, externalIds }))
           .catch(() => ({ event, externalIds: [] as string[] }))
       )
@@ -204,7 +229,6 @@ export async function getPlayerSocialContext(
   const registrations: Registration[] = [];
 
   for (const { event, externalIds } of signupsByEvent) {
-    // Registrations view: did THIS player sign up for this event?
     if (playerExternalId && externalIds.includes(playerExternalId)) {
       registrations.push({
         event_id: event.id,
@@ -213,7 +237,6 @@ export async function getPlayerSocialContext(
       });
     }
 
-    // Upcoming-with-buddies view: do any of this player's buddies have signups here?
     const buddiesHere = externalIds
       .map((eid) => buddyByExternalId.get(eid))
       .filter(Boolean) as { id: string; name: string; shared_sessions: number }[];
@@ -257,10 +280,6 @@ export interface ComputeBuddyPairsOptions {
  * attendance rows. A pair is recorded when two players have shared at
  * least 3 sessions (events). Idempotent — replaces existing rows via
  * upsert on (player_a, player_b).
- *
- * Called by:
- *   - POST /social-graph/compute-buddy-pairs (manual / dashboard)
- *   - Scheduler step 4 (nightly)
  */
 export async function computeBuddyPairs(
   options: ComputeBuddyPairsOptions = {},
@@ -269,7 +288,6 @@ export async function computeBuddyPairs(
   const lookbackDays = options.lookbackDays ?? 90;
   const cutoff = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000).toISOString();
 
-  // ── 1. Page through attendances ─────────────────────────────────────────
   type AttRow = { player_id: string; event_id: string; attended_at: string };
   const allRows: AttRow[] = [];
   let offset = 0;
@@ -287,7 +305,6 @@ export async function computeBuddyPairs(
     offset += 1000;
   }
 
-  // ── 2. Group by event ───────────────────────────────────────────────────
   const eventMap = new Map<string, { playerIds: string[]; lastAt: string }>();
   for (const row of allRows) {
     const entry = eventMap.get(row.event_id);
@@ -299,7 +316,6 @@ export async function computeBuddyPairs(
     }
   }
 
-  // ── 3. Build pair counts ────────────────────────────────────────────────
   type PairData = { player_a: string; player_b: string; count: number; last_shared_at: string };
   const pairMap = new Map<string, PairData>();
   for (const { playerIds, lastAt } of eventMap.values()) {
@@ -320,7 +336,6 @@ export async function computeBuddyPairs(
     }
   }
 
-  // ── 4. Filter to threshold ──────────────────────────────────────────────
   let pairsBelowThreshold = 0;
   const upserts: object[] = [];
   const now = new Date().toISOString();
@@ -335,7 +350,6 @@ export async function computeBuddyPairs(
     });
   }
 
-  // ── 5. Upsert in batches ────────────────────────────────────────────────
   let pairsUpdated = 0;
   const upsertErrors: string[] = [];
   for (let i = 0; i < upserts.length; i += 100) {

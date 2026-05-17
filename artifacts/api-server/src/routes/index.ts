@@ -31,6 +31,6 @@ router.use(feedbackRouter);
 router.use(socialGraphRouter);
 router.use(recapRouter);
 router.use(onboardingRouter);
-router.use(clubsRouter);
+router.use("/clubs", clubsRouter);
 
 export default router;
