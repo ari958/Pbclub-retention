@@ -718,7 +718,7 @@ export default function Settings() {
                       >
                         Schedule columns not yet added. Run in Supabase SQL editor:
                         <pre style={{ fontFamily: "var(--font-mono)", fontSize: 11, marginTop: 8, whiteSpace: "pre-wrap", color: D.muted }}>
-                          {`ALTER TABLE clubs\n  ADD COLUMN IF NOT EXISTS scheduled_sync_time time,\n  ADD COLUMN IF NOT EXISTS timezone text DEFAULT 'America/New_York';`}
+                          {`ALTER TABLE clubs\n  ADD COLUMN IF NOT EXISTS scheduled_sync_time time,\n  ADD COLUMN IF NOT EXISTS timezone text DEFAULT 'UTC';`}
                         </pre>
                       </div>
                     </div>

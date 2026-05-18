@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { COMMON_TIMEZONES } from "@/lib/timezones";
 
 // ─── Design tokens (matches existing dark theme) ──────────────────────────────
 
@@ -22,12 +23,6 @@ const D = {
   redText: "#ff6b6b",
 } as const;
 
-const TIMEZONES = [
-  "America/New_York", "America/Chicago", "America/Denver",
-  "America/Los_Angeles", "America/Phoenix", "America/Anchorage",
-  "Pacific/Honolulu", "America/Toronto", "America/Vancouver",
-  "Europe/London", "Europe/Paris", "Australia/Sydney", "Pacific/Auckland",
-];
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -217,7 +212,7 @@ function StepClubSetup({
       <FieldGroup label="Timezone">
         <Select value={form.timezone} onChange={(v) => setForm((f) => ({ ...f, timezone: v }))}>
           <option value="">Select timezone…</option>
-          {TIMEZONES.map((tz) => (
+          {COMMON_TIMEZONES.map((tz) => (
             <option key={tz} value={tz}>{tz.replace("_", " ")}</option>
           ))}
         </Select>
@@ -622,8 +617,8 @@ function StepLaunch({
       <div style={{ display: "flex", justifyContent: "space-between" }}>
         {state === "idle" || state === "error" ? (
           <>
-            <Btn onClick={onBack} variant="ghost" disabled={state === "saving"}>Back</Btn>
-            <Btn onClick={handleLaunch} disabled={state === "saving"}>
+            <Btn onClick={onBack} variant="ghost">Back</Btn>
+            <Btn onClick={handleLaunch}>
               {state === "error" ? "Try again" : "Launch import"}
             </Btn>
           </>
@@ -645,7 +640,7 @@ export default function Onboarding() {
   const [step, setStep] = useState(0);
   const [form, setForm] = useState<FormState>({
     name: "",
-    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "America/New_York",
+    timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
     scheduled_sync_time: "02:00",
     platform: null,
     apiKey: "",
