@@ -450,7 +450,7 @@ export default function Dashboard() {
       }
     };
     load();
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => {
     const stored = localStorage.getItem("pulse_dismissed_recs");

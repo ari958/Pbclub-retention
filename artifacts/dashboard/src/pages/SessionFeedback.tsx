@@ -181,7 +181,7 @@ export default function SessionFeedback() {
     finally { setTemplateLoading(false); }
   }, []);
 
-  useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
+  useEffect(() => { fetchTemplate(); }, [fetchTemplate, club.slug]);
 
   const saveTemplate = async () => {
     if (!template) return;

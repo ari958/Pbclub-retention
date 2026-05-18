@@ -5,6 +5,7 @@ import { useToast } from "@/components/Toast";
 import { toTitleCase } from "@/lib/helpers";
 import type { MessageTemplate } from "@/lib/types";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
+import { COMMON_TIMEZONES } from "@/lib/timezones";
 
 const D = {
   bg: "#161b22",
@@ -64,12 +65,6 @@ const TAG_LABELS: Record<string, string> = {
   session_feedback: "Session Feedback",
 };
 
-const COMMON_TIMEZONES = [
-  "America/New_York", "America/Chicago", "America/Denver",
-  "America/Los_Angeles", "America/Phoenix", "America/Anchorage",
-  "Pacific/Honolulu", "America/Toronto", "America/Vancouver",
-  "Europe/London", "Europe/Paris", "Australia/Sydney", "Pacific/Auckland",
-];
 
 const USE_CASE_OPTIONS = [
   "never-visited", "dormant", "lapsing", "active", "ready-to-advance",
