@@ -9,7 +9,6 @@ import { sendViaTwilio } from "./twilio";
 import { extractSkillLevel, isFeedbackLevel } from "./skillLevel";
 import { logger } from "./logger";
 import { expectReply, findActiveExpectation } from "./replyExpectations";
-import { getPodPlayBaseUrl } from "./podplayUrls";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -50,9 +49,9 @@ export function parseFeedbackReply(body: string): { self_fit: 0 | 1; others_fit:
 
 // ─── PodPlay fetchers ─────────────────────────────────────────────────────────
 
-async function fetchEventById(eventId: string, podplayBase: string): Promise<any> {
+async function fetchEventById(eventId: string, podplayBase: string, apiKey: string): Promise<any> {
   const res = await fetch(`${podplayBase}/apis/v2/events/${eventId}`, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    headers: { "x-api-key": apiKey },
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) throw new Error(`PodPlay GET /events/${eventId} returned ${res.status}`);
@@ -63,6 +62,7 @@ async function fetchEventsEndingInWindow(
   windowStartMs: number,
   windowEndMs: number,
   podplayBase: string,
+  apiKey: string,
 ): Promise<any[]> {
   const from = new Date(windowStartMs - 4 * 60 * 60 * 1000).toISOString();
   const to = new Date(windowEndMs).toISOString();
@@ -71,7 +71,7 @@ async function fetchEventsEndingInWindow(
     `?startTime=${encodeURIComponent(from)}&endTime=${encodeURIComponent(to)}&ipp=100`;
 
   const res = await fetch(url, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    headers: { "x-api-key": apiKey },
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`PodPlay events fetch returned ${res.status}`);
@@ -84,22 +84,39 @@ async function fetchEventsEndingInWindow(
   });
 }
 
-// ─── Resolve PodPlay base URL ─────────────────────────────────────────────────
+// ─── Resolve PodPlay credentials (DB-first, env fallback) ────────────────────
 
-async function resolvePodPlayBase(clubId: string | undefined): Promise<string> {
+async function resolveCredentials(
+  clubId: string | undefined,
+  log: (msg: string) => void = (m) => logger.info(m),
+): Promise<{ podplayBase: string; apiKey: string }> {
+  let row: { platform_subdomain: string | null; platform_api_key: string | null } | null = null;
+
   if (clubId) {
-    return getPodPlayBaseUrl(clubId);
+    const { data } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    row = data;
+    if (!row) throw new Error(`No club found for id=${clubId}`);
+  } else {
+    // Transitional backward compat: scheduler doesn't pass clubId yet (Step 7).
+    const { data } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .limit(1)
+      .maybeSingle();
+    row = data;
+    if (!row?.platform_subdomain) throw new Error("No club platform_subdomain available for PodPlay requests");
   }
-  // Transitional backward compat: scheduler doesn't pass clubId yet (Step 7).
-  const { data } = await supabase
-    .from("clubs")
-    .select("platform_subdomain")
-    .limit(1)
-    .maybeSingle();
-  if (!data?.platform_subdomain) {
-    throw new Error("No club platform_subdomain available for PodPlay requests");
+
+  if (!row.platform_subdomain) throw new Error(`Club ${clubId} has no platform_subdomain configured`);
+  const apiKey = row.platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
+  if (!row.platform_api_key) {
+    log(`[podplay] Using env-var fallback for API key — backfill clubs.platform_api_key for club ${clubId}`);
   }
-  return `https://${data.platform_subdomain}.podplay.app`;
+  return { podplayBase: `https://${row.platform_subdomain}.podplay.app`, apiKey };
 }
 
 // ─── Core send logic ──────────────────────────────────────────────────────────
@@ -112,17 +129,18 @@ export async function sendFeedbackForEvent(
   const stats = { sent: 0, skipped: 0, errors: 0 };
 
   let podplayBase: string;
+  let apiKey: string;
   try {
-    podplayBase = await resolvePodPlayBase(clubId);
+    ({ podplayBase, apiKey } = await resolveCredentials(clubId, log));
   } catch (err: any) {
-    log(`[feedback] Could not resolve PodPlay base URL: ${err.message}`);
+    log(`[feedback] Could not resolve PodPlay credentials: ${err.message}`);
     stats.errors++;
     return stats;
   }
 
   let event: any;
   try {
-    event = await fetchEventById(eventId, podplayBase);
+    event = await fetchEventById(eventId, podplayBase, apiKey);
   } catch (err: any) {
     log(`[feedback] Cannot fetch event ${eventId}: ${err.message}`);
     stats.errors++;
@@ -265,16 +283,17 @@ export async function sendFeedbackForRecentEvents(
   const windowStart = now - windowHours * 60 * 60 * 1000;
 
   let podplayBase: string;
+  let apiKey: string;
   try {
-    podplayBase = await resolvePodPlayBase(clubId);
+    ({ podplayBase, apiKey } = await resolveCredentials(clubId, log));
   } catch (err: any) {
-    log(`[feedback] Could not resolve PodPlay base URL: ${err.message}`);
+    log(`[feedback] Could not resolve PodPlay credentials: ${err.message}`);
     return { eventsFound: 0, totalSent: 0, totalSkipped: 0, totalErrors: 1 };
   }
 
   let events: any[];
   try {
-    events = await fetchEventsEndingInWindow(windowStart, now, podplayBase);
+    events = await fetchEventsEndingInWindow(windowStart, now, podplayBase, apiKey);
   } catch (err: any) {
     log(`[feedback] Failed to fetch recent events: ${err.message}`);
     return { eventsFound: 0, totalSent: 0, totalSkipped: 0, totalErrors: 1 };

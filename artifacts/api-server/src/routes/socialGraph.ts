@@ -4,19 +4,18 @@ import { extractSkillLevel } from "../lib/skillLevel";
 import { logger } from "../lib/logger";
 import { getPlayerSocialContext, computeBuddyPairs } from "../lib/socialGraph";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
-import { getPodPlayBaseUrl } from "../lib/podplayUrls";
 
 const router: IRouter = Router();
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // ─── PodPlay helpers (local to this route file) ───────────────────────────────
 
-async function fetchUpcomingEvents(podplayBase: string, daysAhead = 7): Promise<any[]> {
+async function fetchUpcomingEvents(podplayBase: string, apiKey: string, daysAhead = 7): Promise<any[]> {
   const now = new Date().toISOString();
   const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
   const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
   const res = await fetch(url, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    headers: { "x-api-key": apiKey },
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
@@ -28,12 +27,12 @@ async function fetchUpcomingEvents(podplayBase: string, daysAhead = 7): Promise<
   });
 }
 
-async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promise<string[]> {
+async function fetchEventSignupsRaw(podplayBase: string, eventId: string, apiKey: string): Promise<string[]> {
   const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+      headers: { "x-api-key": apiKey },
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
@@ -43,7 +42,7 @@ async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promi
   if (res.status === 429) {
     await sleep(3_000);
     try {
-      const retry = await fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" } });
+      const retry = await fetch(url, { headers: { "x-api-key": apiKey } });
       if (!retry.ok) return [];
       const d = await retry.json() as any;
       return (d.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
@@ -122,19 +121,30 @@ router.get("/social-graph/upcoming-with-buddies/:id", requireClub, async (req, r
 router.get("/social-graph/staff-intro-cards", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const podplayBase = await getPodPlayBaseUrl(clubId);
+    const { data: club, error: clubErr } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    if (clubErr || !club) throw new Error(`No club found for id=${clubId}`);
+    if (!club.platform_subdomain) throw new Error(`Club ${clubId} has no platform_subdomain configured`);
+    const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
+    if (!club.platform_api_key) {
+      req.log.warn({ clubId }, "Using env-var fallback for PodPlay API key — backfill clubs.platform_api_key");
+    }
+    const podplayBase = `https://${club.platform_subdomain}.podplay.app`;
     const playerMap = await loadPlayerMap(clubId);
     const playerById = new Map<string, PlayerRow>();
     for (const p of playerMap.values()) playerById.set(p.id, p);
 
-    const events = await fetchUpcomingEvents(podplayBase, 7);
+    const events = await fetchUpcomingEvents(podplayBase, apiKey, 7);
 
     type EventBundle = { event: any; attendeePlayerIds: string[] };
     const bundles: EventBundle[] = [];
 
     for (const event of events) {
       await sleep(250);
-      const externalIds = await fetchEventSignupsRaw(podplayBase, event.id);
+      const externalIds = await fetchEventSignupsRaw(podplayBase, event.id, apiKey);
       const attendeePlayerIds = externalIds
         .map((eid) => playerMap.get(eid)?.id)
         .filter(Boolean) as string[];

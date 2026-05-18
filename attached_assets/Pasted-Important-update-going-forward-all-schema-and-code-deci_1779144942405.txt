@@ -1,0 +1,164 @@
+Important update — going forward, all schema and code decisions 
+treat multi-tenant as the default, not the goal. The 
+"single-tenant convenience" pattern is not acceptable even when 
+only one club exists.
+
+This changes one in-flight decision: we ARE backfilling 
+platform_api_key for PB Club after all. The env-var fallback 
+stays in code as defensive-only.
+
+═══════════════════════════════════════════════════════════════
+FIX 1 — Patch the 4 .ts files to DB-first pattern
+═══════════════════════════════════════════════════════════════
+
+Files:
+  - artifacts/api-server/src/lib/socialGraph.ts
+  - artifacts/api-server/src/lib/postSessionFeedback.ts
+  - artifacts/api-server/src/routes/events.ts (line 37)
+  - artifacts/api-server/src/routes/socialGraph.ts
+
+For each route file (events.ts, routes/socialGraph.ts):
+
+  Trace to the PodPlay call site. Confirm requireClub middleware 
+  is present at the route layer (should be from Step B — if not, 
+  add it). Then at the PodPlay-call site:
+
+    const clubId = (req as ClubScopedRequest).clubId;
+    const { data: club } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    if (!club) throw new Error(`No club found for id=${clubId}`);
+    
+    const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
+    if (!apiKey) {
+      throw new Error(`No API key available for club ${clubId}`);
+    }
+    if (!club.platform_api_key) {
+      req.log.warn(
+        { clubId, slug: /* if available */ }, 
+        "Using env-var fallback for PodPlay API key — backfill clubs.platform_api_key"
+      );
+    }
+    if (!club.platform_subdomain) {
+      throw new Error(`Club ${clubId} has no platform_subdomain configured`);
+    }
+
+For lib files (lib/socialGraph.ts, lib/postSessionFeedback.ts):
+
+  These should NOT do their own DB lookups. Change the function 
+  signature to accept apiKey (and platform_subdomain when it's 
+  needed for URL construction) as parameters. The CALLER (the 
+  route handler) does the DB lookup once and passes the values in.
+
+  Before:
+    export async function getPlayerSocialContext(playerId) {
+      const apiKey = process.env.PODPLAY_API_KEY;
+      // ...
+    }
+
+  After:
+    export async function getPlayerSocialContext(
+      playerId: string,
+      clubId: string,
+      apiKey: string,
+      platformSubdomain: string,
+    ) {
+      const baseUrl = `https://${platformSubdomain}.podplay.app`;
+      // ... use apiKey and baseUrl ...
+    }
+
+  Update every caller to pass the new params. Most callers should 
+  already have clubId (from requireClub); they fetch apiKey + 
+  subdomain from the clubs row once and pass down.
+
+VERIFY:
+
+  grep -rn "process\.env\.PODPLAY_API_KEY" artifacts/api-server/src/
+
+  Acceptable hits ONLY in `?? process.env.PODPLAY_API_KEY` fallback 
+  positions. No top-level reads, no sole sources.
+
+  cd artifacts/api-server && npx tsc --noEmit
+
+Paste both outputs.
+
+═══════════════════════════════════════════════════════════════
+FIX 2 — Backfill PB Club's platform_api_key
+═══════════════════════════════════════════════════════════════
+
+In Supabase SQL editor (paste the actual value of the 
+PODPLAY_API_KEY Replit secret into the SQL — do NOT paste it 
+into chat):
+
+  UPDATE clubs 
+  SET platform_api_key = '<paste value from Replit secrets>'
+  WHERE slug = 'pb-club' AND platform_api_key IS NULL;
+  
+  SELECT id, slug, name,
+         platform_api_key IS NOT NULL AS has_key,
+         platform_subdomain
+  FROM clubs ORDER BY name;
+
+Expected output:
+  PB Club:    has_key = true,  platform_subdomain = pbclub
+  Test Club:  has_key = false, platform_subdomain = null
+
+(Test Club is intentionally hollow for the browser test. Its 
+has_key = false is correct.)
+
+Paste the SELECT result.
+
+═══════════════════════════════════════════════════════════════
+FIX 3 — Update RUNBOOK.md with the new top-level rule
+═══════════════════════════════════════════════════════════════
+
+In RUNBOOK.md, add this to the "Architectural rules — read first" 
+section as the new TOP-OF-LIST rule (before "Supabase client usage"):
+
+  ### Multi-tenant by default
+  
+  Every schema and code decision assumes multiple paying clubs 
+  exist. Single-tenant convenience is never a reason to skip 
+  multi-tenant correctness.
+  
+  Concrete rules:
+  - All secrets (API keys, tokens) live on the clubs row, NOT 
+    in environment variables. Env vars are defensive fallback 
+    only — if a fallback fires in production, that's a 
+    misconfigured club.
+  - Every new table that holds per-club data has a club_id FK 
+    with ON DELETE CASCADE.
+  - Every new query against per-club data scopes by club_id.
+  - Every new feature considers "how does this work for the 
+    10th club" before "how does this work for the 1st."
+  - Hardcoded values that vary by club (timezone, TCPA windows, 
+    thresholds) belong on the clubs row, not in code constants.
+
+═══════════════════════════════════════════════════════════════
+RULES THAT APPLY
+═══════════════════════════════════════════════════════════════
+
+1. Do not modify lib/scheduler.ts or routes/agent.ts in this 
+   step. Those are Steps 7 and 8.
+
+2. Do not delete the test-club row. We still need it for the 
+   browser test after these fixes land.
+
+3. If a callsite of getPlayerSocialContext (or any other lib 
+   function whose signature changed) lives in lib/scheduler.ts 
+   or routes/agent.ts — STOP and tell me. We have to thread 
+   the new params through but doing so partially across step 
+   boundaries is risky. I'll decide whether to fold the change 
+   into Step 7/8 or do it now.
+
+═══════════════════════════════════════════════════════════════
+WHAT TO REPORT BACK
+═══════════════════════════════════════════════════════════════
+
+After FIX 1: grep output + tsc result
+After FIX 2: SELECT result showing PB Club has_key = true
+After FIX 3: confirmation runbook is updated
+
+Then STOP. Wait for greenlight on browser test.

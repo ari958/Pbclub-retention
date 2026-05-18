@@ -1,7 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { extractSkillLevel } from "./skillLevel";
 import { logger as defaultLogger } from "./logger";
-import { getPodPlayBaseUrl } from "./podplayUrls";
 import type { BatchResult } from "./milestoneCheck";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -43,12 +42,12 @@ interface ContextOptions {
 }
 
 // ─── PodPlay helpers (private) ────────────────────────────────────────────────
-async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number): Promise<any[]> {
+async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number, apiKey: string): Promise<any[]> {
   const now = new Date().toISOString();
   const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
   const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
   const res = await fetch(url, {
-    headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+    headers: { "x-api-key": apiKey },
     signal: AbortSignal.timeout(15_000),
   });
   if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
@@ -56,12 +55,12 @@ async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number): P
   return (data.items ?? []).filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
 }
 
-async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promise<string[]> {
+async function fetchEventSignupsRaw(podplayBase: string, eventId: string, apiKey: string): Promise<string[]> {
   const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
   let res: Response;
   try {
     res = await fetch(url, {
-      headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" },
+      headers: { "x-api-key": apiKey },
       signal: AbortSignal.timeout(10_000),
     });
   } catch {
@@ -71,7 +70,7 @@ async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promi
   if (res.status === 429) {
     await sleep(3_000);
     try {
-      const retry = await fetch(url, { headers: { "x-api-key": process.env.PODPLAY_API_KEY ?? "" } });
+      const retry = await fetch(url, { headers: { "x-api-key": apiKey } });
       if (!retry.ok) return [];
       const d = await retry.json() as any;
       return (d.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
@@ -84,23 +83,39 @@ async function fetchEventSignupsRaw(podplayBase: string, eventId: string): Promi
   return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
 }
 
-// ─── Resolve PodPlay base URL ─────────────────────────────────────────────────
+// ─── Resolve PodPlay credentials (DB-first, env fallback) ────────────────────
 
-async function resolvePodPlayBase(clubId: string | undefined): Promise<string> {
+async function resolveCredentials(
+  clubId: string | undefined,
+  log: any = defaultLogger,
+): Promise<{ podplayBase: string; apiKey: string }> {
+  let row: { platform_subdomain: string | null; platform_api_key: string | null } | null = null;
+
   if (clubId) {
-    return getPodPlayBaseUrl(clubId);
+    const { data } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    row = data;
+    if (!row) throw new Error(`No club found for id=${clubId}`);
+  } else {
+    // Transitional backward compat: used by agent.ts until Step 8 passes clubId.
+    const { data } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .limit(1)
+      .maybeSingle();
+    row = data;
+    if (!row?.platform_subdomain) throw new Error("No club platform_subdomain available for PodPlay requests");
   }
-  // Transitional backward compat: used by agent.ts until Step 8 passes clubId.
-  // Queries the first club's platform_subdomain rather than hardcoding a tenant.
-  const { data } = await supabase
-    .from("clubs")
-    .select("platform_subdomain")
-    .limit(1)
-    .maybeSingle();
-  if (!data?.platform_subdomain) {
-    throw new Error("No club platform_subdomain available for PodPlay requests");
+
+  if (!row.platform_subdomain) throw new Error(`Club ${clubId} has no platform_subdomain configured`);
+  const apiKey = row.platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
+  if (!row.platform_api_key) {
+    (log as any).warn?.({ clubId }, "Using env-var fallback for PodPlay API key — backfill clubs.platform_api_key");
   }
-  return `https://${data.platform_subdomain}.podplay.app`;
+  return { podplayBase: `https://${row.platform_subdomain}.podplay.app`, apiKey };
 }
 
 // ─── Main entry point ─────────────────────────────────────────────────────────
@@ -188,20 +203,21 @@ export async function getPlayerSocialContext(
     }
   }
 
-  // ── 3. Resolve base URL + fetch upcoming events ─────────────────────────
+  // ── 3. Resolve credentials + fetch upcoming events ──────────────────────
   const playerExternalId = playerResult.data?.external_id ?? null;
 
   let podplayBase: string;
+  let apiKey: string;
   try {
-    podplayBase = await resolvePodPlayBase(options.clubId);
+    ({ podplayBase, apiKey } = await resolveCredentials(options.clubId, log));
   } catch (err: any) {
-    (log as any).warn?.({ err: err.message }, "[socialGraph] could not resolve PodPlay base URL");
+    (log as any).warn?.({ err: err.message }, "[socialGraph] could not resolve PodPlay credentials");
     return { buddies, upcoming: [], registrations: [] };
   }
 
   let allEvents: any[] = [];
   try {
-    allEvents = await fetchUpcomingEventsRaw(podplayBase, daysAhead);
+    allEvents = await fetchUpcomingEventsRaw(podplayBase, daysAhead, apiKey);
   } catch (err: any) {
     (log as any).warn?.({ err: err.message }, "[socialGraph] upcoming events fetch failed");
     return { buddies, upcoming: [], registrations: [] };
@@ -216,7 +232,7 @@ export async function getPlayerSocialContext(
     const batch = events.slice(i, i + 3);
     const results = await Promise.all(
       batch.map((event) =>
-        fetchEventSignupsRaw(podplayBase, event.id)
+        fetchEventSignupsRaw(podplayBase, event.id, apiKey)
           .then((externalIds) => ({ event, externalIds }))
           .catch(() => ({ event, externalIds: [] as string[] }))
       )

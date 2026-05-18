@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
-import { getPodPlayBaseUrl } from "../lib/podplayUrls";
+import { supabase } from "../lib/supabaseClient";
 
 const router: IRouter = Router();
 
@@ -33,9 +33,8 @@ interface UpcomingEvent {
 let cache: { events: UpcomingEvent[]; fetchedAt: number; clubId: string } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
 
-async function fetchUpcomingEvents(podplayBase: string): Promise<UpcomingEvent[]> {
-  const apiKey = process.env.PODPLAY_API_KEY;
-  const headers = { "x-api-key": apiKey ?? "" };
+async function fetchUpcomingEvents(podplayBase: string, apiKey: string): Promise<UpcomingEvent[]> {
+  const headers = { "x-api-key": apiKey };
   const now = new Date();
 
   const ctrl = new AbortController();
@@ -93,8 +92,20 @@ router.get("/events/upcoming", requireClub, async (req, res) => {
   }
 
   try {
-    const podplayBase = await getPodPlayBaseUrl(clubId);
-    const events = await fetchUpcomingEvents(podplayBase);
+    const { data: club, error: clubErr } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    if (clubErr || !club) throw Object.assign(new Error(`No club found for id=${clubId}`), { code: 502 });
+    if (!club.platform_subdomain) throw Object.assign(new Error(`Club ${clubId} has no platform_subdomain configured`), { code: 502 });
+    const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
+    if (!apiKey) throw Object.assign(new Error(`No API key available for club ${clubId}`), { code: 502 });
+    if (!club.platform_api_key) {
+      req.log.warn({ clubId }, "Using env-var fallback for PodPlay API key — backfill clubs.platform_api_key");
+    }
+    const podplayBase = `https://${club.platform_subdomain}.podplay.app`;
+    const events = await fetchUpcomingEvents(podplayBase, apiKey);
     cache = { events, fetchedAt: Date.now(), clubId };
     res.json(events);
   } catch (err: any) {

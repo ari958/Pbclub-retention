@@ -1,6 +1,6 @@
 # Pulse / PB Club — Technical Developer Documentation
 
-> Updated: 2026-05-17 (Phase 0 multi-tenant refactor)  
+> Updated: 2026-05-18 (FIX 1–3: DB-first API key pattern, PB Club backfill, multi-tenant rule)  
 > Stack: React + TypeScript + Vite (dashboard) · Express 5 + Supabase (API server) · pnpm monorepo  
 > Supabase project ref: `knblhxfwvebxntoshiqm`  
 > Club ID (PB Club): `c8976e15-e002-4619-bb4b-b1a70f5cd7ab` — no longer hardcoded in routes; resolved via `requireClub` middleware from `?clubId=` or `?slug=` query param
@@ -84,6 +84,36 @@ The **reverse proxy** (`artifact.toml`) routes:
 - `/api` → Express API server  
 
 Services must not hard-code port numbers; they read `$PORT`.
+
+### Architectural Rule: Multi-Tenant by Default
+
+Every route handler, library function, and worker that calls an external API **must resolve credentials from the database first**. The env-var `PODPLAY_API_KEY` may only appear as a last-resort fallback (`?? process.env.PODPLAY_API_KEY`), never as the sole source of truth.
+
+**Pattern (route handlers):**
+```ts
+const { data: club } = await supabase.from("clubs")
+  .select("platform_api_key, platform_subdomain").eq("id", clubId).maybeSingle();
+const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
+if (!club.platform_api_key) req.log.warn({ clubId }, "env-var fallback for API key");
+```
+
+**Pattern (lib functions — private helpers accept `apiKey` as param):**
+```ts
+async function resolveCredentials(clubId: string | undefined, log): Promise<{ podplayBase: string; apiKey: string }> {
+  const { data } = await supabase.from("clubs")
+    .select("platform_api_key, platform_subdomain").eq("id", clubId).maybeSingle();
+  const apiKey = data?.platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
+  if (!data?.platform_api_key) log.warn({ clubId }, "env-var fallback — backfill clubs.platform_api_key");
+  return { podplayBase: `https://${data.platform_subdomain}.podplay.app`, apiKey };
+}
+```
+
+**Why:** the env-var is a global singleton; reading it as the primary source silently serves the wrong club's API key in any multi-club context.
+
+**Backfill checklist (when onboarding a new club):**  
+1. Insert club row with correct `platform_subdomain`, `platform_api_key`, `platform_org_id`.  
+2. Run `SELECT slug, platform_api_key IS NOT NULL AS has_key FROM clubs;` to confirm.  
+3. No code changes needed — the DB-first pattern picks up the key automatically.
 
 ---
 
