@@ -168,6 +168,7 @@ const cardHeadStyle: React.CSSProperties = {
 type EditorMode = "idle" | "new" | "edit-custom" | "view-builtin";
 
 function SyncLogPanel() {
+  const club = useClub();
   const [syncJob, setSyncJob] = useState<JobState | null>(null);
   const [importJob, setImportJob] = useState<JobState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -176,14 +177,14 @@ function SyncLogPanel() {
   const fetchJobs = useCallback(async () => {
     try {
       const [syncRes, importRes] = await Promise.all([
-        fetch("/api/sync/events/status"),
-        fetch("/api/import/status"),
+        fetch(clubApiUrl(club.slug, "/api/sync/events/status")),
+        fetch(clubApiUrl(club.slug, "/api/import/status")),
       ]);
       if (syncRes.ok) setSyncJob(await syncRes.json());
       if (importRes.ok) setImportJob(await importRes.json());
     } catch { }
     setLoading(false);
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
@@ -317,6 +318,7 @@ function SyncLogPanel() {
 }
 
 function RecapMilestonesPanel() {
+  const club = useClub();
   const [recapJob, setRecapJob] = useState<JobState | null>(null);
   const [milestoneJob, setMilestoneJob] = useState<JobState | null>(null);
   const [loading, setLoading] = useState(true);
@@ -334,14 +336,14 @@ function RecapMilestonesPanel() {
   const fetchJobs = useCallback(async () => {
     try {
       const [rr, mr] = await Promise.all([
-        fetch("/api/recap/monthly/status"),
-        fetch("/api/recap/milestones/status"),
+        fetch(clubApiUrl(club.slug, "/api/recap/monthly/status")),
+        fetch(clubApiUrl(club.slug, "/api/recap/milestones/status")),
       ]);
       if (rr.ok) setRecapJob(await rr.json());
       if (mr.ok) setMilestoneJob(await mr.json());
     } catch { }
     setLoading(false);
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
@@ -375,7 +377,7 @@ function RecapMilestonesPanel() {
       const now = new Date();
       const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
       const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-      const res = await fetch("/api/recap/monthly/test", {
+      const res = await fetch(clubApiUrl(club.slug, "/api/recap/monthly/test"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ player_id: previewPlayerId.trim(), month: priorMonth, year: priorYear, dry_run: true }),
@@ -397,7 +399,7 @@ function RecapMilestonesPanel() {
       const now = new Date();
       const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
       const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
-      await fetch("/api/recap/monthly", {
+      await fetch(clubApiUrl(club.slug, "/api/recap/monthly"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ month: priorMonth, year: priorYear }),
@@ -411,7 +413,7 @@ function RecapMilestonesPanel() {
   const handleRunMilestones = async () => {
     setMilestoneRunning(true);
     try {
-      await fetch("/api/recap/milestones", { method: "POST" });
+      await fetch(clubApiUrl(club.slug, "/api/recap/milestones"), { method: "POST" });
       setTimeout(fetchJobs, 1500);
     } finally {
       setMilestoneRunning(false);

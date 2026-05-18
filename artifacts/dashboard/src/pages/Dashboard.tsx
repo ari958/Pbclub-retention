@@ -297,8 +297,9 @@ export default function Dashboard() {
       )
       .eq("direction", "outbound")
       .eq("sent_by", "agent")
-      .eq("status", "pending");
-    if (res.data) setMessages(res.data as unknown as MessageQueueItem[]);
+      .eq("status", "pending")
+      .returns<MessageQueueItem[]>();
+    if (res.data) setMessages(res.data);
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -323,13 +324,14 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("players")
         .select(selectCols)
-        .range(offset, offset + 999);
+        .range(offset, offset + 999)
+        .returns<Player[]>();
       if (error?.code === "42703") {
         churnColAvailable = false;
         continue;
       }
       if (!data || data.length === 0) break;
-      allPlayers.push(...(data as unknown as Player[]));
+      allPlayers.push(...data);
       if (data.length < 1000) break;
       offset += 1000;
     }
@@ -342,7 +344,7 @@ export default function Dashboard() {
     setWinbackRate(winbackData?.conversion_rate_pct ?? null);
     await fetchMessages();
     setLoading(false);
-  }, [fetchMessages]);
+  }, [fetchMessages, club.slug]);
 
   const runAgent = useCallback(async (playerId: string) => {
     const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {
@@ -357,7 +359,7 @@ export default function Dashboard() {
       toast.error(data.error ?? "Agent run failed");
     }
     await fetchMessages();
-  }, [fetchMessages, toast]);
+  }, [fetchMessages, toast, club.slug]);
 
   const runBatchAgent = useCallback(async () => {
     setBatchRunning(true);
@@ -386,7 +388,7 @@ export default function Dashboard() {
       setBatchRunning(false);
       setBatchStatus(null);
     }
-  }, [players, fetchMessages, toast]);
+  }, [players, fetchMessages, toast, club.slug]);
 
   const syncAll = useCallback(async () => {
     setSyncRunning(true);
@@ -403,7 +405,7 @@ export default function Dashboard() {
       toast.error("Sync failed");
       setSyncRunning(false);
     }
-  }, [toast]);
+  }, [toast, club.slug]);
 
   useEffect(() => {
     fetch(clubApiUrl(club.slug, "/api/sync/events/status"))

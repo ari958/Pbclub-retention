@@ -141,8 +141,9 @@ export default function Messages() {
         "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
       )
       .order("id", { ascending: false })
-      .limit(200);
-    if (msgRes.data) setMessages(msgRes.data as unknown as MessageRow[]);
+      .limit(200)
+      .returns<MessageRow[]>();
+    if (msgRes.data) setMessages(msgRes.data);
     setLoading(false);
   };
 

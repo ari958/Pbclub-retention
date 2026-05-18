@@ -224,8 +224,9 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
           .from("players")
           .select(BASE_SELECT)
           .eq("id", playerId)
-          .single();
-        playerData = fallback.data as unknown as typeof pRes.data;
+          .single()
+          .returns<FullPlayer>();
+        playerData = fallback.data;
       }
       if (playerData) {
         const p = playerData as FullPlayer;
@@ -253,7 +254,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       .then((data) => setBuddies(data.buddies ?? []))
       .catch(() => setBuddies([]))
       .finally(() => setBuddiesLoading(false));
-  }, [playerId]);
+  }, [playerId, club.slug]);
 
   // Taxonomy depends on clubId — waits until club is known before fetching
   useEffect(() => {
