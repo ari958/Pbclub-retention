@@ -1,0 +1,57 @@
+Help me smoke test Phase 0. You handle the server side, I'll 
+handle the browser side.
+
+PART 1 — Server prep (you do this)
+
+1. Stop both api-server and dashboard if running. Start fresh:
+     cd artifacts/api-server && npm run dev
+     cd artifacts/dashboard && npm run dev
+   Confirm both boot with no errors. Paste the startup logs.
+
+2. Run these API smoke checks via curl and paste results:
+   
+   a) curl -s http://localhost:8080/api/clubs | head -50
+      Expected: JSON with a clubs array containing pb-club
+   
+   b) curl -s "http://localhost:8080/api/clubs/by-slug/pb-club"
+      Expected: { "club": { "slug": "pb-club", ... } }
+   
+   c) curl -s "http://localhost:8080/api/clubs/by-slug/nonexistent"
+      Expected: HTTP 404, { "error": "Club not found", ... }
+   
+   d) curl -s "http://localhost:8080/api/players"
+      Expected: HTTP 400, error about missing clubId/slug 
+      (this proves requireClub is gating)
+   
+   e) curl -s "http://localhost:8080/api/players?slug=pb-club" | head -c 500
+      Expected: JSON with player data
+   
+   f) curl -s "http://localhost:8080/api/players?slug=nonexistent"
+      Expected: HTTP 404
+   
+   g) curl -s "http://localhost:8080/api/players?slug=BAD!SLUG"
+      Expected: HTTP 400, "Invalid slug format"
+
+3. Insert a test club for me to test against:
+   
+   INSERT INTO clubs (id, slug, platform_subdomain, name, 
+                      timezone, platform)
+   VALUES (gen_random_uuid(), 'test-club', 'testclub', 
+           'Test Club', 'America/Los_Angeles', 'podplay');
+   
+   Confirm the row exists with:
+   SELECT id, slug, name FROM clubs ORDER BY name;
+
+4. Then start tailing the api-server logs and leave them visible. 
+   I'll do the browser test next and we'll watch the logs together 
+   for anything weird (errors, 500s, 404s, missing club_id in 
+   queries).
+
+5. After I report back from the browser test, clean up:
+   
+   DELETE FROM clubs WHERE slug = 'test-club';
+
+PART 2 — Browser test (I do this myself once you confirm part 1 is ready)
+
+Don't proceed past Part 1 step 4 until I tell you the browser 
+test is done. Then you do step 5.

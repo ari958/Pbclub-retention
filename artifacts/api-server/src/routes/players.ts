@@ -23,6 +23,31 @@ async function verifyPlayerBelongsToClub(
   return !!data;
 }
 
+// ─── GET /api/players — paginated list for the active club ───────────────────
+
+router.get("/players", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const limit = Math.min(Number(req.query.limit) || 1000, 1000);
+  const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+  const { data, error } = await supabase
+    .from("players")
+    .select(
+      "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating, churn_risk, churn_score"
+    )
+    .eq("club_id", clubId)
+    .order("name")
+    .range(offset, offset + limit - 1);
+
+  if (error) {
+    req.log.error({ error }, "GET /players list failed");
+    res.status(500).json({ error: "Failed to fetch players" });
+    return;
+  }
+
+  res.json({ players: data ?? [], total: (data ?? []).length, offset, limit });
+});
+
 // ─── GET /api/players/:id/profile ────────────────────────────────────────────
 
 router.get("/players/:id/profile", requireClub, async (req, res) => {
