@@ -2,6 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { useToast } from "@/components/Toast";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 
 const D = {
   bg: "#161b22",
@@ -112,7 +113,7 @@ function Chip({ label, active, onClick }: { label: string; active: boolean; onCl
 
 export default function SessionFeedback() {
   const toast = useToast();
-  const [clubName, setClubName] = useState("");
+  const club = useClub();
 
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
@@ -125,10 +126,6 @@ export default function SessionFeedback() {
   const [tSaving, setTSaving] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    supabase.from("clubs").select("name").limit(1).maybeSingle()
-      .then(({ data }) => { if (data?.name) setClubName(data.name); });
-  }, []);
 
   useEffect(() => {
     const fetchSessions = async () => {
@@ -174,7 +171,7 @@ export default function SessionFeedback() {
   const fetchTemplate = useCallback(async () => {
     setTemplateLoading(true);
     try {
-      const res = await fetch("/api/templates");
+      const res = await fetch(clubApiUrl(club.slug, "/api/templates"));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const all: MessageTemplate[] = await res.json();
       const found = all.find((t) => t.use_case_tags.includes("session_feedback")) ?? null;
@@ -191,7 +188,7 @@ export default function SessionFeedback() {
     if (!tName.trim() || !tBody.trim()) { toast.error("Name and body are required"); return; }
     setTSaving(true);
     try {
-      const res = await fetch(`/api/templates/${template.id}`, {
+      const res = await fetch(clubApiUrl(club.slug, `/api/templates/${template.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: template.use_case_tags }),
@@ -223,7 +220,7 @@ export default function SessionFeedback() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar clubName={clubName} />
+      <Sidebar />
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{

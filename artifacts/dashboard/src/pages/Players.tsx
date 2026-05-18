@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
 import { BulkMessageModal } from "@/components/BulkMessageModal";
+import { useClub } from "@/lib/ClubContext";
 import {
   getEngagementState,
   relativeTime,
@@ -243,8 +244,6 @@ function SkeletonRows({ cols }: { cols: number }) {
 
 export default function Players() {
   const [players, setPlayers] = useState<Player[]>([]);
-  const [clubName, setClubName] = useState("");
-  const [clubId, setClubId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [misfitPlayerIds, setMisfitPlayerIds] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState("");
@@ -258,12 +257,9 @@ export default function Players() {
   const [page, setPage] = useState(1);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
   const [bulkModalOpen, setBulkModalOpen] = useState(false);
+  const club = useClub();
 
   const fetchData = async () => {
-    const clubRes = await supabase.from("clubs").select("id, name").limit(1).maybeSingle();
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
-    if (clubRes.data?.id) setClubId(clubRes.data.id);
-
     const allPlayers: Player[] = [];
     let offset = 0;
     while (true) {
@@ -441,7 +437,7 @@ export default function Players() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar clubName={clubName} />
+      <Sidebar />
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{
@@ -727,7 +723,7 @@ export default function Players() {
 
       <PlayerDrawer
         playerId={drawerPlayerId}
-        clubId={clubId}
+        clubId={club.id}
         onClose={() => setDrawerPlayerId(null)}
         onDataChanged={fetchData}
       />

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
+import { useClub } from "@/lib/ClubContext";
 import type { MessageStatus } from "@/lib/types";
 
 const D = {
@@ -128,24 +129,20 @@ function StatusBadge({
 
 export default function Messages() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
-  const [clubName, setClubName] = useState("");
   const [loading, setLoading] = useState(true);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
   const [tab, setTab] = useState<FilterTab>("all");
+  const club = useClub();
 
   const fetchData = async () => {
-    const [msgRes, clubRes] = await Promise.all([
-      supabase
-        .from("messages")
-        .select(
-          "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
-        )
-        .order("id", { ascending: false })
-        .limit(200),
-      supabase.from("clubs").select("name").limit(1).maybeSingle(),
-    ]);
-    if (msgRes.data) setMessages(msgRes.data as MessageRow[]);
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
+    const msgRes = await supabase
+      .from("messages")
+      .select(
+        "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
+      )
+      .order("id", { ascending: false })
+      .limit(200);
+    if (msgRes.data) setMessages(msgRes.data as unknown as MessageRow[]);
     setLoading(false);
   };
 
@@ -170,7 +167,7 @@ export default function Messages() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar clubName={clubName} />
+      <Sidebar />
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{
@@ -374,7 +371,7 @@ export default function Messages() {
           </div>
         </main>
       </div>
-      <PlayerDrawer playerId={drawerPlayerId} onClose={() => setDrawerPlayerId(null)} />
+      <PlayerDrawer playerId={drawerPlayerId} clubId={club.id} onClose={() => setDrawerPlayerId(null)} />
     </div>
   );
 }

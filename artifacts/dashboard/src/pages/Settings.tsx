@@ -4,6 +4,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { useToast } from "@/components/Toast";
 import { toTitleCase } from "@/lib/helpers";
 import type { MessageTemplate } from "@/lib/types";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 
 const D = {
   bg: "#161b22",
@@ -541,11 +542,12 @@ function RecapMilestonesPanel() {
 
 export default function Settings() {
   const toast = useToast();
+  const club = useClub();
 
-  const [club, setClub] = useState<ClubRow | null>(null);
+  const [clubRow, setClubRow] = useState<ClubRow | null>(null);
   const [clubLoading, setClubLoading] = useState(true);
   const [syncTime, setSyncTime] = useState("02:00");
-  const [timezone, setTimezone] = useState("America/New_York");
+  const [timezone, setTimezone] = useState(club.timezone);
   const [saving, setSaving] = useState(false);
   const [hasScheduleColumns, setHasScheduleColumns] = useState(true);
 
@@ -563,40 +565,39 @@ export default function Settings() {
   const readOnly = editorMode === "view-builtin";
 
   useEffect(() => {
-    supabase.from("clubs").select("id, name, agent_config, scheduled_sync_time, timezone").limit(1).maybeSingle()
+    supabase.from("clubs").select("id, name, agent_config, scheduled_sync_time, timezone").eq("id", club.id).maybeSingle()
       .then(({ data, error }) => {
         if (error?.message?.includes("scheduled_sync_time") || error?.code === "42703") {
           setHasScheduleColumns(false);
-          supabase.from("clubs").select("id, name, agent_config").limit(1).maybeSingle()
-            .then(({ data: fallback }) => { if (fallback) setClub(fallback as ClubRow); setClubLoading(false); });
+          supabase.from("clubs").select("id, name, agent_config").eq("id", club.id).maybeSingle()
+            .then(({ data: fallback }) => { if (fallback) setClubRow(fallback as ClubRow); setClubLoading(false); });
         } else {
           if (data) {
-            setClub(data as ClubRow);
+            setClubRow(data as ClubRow);
             setSyncTime(data.scheduled_sync_time ?? "02:00");
-            setTimezone(data.timezone ?? "America/New_York");
+            setTimezone(data.timezone ?? club.timezone);
           }
           setClubLoading(false);
         }
       });
-  }, []);
+  }, [club.id, club.timezone]);
 
   const fetchTemplates = useCallback(async () => {
     setTemplatesLoading(true);
     try {
-      const res = await fetch("/api/templates");
+      const res = await fetch(clubApiUrl(club.slug, "/api/templates"));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setTemplates(await res.json());
     } catch { toast.error("Failed to load templates"); }
     finally { setTemplatesLoading(false); }
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
 
   const saveSchedule = async () => {
-    if (!club) return;
     setSaving(true);
     try {
-      const res = await fetch(`/api/clubs/${club.id}/settings`, {
+      const res = await fetch(clubApiUrl(club.slug, `/api/clubs/${club.id}/settings`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduled_sync_time: syncTime, timezone }),
@@ -605,7 +606,7 @@ export default function Settings() {
         const d = await res.json().catch(() => ({}));
         toast.error(d.error ?? "Failed to save schedule");
       } else {
-        setClub((prev) => prev ? { ...prev, scheduled_sync_time: syncTime, timezone } : prev);
+        setClubRow((prev) => prev ? { ...prev, scheduled_sync_time: syncTime, timezone } : prev);
         toast.success("Schedule saved");
       }
     } finally { setSaving(false); }
@@ -637,9 +638,9 @@ export default function Settings() {
     try {
       let res: Response;
       if (editorMode === "new") {
-        res = await fetch("/api/templates", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
+        res = await fetch(clubApiUrl(club.slug, "/api/templates"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
       } else {
-        res = await fetch(`/api/templates/${editingId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
+        res = await fetch(clubApiUrl(club.slug, `/api/templates/${editingId}`), { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: tName.trim(), body: tBody.trim(), use_case_tags: tTags }) });
       }
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -652,12 +653,12 @@ export default function Settings() {
     finally { setTSaving(false); }
   };
 
-  const configEntries: [string, unknown][] = club?.agent_config ? Object.entries(club.agent_config) : [];
+  const configEntries: [string, unknown][] = clubRow?.agent_config ? Object.entries(clubRow.agent_config) : [];
   const editorOpen = editorMode !== "idle";
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar clubName={club?.name ?? ""} />
+      <Sidebar />
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{
@@ -696,7 +697,7 @@ export default function Settings() {
                 <div style={cardStyle}>
                   <div style={cardHeadStyle}>Club</div>
                   <div style={{ padding: "14px 20px" }}>
-                    <div style={{ fontWeight: 600, fontSize: 18, color: D.text }}>{club?.name ?? "—"}</div>
+                    <div style={{ fontWeight: 600, fontSize: 18, color: D.text }}>{club.name}</div>
                   </div>
                 </div>
 
@@ -736,8 +737,8 @@ export default function Settings() {
                       </div>
                       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 4 }}>
                         <span style={{ fontSize: 11, color: D.faint, fontFamily: "var(--font-mono)" }}>
-                          {club?.scheduled_sync_time
-                            ? `Currently: ${club.scheduled_sync_time} ${club.timezone ?? "UTC"}`
+                          {clubRow?.scheduled_sync_time
+                            ? `Currently: ${clubRow.scheduled_sync_time} ${clubRow.timezone ?? "UTC"}`
                             : "Not set — defaults to 02:00"}
                         </span>
                         <button

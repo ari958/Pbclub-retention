@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/Toast";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 import {
   getEngagementState,
   relativeTime,
@@ -132,12 +133,14 @@ function ConfirmDialog({ message, onConfirm, onCancel }: { message: string; onCo
 
 // ─── Date formatting ──────────────────────────────────────────────────────────
 
-const ET_DATE_FMT = new Intl.DateTimeFormat("en-US", {
-  timeZone: "America/New_York",
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-});
+function makeDateFmt(timezone: string): Intl.DateTimeFormat {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone,
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
 
 function visitLabel(visitCount: number): string {
   const n = visitCount + 1;
@@ -252,12 +255,11 @@ function RecTile({
 export default function Dashboard() {
   const navigate = useNavigate();
   const toast = useToast();
+  const club = useClub();
 
   // ─── Core state ─────────────────────────────────────────────────────────────
   const [players, setPlayers] = useState<Player[]>([]);
   const [messages, setMessages] = useState<MessageQueueItem[]>([]);
-  const [clubName, setClubName] = useState("");
-  const [clubId, setClubId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [batchRunning, setBatchRunning] = useState(false);
   const [batchStatus, setBatchStatus] = useState<string | null>(null);
@@ -300,8 +302,7 @@ export default function Dashboard() {
   }, []);
 
   const fetchData = useCallback(async () => {
-    const [clubRes, outboundRes, inboundRes, winbackData] = await Promise.all([
-      supabase.from("clubs").select("id, name").limit(1).maybeSingle(),
+    const [outboundRes, inboundRes, winbackData] = await Promise.all([
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "outbound")
         .eq("status", "sent")
@@ -309,7 +310,7 @@ export default function Dashboard() {
       supabase.from("messages").select("id", { count: "exact", head: true })
         .eq("direction", "inbound")
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()),
-      fetch("/api/players/winback-stats").then((r) => r.ok ? r.json() : null).catch(() => null),
+      fetch(clubApiUrl(club.slug, "/api/players/winback-stats")).then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
 
     const allPlayers: Player[] = [];
@@ -328,14 +329,12 @@ export default function Dashboard() {
         continue;
       }
       if (!data || data.length === 0) break;
-      allPlayers.push(...(data as Player[]));
+      allPlayers.push(...(data as unknown as Player[]));
       if (data.length < 1000) break;
       offset += 1000;
     }
 
     setPlayers(allPlayers);
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
-    if (clubRes.data?.id) setClubId(clubRes.data.id);
     const outCount = outboundRes.count ?? 0;
     const inCount = inboundRes.count ?? 0;
     setSentThisMonth(outCount);
@@ -346,7 +345,7 @@ export default function Dashboard() {
   }, [fetchMessages]);
 
   const runAgent = useCallback(async (playerId: string) => {
-    const res = await fetch("/api/agent/run", {
+    const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ player_id: playerId }),
@@ -374,7 +373,7 @@ export default function Dashboard() {
       let generated = 0;
       for (let i = 0; i < targets.length; i++) {
         setBatchStatus(`Generating ${i + 1} of ${targets.length}…`);
-        const res = await fetch("/api/agent/run", {
+        const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ player_id: targets[i].id }),
@@ -392,7 +391,7 @@ export default function Dashboard() {
   const syncAll = useCallback(async () => {
     setSyncRunning(true);
     try {
-      const res = await fetch("/api/sync/events", { method: "POST" });
+      const res = await fetch(clubApiUrl(club.slug, "/api/sync/events"), { method: "POST" });
       if (res.ok) {
         toast.success("Sync started — check Settings → Sync Log for progress");
       } else {
@@ -407,16 +406,16 @@ export default function Dashboard() {
   }, [toast]);
 
   useEffect(() => {
-    fetch("/api/sync/events/status")
+    fetch(clubApiUrl(club.slug, "/api/sync/events/status"))
       .then((r) => r.json())
       .then((data) => { if (data.status === "running") setSyncRunning(true); })
       .catch(() => {});
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => {
     if (!syncRunning) return;
     const interval = setInterval(() => {
-      fetch("/api/sync/events/status")
+      fetch(clubApiUrl(club.slug, "/api/sync/events/status"))
         .then((r) => r.json())
         .then((data) => {
           if (data.status !== "running") {
@@ -437,7 +436,7 @@ export default function Dashboard() {
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await fetch("/api/social-graph/staff-intro-cards");
+        const res = await fetch(clubApiUrl(club.slug, "/api/social-graph/staff-intro-cards"));
         if (res.ok) {
           const d = await res.json();
           setIntroCards(d.cards ?? []);
@@ -476,7 +475,7 @@ export default function Dashboard() {
   const sendMessage = async (messageId: string) => {
     setSending(messageId);
     try {
-      const res = await fetch("/api/messages/send", {
+      const res = await fetch(clubApiUrl(club.slug, "/api/messages/send"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message_id: messageId }),
@@ -508,7 +507,7 @@ export default function Dashboard() {
   const skipMessage = async (messageId: string) => {
     setSkipping(messageId);
     try {
-      const res = await fetch("/api/messages/skip", {
+      const res = await fetch(clubApiUrl(club.slug, "/api/messages/skip"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message_id: messageId }),
@@ -524,7 +523,7 @@ export default function Dashboard() {
   const saveEdit = async (messageId: string) => {
     setSaving(true);
     try {
-      const res = await fetch(`/api/messages/${messageId}/draft`, {
+      const res = await fetch(clubApiUrl(club.slug, `/api/messages/${messageId}/draft`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ body: draftBody }),
@@ -579,7 +578,7 @@ export default function Dashboard() {
         title: `${highRiskPlayers.length} players at high churn risk`,
         body: "Non-members who haven't been back in 60+ days. Every week you wait, more are gone for good.",
         action: "Start with top 10 →",
-        navigate: "/players",
+        navigate: `/c/${club.slug}/players`,
         navigateState: { filter: "high-churn" },
       });
     }
@@ -606,7 +605,7 @@ export default function Dashboard() {
         title: `${messages.length} message${messages.length !== 1 ? "s" : ""} ready to send`,
         body,
         action: "Review outreach queue →",
-        navigate: "/messages",
+        navigate: `/c/${club.slug}/messages`,
       });
     }
 
@@ -619,7 +618,7 @@ export default function Dashboard() {
         title: `${needsAssessment.length} players need assessment`,
         body: "No progress status set. Assessing players helps the agent recommend the right programs and level up your coaching data.",
         action: "Go to Progress →",
-        navigate: "/assessments",
+        navigate: `/c/${club.slug}/assessments`,
       });
     }
 
@@ -633,7 +632,7 @@ export default function Dashboard() {
         title: `${newPlayerCount} new player${newPlayerCount !== 1 ? "s" : ""} this week`,
         body: "First-timers joining sessions this week. Introduce them to familiar faces before they drift.",
         action: "See new player intros →",
-        navigate: "/feedback",
+        navigate: `/c/${club.slug}/feedback`,
       });
     }
 
@@ -666,7 +665,7 @@ export default function Dashboard() {
         title: `${displayName} needs a nudge today`,
         body: `${firstName} is at high churn risk and hasn't been back in ${timeAway}. A personal message could bring them back.`,
         action: "Send outreach →",
-        navigate: "/players",
+        navigate: `/c/${club.slug}/players`,
         navigateState: { openPlayer: urgentLapsing.id },
       });
     }
@@ -680,7 +679,7 @@ export default function Dashboard() {
         title: "Session ratings not set up yet",
         body: "Post-session feedback texts will help you track level fit and improve session quality automatically.",
         action: "Set up Session Ratings →",
-        navigate: "/feedback",
+        navigate: `/c/${club.slug}/feedback`,
       });
     }
 
@@ -693,7 +692,7 @@ export default function Dashboard() {
         title: "No win-backs recorded yet",
         body: "Send outreach to inactive players to start building your win-back rate. Even 1–2 returning players per week makes a difference.",
         action: "View inactive players →",
-        navigate: "/players",
+        navigate: `/c/${club.slug}/players`,
         navigateState: { filter: "inactive" },
       });
     }
@@ -701,7 +700,7 @@ export default function Dashboard() {
     const urgencyOrder: Record<RecUrgency, number> = { critical: 0, high: 1, medium: 2, good: 3, info: 4 };
     recs.sort((a, b) => urgencyOrder[a.urgency] - urgencyOrder[b.urgency]);
     return recs;
-  }, [players, messages, introCards, responseRate, winbackRate, highRiskPlayers, highRiskDrifting, needsAssessment]);
+  }, [players, messages, introCards, responseRate, winbackRate, highRiskPlayers, highRiskDrifting, needsAssessment, club.slug]);
 
   const DISMISS_TTL = 48 * 60 * 60 * 1000;
   const visibleRecs = recommendations.filter((r) => {
@@ -766,7 +765,7 @@ export default function Dashboard() {
 
   const introGrouped = new Map<string, typeof newPlayersToShow>();
   for (const item of newPlayersToShow) {
-    const key = ET_DATE_FMT.format(new Date(item.card.start_time)).toUpperCase().replace(",", "");
+    const key = makeDateFmt(club.timezone).format(new Date(item.card.start_time)).toUpperCase().replace(",", "");
     if (!introGrouped.has(key)) introGrouped.set(key, []);
     introGrouped.get(key)!.push(item);
   }
@@ -777,7 +776,7 @@ export default function Dashboard() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: C.surface }}>
-      <Sidebar clubName={clubName} messageCount={messages.length} />
+      <Sidebar messageCount={messages.length} />
 
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: C.surface }}>
 
@@ -880,11 +879,11 @@ export default function Dashboard() {
           {/* ── Stat Strip ── */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, padding: "16px 24px 0" }}>
             {[
-              { label: "ACTIVE PLAYERS", value: active, color: C.green, sub: "playing regularly", onClick: () => navigate("/players") },
+              { label: "ACTIVE PLAYERS", value: active, color: C.green, sub: "playing regularly", onClick: () => navigate(`/c/${club.slug}/players`) },
               highRiskPlayers.length > 10
-                ? { label: "HIGH CHURN RISK", value: highRiskPlayers.length, color: "#cf222e", sub: "need outreach now", onClick: () => navigate("/players") }
-                : { label: "NEED ATTENTION", value: needsAttentionCount, color: C.red, sub: "drifting or inactive", onClick: () => navigate("/players") },
-              { label: "OUTREACH QUEUE", value: messages.length, color: C.accent, sub: "messages ready to send", onClick: () => navigate("/messages") },
+                ? { label: "HIGH CHURN RISK", value: highRiskPlayers.length, color: "#cf222e", sub: "need outreach now", onClick: () => navigate(`/c/${club.slug}/players`) }
+                : { label: "NEED ATTENTION", value: needsAttentionCount, color: C.red, sub: "drifting or inactive", onClick: () => navigate(`/c/${club.slug}/players`) },
+              { label: "OUTREACH QUEUE", value: messages.length, color: C.accent, sub: "messages ready to send", onClick: () => navigate(`/c/${club.slug}/messages`) },
             ].map((card) => (
               <div
                 key={card.label}
@@ -915,7 +914,7 @@ export default function Dashboard() {
                 title="Needs Attention"
                 badge={`${needsAttentionCount}`}
                 urgentBadge
-                onView={() => navigate("/players")}
+                onView={() => navigate(`/c/${club.slug}/players`)}
               />
               {atRiskPlayers.length === 0 ? (
                 <div style={{ padding: "28px 14px", textAlign: "center", color: C.textSecondary, fontSize: 12 }}>
@@ -962,7 +961,7 @@ export default function Dashboard() {
                     );
                   })}
                   <div
-                    onClick={() => navigate("/players")}
+                    onClick={() => navigate(`/c/${club.slug}/players`)}
                     style={{ padding: "8px 14px", textAlign: "center", fontSize: 10, color: C.accent, cursor: "pointer", borderTop: `1px solid ${C.innerBorder}`, fontWeight: 500 }}
                   >
                     View all {needsAttentionCount} players →
@@ -973,7 +972,7 @@ export default function Dashboard() {
 
             {/* Row 1, col 3: Club Health */}
             <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, overflow: "hidden" }}>
-              <PanelHeader title="Club Health" viewLabel="View Players →" onView={() => navigate("/players")} />
+              <PanelHeader title="Club Health" viewLabel="View Players →" onView={() => navigate(`/c/${club.slug}/players`)} />
               <div style={{ padding: "12px 14px" }}>
                 <div style={{ display: "flex", height: 24, borderRadius: 5, overflow: "hidden", gap: 1, marginBottom: 10 }}>
                   {[
@@ -1026,7 +1025,7 @@ export default function Dashboard() {
               <PanelHeader
                 title="Outreach Queue"
                 badge={`${messages.length} pending`}
-                onView={() => navigate("/messages")}
+                onView={() => navigate(`/c/${club.slug}/messages`)}
               />
               {queueToShow.length === 0 ? (
                 <div style={{ padding: "28px 14px", textAlign: "center", color: C.textSecondary, fontSize: 12 }}>
@@ -1136,7 +1135,7 @@ export default function Dashboard() {
                     );
                   })}
                   <div
-                    onClick={() => navigate("/messages")}
+                    onClick={() => navigate(`/c/${club.slug}/messages`)}
                     style={{ padding: "8px 14px", textAlign: "center", fontSize: 10, color: C.accent, cursor: "pointer", borderTop: `1px solid ${C.innerBorder}`, fontWeight: 500 }}
                   >
                     View all {messages.length} messages →
@@ -1151,7 +1150,7 @@ export default function Dashboard() {
                 title="New Player Intros"
                 badge="7 days"
                 viewLabel="View All →"
-                onView={() => navigate("/feedback")}
+                onView={() => navigate(`/c/${club.slug}/feedback`)}
               />
               {introCardsLoading ? (
                 <div style={{ padding: "28px 14px", textAlign: "center", color: C.textSecondary, fontSize: 12 }}>
@@ -1190,7 +1189,7 @@ export default function Dashboard() {
                   ))}
                   {totalNewPlayers > 4 && (
                     <div
-                      onClick={() => navigate("/feedback")}
+                      onClick={() => navigate(`/c/${club.slug}/feedback`)}
                       style={{ padding: "8px 14px", textAlign: "center", fontSize: 10, color: C.accent, cursor: "pointer", borderTop: `1px solid ${C.innerBorder}`, fontWeight: 500 }}
                     >
                       View {totalNewPlayers - 4} more this week →
@@ -1206,7 +1205,7 @@ export default function Dashboard() {
         {drawerPlayerId && (
           <PlayerDrawer
             playerId={drawerPlayerId}
-            clubId={clubId ?? ""}
+            clubId={club.id}
             onClose={() => setDrawerPlayerId(null)}
           />
         )}

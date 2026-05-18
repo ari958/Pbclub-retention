@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { relativeTime } from "@/lib/helpers";
 import type { Player } from "@/lib/types";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 
 const D = {
   bg: "#161b22",
@@ -105,15 +106,12 @@ function ProgPill({ status }: { status: string }) {
 export default function Assessments() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [recentPlayers, setRecentPlayers] = useState<Player[]>([]);
-  const [clubName, setClubName] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadingKey, setLoadingKey] = useState<string | null>(null);
   const [checkmarks, setCheckmarks] = useState<Set<string>>(new Set());
+  const club = useClub();
 
   const fetchData = async () => {
-    const clubRes = await supabase.from("clubs").select("name").limit(1).maybeSingle();
-    if (clubRes.data?.name) setClubName(clubRes.data.name);
-
     const allPlayers: Player[] = [];
     let offset = 0;
     while (true) {
@@ -148,7 +146,7 @@ export default function Assessments() {
 
   const updateProgression = async (playerId: string, status: string) => {
     setLoadingKey(playerId + status);
-    await fetch(`/api/players/${playerId}/progression`, {
+    await fetch(clubApiUrl(club.slug, `/api/players/${playerId}/progression`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status, assessed_by: "operator" }),
@@ -184,7 +182,7 @@ export default function Assessments() {
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar clubName={clubName} />
+      <Sidebar />
       <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
         <header
           style={{

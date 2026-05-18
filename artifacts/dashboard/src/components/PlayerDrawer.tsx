@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "./Toast";
 import { relativeTime, formatDate, getEngagementState, toTitleCase, STATE_COLORS } from "@/lib/helpers";
 import type { ProgressionStatus } from "@/lib/types";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 
 interface FullPlayer {
   id: string;
@@ -120,6 +121,7 @@ function MembershipPill({ status }: { status: string | null }) {
 }
 
 export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: PlayerDrawerProps) {
+  const club = useClub();
   const toast = useToast();
   const [player, setPlayer] = useState<FullPlayer | null>(null);
   const [attendance, setAttendance] = useState<Attendance[]>([]);
@@ -223,7 +225,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
           .select(BASE_SELECT)
           .eq("id", playerId)
           .single();
-        playerData = fallback.data;
+        playerData = fallback.data as unknown as typeof pRes.data;
       }
       if (playerData) {
         const p = playerData as FullPlayer;
@@ -238,7 +240,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
 
     // Fetch confidence data via API
     setLoadingConfidence(true);
-    fetch(`/api/players/${playerId}/confidence`)
+    fetch(clubApiUrl(club.slug, `/api/players/${playerId}/confidence`))
       .then((r) => r.ok ? r.json() : [])
       .then((data) => setConfidence(Array.isArray(data) ? data : []))
       .catch(() => setConfidence([]))
@@ -246,7 +248,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
 
     // Fetch Court Crew (buddy pairs) in parallel
     setBuddiesLoading(true);
-    fetch(`/api/social-graph/player/${playerId}/buddies`)
+    fetch(clubApiUrl(club.slug, `/api/social-graph/player/${playerId}/buddies`))
       .then((r) => r.ok ? r.json() : { buddies: [] })
       .then((data) => setBuddies(data.buddies ?? []))
       .catch(() => setBuddies([]))
@@ -269,7 +271,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
   const updateProgression = async (val: ProgressionStatus) => {
     if (!player) return;
     setSavingProgression(true);
-    const res = await fetch(`/api/players/${player.id}/progression`, {
+    const res = await fetch(clubApiUrl(club.slug, `/api/players/${player.id}/progression`), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: val, assessed_by: "operator" }),
@@ -290,7 +292,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     const trimmed = notesDraft.trim();
     const current = player.notes ?? "";
     if (trimmed === current) return;
-    await fetch(`/api/players/${player.id}/notes`, {
+    await fetch(clubApiUrl(club.slug, `/api/players/${player.id}/notes`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ notes: trimmed || null }),
@@ -306,7 +308,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     if (player.coach_assigned_level === level) return;
     setSavingCoachLevel(true);
     try {
-      const res = await fetch(`/api/players/${player.id}/coach-level`, {
+      const res = await fetch(clubApiUrl(club.slug, `/api/players/${player.id}/coach-level`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ coach_assigned_level: level }),
@@ -332,7 +334,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     if (!player) return;
     const trimmed = coachLevelNotesDraft.trim();
     if (trimmed === (player.coach_level_notes ?? "")) return;
-    await fetch(`/api/players/${player.id}/coach-level-notes`, {
+    await fetch(clubApiUrl(club.slug, `/api/players/${player.id}/coach-level-notes`), {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ coach_level_notes: trimmed || null }),
@@ -353,7 +355,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     if (parsed === player.dupr_rating) return;
     setSavingDupr(true);
     try {
-      const res = await fetch(`/api/players/${player.id}`, {
+      const res = await fetch(clubApiUrl(club.slug, `/api/players/${player.id}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dupr_rating: parsed }),
@@ -366,7 +368,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
         if (duprTimer.current) clearTimeout(duprTimer.current);
         duprTimer.current = setTimeout(() => setDuprSaved(false), 2000);
         // Refresh confidence scores
-        fetch(`/api/players/${player.id}/confidence`).then((r) => r.ok ? r.json() : []).then((d) => setConfidence(Array.isArray(d) ? d : [])).catch(() => {});
+        fetch(clubApiUrl(club.slug, `/api/players/${player.id}/confidence`)).then((r) => r.ok ? r.json() : []).then((d) => setConfidence(Array.isArray(d) ? d : [])).catch(() => {});
       } else {
         const d = await res.json().catch(() => ({}));
         toast.error(d.error ?? "Failed to save DUPR rating");
@@ -383,7 +385,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     setRunningAgent(true);
     setAgentResult(null);
     try {
-      const res = await fetch("/api/agent/run", {
+      const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ player_id: player.id }),
@@ -420,7 +422,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
         .single();
       const msgId = (convData as any)?.messages?.[0]?.id;
       if (msgId) {
-        const res = await fetch("/api/messages/send", {
+        const res = await fetch(clubApiUrl(club.slug, "/api/messages/send"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ message_id: msgId }),
@@ -669,7 +671,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                     {player.coach_assigned_level && (
                       <button
                         onClick={() => {
-                          fetch(`/api/players/${player.id}/coach-level`, {
+                          fetch(clubApiUrl(club.slug, `/api/players/${player.id}/coach-level`), {
                             method: "PATCH",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ coach_assigned_level: null }),

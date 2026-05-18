@@ -1,6 +1,7 @@
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { Component, type ReactNode, useEffect, useState } from "react";
+import { ClubProvider, useClubStatus } from "./lib/ClubContext";
 import Dashboard from "./pages/Dashboard";
 import Players from "./pages/Players";
 import Assessments from "./pages/Assessments";
@@ -173,6 +174,91 @@ function OnboardingGuard({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+// ─── Club layout ──────────────────────────────────────────────────────────────
+// Mounts ClubProvider (which reads :slug from the URL) and gates the child
+// routes on the resolved club status.
+
+function ClubGate() {
+  const ctx = useClubStatus();
+
+  if (ctx.status === "loading") {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0d1117",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: "#6e7681",
+        }}
+      >
+        Loading club…
+      </div>
+    );
+  }
+
+  if (ctx.status === "not_found") {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0d1117",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 13,
+          color: "#6e7681",
+          gap: 8,
+        }}
+      >
+        <span style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase", color: "#cf222e" }}>
+          Club not found
+        </span>
+        <span style={{ color: "#30363d" }}>/c/{ctx.slug}</span>
+      </div>
+    );
+  }
+
+  if (ctx.status === "error") {
+    return (
+      <div
+        style={{
+          minHeight: "100vh",
+          background: "#0d1117",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 13,
+          color: "#cf222e",
+          gap: 8,
+        }}
+      >
+        <span style={{ fontSize: 11, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+          Error loading club
+        </span>
+        <span style={{ color: "#8b949e", fontSize: 12 }}>{ctx.error}</span>
+      </div>
+    );
+  }
+
+  return <Outlet />;
+}
+
+function ClubLayout() {
+  return (
+    <ClubProvider>
+      <ClubGate />
+    </ClubProvider>
+  );
+}
+
 // ─── App ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -184,55 +270,62 @@ export default function App() {
             {/* Standalone onboarding flow — no sidebar */}
             <Route path="/onboarding" element={<Onboarding />} />
 
-            {/* Dashboard routes */}
-            <Route
-              path="/"
-              element={
-                <ErrorBoundary pageName="Dashboard">
-                  <Dashboard />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/players"
-              element={
-                <ErrorBoundary pageName="Players">
-                  <Players />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/assessments"
-              element={
-                <ErrorBoundary pageName="Assessments">
-                  <Assessments />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/messages"
-              element={
-                <ErrorBoundary pageName="Messages">
-                  <Messages />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/settings"
-              element={
-                <ErrorBoundary pageName="Settings">
-                  <Settings />
-                </ErrorBoundary>
-              }
-            />
-            <Route
-              path="/feedback"
-              element={
-                <ErrorBoundary pageName="Session Feedback">
-                  <SessionFeedback />
-                </ErrorBoundary>
-              }
-            />
+            {/* Root redirect → default club (single-club Phase 0) */}
+            <Route path="/" element={<Navigate to="/c/pb-club/dashboard" replace />} />
+
+            {/* Club-scoped routes — all gated by ClubLayout */}
+            <Route path="/c/:slug" element={<ClubLayout />}>
+              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route
+                path="dashboard"
+                element={
+                  <ErrorBoundary pageName="Dashboard">
+                    <Dashboard />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="players"
+                element={
+                  <ErrorBoundary pageName="Players">
+                    <Players />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="assessments"
+                element={
+                  <ErrorBoundary pageName="Assessments">
+                    <Assessments />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="messages"
+                element={
+                  <ErrorBoundary pageName="Messages">
+                    <Messages />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="settings"
+                element={
+                  <ErrorBoundary pageName="Settings">
+                    <Settings />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="feedback"
+                element={
+                  <ErrorBoundary pageName="Session Feedback">
+                    <SessionFeedback />
+                  </ErrorBoundary>
+                }
+              />
+            </Route>
+
             <Route path="*" element={<NotFound />} />
           </Routes>
         </OnboardingGuard>

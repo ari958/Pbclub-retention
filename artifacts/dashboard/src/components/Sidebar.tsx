@@ -1,6 +1,8 @@
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
+import { useClubStatus } from "@/lib/ClubContext";
+import { ClubSwitcher } from "./ClubSwitcher";
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -59,13 +61,15 @@ function IconSettings() {
 }
 
 interface SidebarProps {
-  clubName: string;
   lastSynced?: string | null;
   messageCount?: number;
 }
 
-export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps) {
+export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
   const location = useLocation();
+  const ctx = useClubStatus();
+  const slug = ctx.status === "ready" ? ctx.club.slug : "";
+  const clubDisplayName = ctx.status === "ready" ? ctx.club.name : "—";
   const [unreadReplies, setUnreadReplies] = useState(0);
 
   useEffect(() => {
@@ -83,7 +87,8 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
   }, []);
 
   useEffect(() => {
-    if (location.pathname === "/messages" && unreadReplies > 0) {
+    const messagesPath = slug ? `/c/${slug}/messages` : null;
+    if (messagesPath && location.pathname === messagesPath && unreadReplies > 0) {
       const markRead = async () => {
         await supabase
           .from("messages")
@@ -95,24 +100,27 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
       const timer = setTimeout(markRead, 1500);
       return () => clearTimeout(timer);
     }
-  }, [location.pathname, unreadReplies]);
+    return undefined;
+  }, [location.pathname, unreadReplies, slug]);
 
   const messagesBadge = messageCount + unreadReplies;
 
-  const navItems = [
-    { label: "Dashboard", path: "/", icon: <IconDashboard /> },
-    { label: "Players", path: "/players", icon: <IconPlayers /> },
-    { label: "Progress", path: "/assessments", icon: <IconProgress /> },
-    { label: "Session Ratings", path: "/feedback", icon: <IconStar /> },
-    {
-      label: "Messages",
-      path: "/messages",
-      icon: <IconMessages />,
-      badge: messagesBadge > 0 ? messagesBadge : undefined,
-      replyAlert: unreadReplies > 0,
-    },
-    { label: "Settings", path: "/settings", icon: <IconSettings /> },
-  ];
+  const navItems = slug
+    ? [
+        { label: "Dashboard", path: `/c/${slug}/dashboard`, icon: <IconDashboard /> },
+        { label: "Players", path: `/c/${slug}/players`, icon: <IconPlayers /> },
+        { label: "Progress", path: `/c/${slug}/assessments`, icon: <IconProgress /> },
+        { label: "Session Ratings", path: `/c/${slug}/feedback`, icon: <IconStar /> },
+        {
+          label: "Messages",
+          path: `/c/${slug}/messages`,
+          icon: <IconMessages />,
+          badge: messagesBadge > 0 ? messagesBadge : undefined,
+          replyAlert: unreadReplies > 0,
+        },
+        { label: "Settings", path: `/c/${slug}/settings`, icon: <IconSettings /> },
+      ]
+    : [];
 
   return (
     <aside
@@ -166,18 +174,18 @@ export function Sidebar({ clubName, lastSynced, messageCount = 0 }: SidebarProps
             whiteSpace: "nowrap",
           }}
         >
-          {clubName || "—"}
+          {clubDisplayName}
         </div>
       </div>
 
       <div style={{ width: "100%", height: 1, background: "var(--border-dark)" }} />
 
+      {/* Club switcher — static label when one club; dropdown when multiple */}
+      <ClubSwitcher />
+
       <nav style={{ flex: 1, padding: "12px 0" }}>
         {navItems.map((item) => {
-          const isActive =
-            item.path === "/"
-              ? location.pathname === "/"
-              : location.pathname.startsWith(item.path);
+          const isActive = location.pathname.startsWith(item.path);
 
           return (
             <Link
