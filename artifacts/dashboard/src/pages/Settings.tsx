@@ -562,22 +562,24 @@ export default function Settings() {
   const readOnly = editorMode === "view-builtin";
 
   useEffect(() => {
-    supabase.from("clubs").select("id, name, agent_config, scheduled_sync_time, timezone").eq("id", club.id).maybeSingle()
+    supabase.from("clubs").select("agent_config, scheduled_sync_time").eq("id", club.id).maybeSingle()
       .then(({ data, error }) => {
         if (error?.message?.includes("scheduled_sync_time") || error?.code === "42703") {
           setHasScheduleColumns(false);
-          supabase.from("clubs").select("id, name, agent_config").eq("id", club.id).maybeSingle()
-            .then(({ data: fallback }) => { if (fallback) setClubRow(fallback as ClubRow); setClubLoading(false); });
+          supabase.from("clubs").select("agent_config").eq("id", club.id).maybeSingle()
+            .then(({ data: fallback }) => {
+              if (fallback) setClubRow({ id: club.id, name: club.name, agent_config: (fallback as { agent_config?: unknown }).agent_config, scheduled_sync_time: null, timezone: club.timezone } as ClubRow);
+              setClubLoading(false);
+            });
         } else {
           if (data) {
-            setClubRow(data as ClubRow);
-            setSyncTime(data.scheduled_sync_time ?? "02:00");
-            setTimezone(data.timezone ?? club.timezone);
+            setClubRow({ id: club.id, name: club.name, agent_config: (data as { agent_config?: unknown }).agent_config, scheduled_sync_time: (data as { scheduled_sync_time?: string | null }).scheduled_sync_time ?? null, timezone: club.timezone } as ClubRow);
+            setSyncTime((data as { scheduled_sync_time?: string | null }).scheduled_sync_time ?? "02:00");
           }
           setClubLoading(false);
         }
       });
-  }, [club.id, club.timezone]);
+  }, [club.id, club.name, club.timezone]);
 
   const fetchTemplates = useCallback(async () => {
     setTemplatesLoading(true);

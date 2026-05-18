@@ -3,6 +3,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/Toast";
 import { relativeTime } from "@/lib/helpers";
 import type { Player, MessageTemplate } from "@/lib/types";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 
 interface BulkMessageModalProps {
   recipients: Player[];
@@ -220,6 +221,7 @@ function ConfirmScreen({
 
 export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMessageModalProps) {
   const toast = useToast();
+  const club = useClub();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const [mode, setMode]                         = useState<"template" | "custom">("template");
@@ -268,7 +270,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
   const estimatedCost = (eligibleRecipients.length * 0.02).toFixed(2);
 
   useEffect(() => {
-    fetch("/api/templates")
+    fetch(clubApiUrl(club.slug, "/api/templates"))
       .then((r) => r.json())
       .then((data) => { if (Array.isArray(data)) setTemplates(data as MessageTemplate[]); })
       .catch(() => {
@@ -276,16 +278,16 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
           .then(({ data }) => { if (data) setTemplates(data as MessageTemplate[]); });
       })
       .finally(() => setTemplatesLoading(false));
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => {
     setEventsLoading(true);
-    fetch("/api/events/upcoming")
+    fetch(clubApiUrl(club.slug, "/api/events/upcoming"))
       .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then((data: UpcomingEvent[]) => { setEvents(data); setEventsError(null); })
       .catch(() => setEventsError("Couldn't load events — enter details manually."))
       .finally(() => setEventsLoading(false));
-  }, []);
+  }, [club.slug]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && !sending) onClose(); };
@@ -331,7 +333,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
   const handleSend = async () => {
     setSending(true);
     try {
-      const res = await fetch("/api/messages/bulk", {
+      const res = await fetch(clubApiUrl(club.slug, "/api/messages/bulk"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

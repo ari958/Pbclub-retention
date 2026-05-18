@@ -179,9 +179,9 @@ export default function SessionFeedback() {
       if (found) { setTName(found.name); setTBody(found.body); }
     } catch { toast.error("Failed to load feedback template"); }
     finally { setTemplateLoading(false); }
-  }, []);
+  }, [club.slug, toast]);
 
-  useEffect(() => { fetchTemplate(); }, [fetchTemplate, club.slug]);
+  useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
 
   const saveTemplate = async () => {
     if (!template) return;
