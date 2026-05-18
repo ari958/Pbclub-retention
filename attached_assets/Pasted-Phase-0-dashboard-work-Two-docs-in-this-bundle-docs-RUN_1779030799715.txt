@@ -1,0 +1,102 @@
+Phase 0 dashboard work. Two docs in this bundle:
+
+  docs/RUNBOOK_UPDATES.md       — text to append to RUNBOOK.md
+                                  and SUPABASE_SCHEMA_EXPORT.md
+  docs/STEP_5_DASHBOARD_AUDIT.md — the dashboard patches
+
+═══════════════════════════════════════════════════════════════
+STEP A — Apply the runbook updates first
+═══════════════════════════════════════════════════════════════
+
+Open docs/RUNBOOK_UPDATES.md and apply the three sections:
+
+  1. Append the dated 2026-05-17 entry to RUNBOOK.md "Audit 
+     changelog" section.
+  2. Update SUPABASE_SCHEMA_EXPORT.md section 4 (the clubs/
+     level_taxonomy block) per the replacement text.
+  3. Add open items 17-20 to RUNBOOK.md "Open follow-up items"
+     under Tier 2.
+
+These are documentation only — no code changes. Confirm done.
+
+═══════════════════════════════════════════════════════════════
+STEP B — Dashboard audit per STEP_5_DASHBOARD_AUDIT.md
+═══════════════════════════════════════════════════════════════
+
+Read STEP_5_DASHBOARD_AUDIT.md in full first. Then apply 
+sub-steps 5.1 through 5.5 in order.
+
+CRITICAL RULES:
+
+1. The two new files (ClubContext.tsx, ClubSwitcher.tsx) are 
+   already in place from earlier. Do NOT re-add them.
+
+2. The pattern is mechanical and identical across all 6 page 
+   files. The diff for each page should look almost the same. 
+   If a particular page wants a substantially different patch, 
+   stop and ask — that's a signal something's off.
+
+3. App.tsx rewiring is the riskiest sub-step. After 5.1, run:
+     cd artifacts/dashboard && npx tsc --noEmit
+   AND test that the app boots and routes resolve. If routing 
+   breaks, fix that before touching pages.
+
+4. The `useClub()` hook throws when status !== "ready". This 
+   is intentional — every page is mounted inside ClubLayout 
+   which gates on status. Don't add try/catch around useClub() 
+   calls; that defeats the gating.
+
+5. The Players.tsx page was partially fixed on May 1 (clubId 
+   state + PlayerDrawer prop). Delete the local clubId state 
+   and the from("clubs") fetch — pass club.id from context 
+   directly to PlayerDrawer. PlayerDrawer itself doesn't need 
+   changes; its prop interface stays the same.
+
+6. Settings.tsx PATCHes /api/clubs/:id/settings — make sure 
+   that :id uses club.id from context, not stale state.
+
+7. Two hardcoded "America/New_York" sites are in the dashboard 
+   (Dashboard.tsx:136, Settings.tsx:548,576). Replace with 
+   club.timezone from context. If timezone is somehow missing 
+   on the club row, fail visibly rather than fall back — easier 
+   to debug.
+
+═══════════════════════════════════════════════════════════════
+STEP C — Verification
+═══════════════════════════════════════════════════════════════
+
+After all page patches, run:
+
+  grep -rn 'from("clubs").select.*limit(1)' artifacts/dashboard/src/
+  grep -rn 'from(.clubs.).select.*maybeSingle' artifacts/dashboard/src/
+  grep -rn '"c8976e15-' artifacts/dashboard/src/
+  grep -rn '"America/New_York"' artifacts/dashboard/src/
+  grep -rn 'fetch(.*"/api/' artifacts/dashboard/src/
+
+The last grep: every match should be wrapped in clubApiUrl(). 
+If any bare /api/ fetch remains for a club-scoped endpoint, 
+patch it.
+
+  cd artifacts/dashboard && npx tsc --noEmit
+
+Then runtime smoke test per sub-step 5.5. Test ALL of:
+  - /              → redirects to /c/pb-club/dashboard
+  - Every page renders PB Club data
+  - /c/fakeslug/dashboard renders "Club not found"
+  - Insert + switch + delete the test-club (SQL in the guide)
+
+═══════════════════════════════════════════════════════════════
+WHAT TO REPORT BACK
+═══════════════════════════════════════════════════════════════
+
+After Step A: confirmation the runbook + schema export are updated.
+After Step B: per-page tsc result. If any page fails compile, 
+              stop and show me the error.
+After Step C: full grep output + smoke test results, with the 
+              test-club insert/switch/delete verified.
+
+Then STOP. Phase 0 is nearly done — Steps 6/7/8 (scheduler, 
+agent, residual cleanup) are next, but only after dashboard 
+is verified clean.
+
+Begin with Step A.
