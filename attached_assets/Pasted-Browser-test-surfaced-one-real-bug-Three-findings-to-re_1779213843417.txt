@@ -1,0 +1,80 @@
+Browser test surfaced one real bug. Three findings to report:
+
+═══════════════════════════════════════════════════════════════
+BUG — Session Ratings page in infinite retry loop
+═══════════════════════════════════════════════════════════════
+
+Symptom: opening /dashboard/c/pb-club/feedback shows the page 
+with "Rating Message Template" panel stuck on "Loading…". Toast 
+notifications "Failed to load feedback template" fire repeatedly 
+down the right side of the screen, dozens visible in seconds. 
+Tight infinite loop.
+
+Diagnose:
+
+1. Open browser dev tools Network tab and refresh the page. 
+   Report which endpoint is being hit, how often, and the 
+   response code (likely 4xx or 5xx).
+
+2. Read SessionFeedback.tsx and find the useEffect that fetches 
+   the feedback template. Show me:
+   - The fetch URL and method
+   - The full useEffect block
+   - The full dependency array
+   - Anything in the deps that's a function, object literal, 
+     or other non-primitive that's recreated on every render
+
+3. Check the tailed api-server logs from the time the page was 
+   open. Look for repeated requests to the feedback-template 
+   endpoint, with their response codes. Paste a sample.
+
+Don't fix it yet. Just diagnose and report. I want to see the 
+actual code before deciding the fix.
+
+═══════════════════════════════════════════════════════════════
+MINOR — Test Club did not show the onboarding wizard
+═══════════════════════════════════════════════════════════════
+
+Test Club has onboarded = false. When I switched to it via 
+ClubSwitcher, I landed on /dashboard/c/test-club/dashboard and 
+the regular dashboard rendered (mostly empty). Expected the 
+onboarding wizard.
+
+Confirm:
+
+1. Is there code anywhere that routes onboarded = false clubs 
+   to /onboarding? Grep for it:
+   
+   grep -rn "onboarded" artifacts/dashboard/src/
+   
+2. Is the onboarding flow tenant-aware at all? Does it take a 
+   slug? (Look at the routes block: <Route path="/onboarding" 
+   element={<Onboarding />} /> — this isn't club-scoped.)
+
+This may not be a bug — onboarding might be unrelated to the 
+dashboard-per-club flow. But before we ship multi-tenant, I 
+need to know: when a new paying club signs up, how do they 
+get onboarded? Does someone insert a clubs row manually and 
+then they're done, or does the onboarded flag trigger a flow 
+they have to complete?
+
+Report what you find. No fixes yet.
+
+═══════════════════════════════════════════════════════════════
+ALSO PASSED
+═══════════════════════════════════════════════════════════════
+
+- Root redirect ✓ (lands on /dashboard/c/pb-club/dashboard 
+  as documented)
+- All other nav items load PB Club data without errors
+- ClubSwitcher shows both clubs ✓
+- Switching to Test Club works (no crash; mostly empty pages)
+- Switching back to PB Club works ✓
+- Settings on Test Club: only timezone editable ✓ (expected, 
+  since Test Club has no real data)
+
+═══════════════════════════════════════════════════════════════
+DO NOT delete the test-club row yet
+═══════════════════════════════════════════════════════════════
+
+We need it for retesting the Session Ratings bug fix.
