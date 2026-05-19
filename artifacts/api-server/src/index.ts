@@ -38,62 +38,64 @@ const BUILTIN_TEMPLATES = [
   },
 ];
 
-async function seedFeedbackTemplate() {
-  const { data, error } = await supabase
+async function seedTemplatesForClub(clubId: string) {
+  const { data: builtinCheck, error: builtinErr } = await supabase
     .from("message_templates")
     .select("id")
-    .contains("use_case_tags", ["session_feedback"])
-    .limit(1);
-
-  if (error) {
-    logger.warn({ err: error.message }, "Could not check feedback template — skipping seed");
-    return;
-  }
-
-  if (data && data.length > 0) {
-    logger.info("Feedback template already seeded — skipping");
-    return;
-  }
-
-  const { error: insertErr } = await supabase.from("message_templates").insert({
-    name: "Post-Session Feedback",
-    body: "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n1️⃣ Did you feel like YOU belonged at this level?\n2️⃣ Did the OTHER players belong at this level?\n\nReply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'",
-    use_case_tags: ["session_feedback"],
-    is_builtin: false,
-  });
-
-  if (insertErr) {
-    logger.error({ err: insertErr.message }, "Failed to seed feedback template");
-  } else {
-    logger.info("Post-Session Feedback template seeded");
-  }
-}
-
-async function seedBuiltinTemplates() {
-  const { data, error } = await supabase
-    .from("message_templates")
-    .select("id")
+    .eq("club_id", clubId)
     .eq("is_builtin", true)
     .limit(1);
 
-  if (error) {
-    logger.warn({ err: error.message }, "Could not check message_templates — skipping seed");
-    return;
-  }
-
-  if (data && data.length > 0) {
-    logger.info("Built-in templates already seeded — skipping");
-    return;
-  }
-
-  const { error: insertErr } = await supabase
-    .from("message_templates")
-    .insert(BUILTIN_TEMPLATES);
-
-  if (insertErr) {
-    logger.error({ err: insertErr.message }, "Failed to seed built-in templates");
+  if (builtinErr) {
+    logger.warn({ err: builtinErr.message, clubId }, "Could not check built-in templates — skipping");
+  } else if (!builtinCheck || builtinCheck.length === 0) {
+    const { error: insertErr } = await supabase
+      .from("message_templates")
+      .insert(BUILTIN_TEMPLATES.map((t) => ({ ...t, club_id: clubId })));
+    if (insertErr) {
+      logger.error({ err: insertErr.message, clubId }, "Failed to seed built-in templates");
+    } else {
+      logger.info({ count: BUILTIN_TEMPLATES.length, clubId }, "Built-in templates seeded");
+    }
   } else {
-    logger.info({ count: BUILTIN_TEMPLATES.length }, "Built-in templates seeded");
+    logger.info({ clubId }, "Built-in templates already seeded — skipping");
+  }
+
+  const { data: fbCheck, error: fbErr } = await supabase
+    .from("message_templates")
+    .select("id")
+    .eq("club_id", clubId)
+    .contains("use_case_tags", ["session_feedback"])
+    .limit(1);
+
+  if (fbErr) {
+    logger.warn({ err: fbErr.message, clubId }, "Could not check feedback template — skipping");
+  } else if (!fbCheck || fbCheck.length === 0) {
+    const { error: insertErr } = await supabase.from("message_templates").insert({
+      club_id: clubId,
+      name: "Post-Session Feedback",
+      body: "Hi {{first_name}}! Quick question about today's {{level}} session 🎾\n\n1️⃣ Did you feel like YOU belonged at this level?\n2️⃣ Did the OTHER players belong at this level?\n\nReply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'",
+      use_case_tags: ["session_feedback"],
+      is_builtin: false,
+    });
+    if (insertErr) {
+      logger.error({ err: insertErr.message, clubId }, "Failed to seed feedback template");
+    } else {
+      logger.info({ clubId }, "Post-Session Feedback template seeded");
+    }
+  } else {
+    logger.info({ clubId }, "Feedback template already seeded — skipping");
+  }
+}
+
+async function seedAllClubTemplates() {
+  const { data: clubs, error } = await supabase.from("clubs").select("id");
+  if (error) {
+    logger.warn({ err: error.message }, "Could not fetch clubs for template seed — skipping");
+    return;
+  }
+  for (const club of clubs ?? []) {
+    await seedTemplatesForClub(club.id);
   }
 }
 
@@ -105,7 +107,6 @@ app.listen(port, async (err) => {
 
   logger.info({ port }, "Server listening");
 
-  await seedBuiltinTemplates();
-  await seedFeedbackTemplate();
+  await seedAllClubTemplates();
   startScheduler();
 });

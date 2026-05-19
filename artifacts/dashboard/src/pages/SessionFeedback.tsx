@@ -169,6 +169,7 @@ export default function SessionFeedback() {
   }, []);
 
   const fetchTemplate = useCallback(async () => {
+    if (!club?.slug) return;
     setTemplateLoading(true);
     try {
       const res = await fetch(clubApiUrl(club.slug, "/api/templates"));
@@ -179,9 +180,12 @@ export default function SessionFeedback() {
       if (found) { setTName(found.name); setTBody(found.body); }
     } catch { toast.error("Failed to load feedback template"); }
     finally { setTemplateLoading(false); }
-  }, [club.slug, toast]);
+  }, [club.slug]);
 
-  useEffect(() => { fetchTemplate(); }, [fetchTemplate]);
+  useEffect(() => {
+    if (!club?.slug) return;
+    fetchTemplate();
+  }, [fetchTemplate, club?.slug]);
 
   const saveTemplate = async () => {
     if (!template) return;

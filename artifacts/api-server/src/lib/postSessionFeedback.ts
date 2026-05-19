@@ -18,10 +18,11 @@ const FEEDBACK_FALLBACK =
   "2️⃣ Did the OTHER players belong at this level?\n\n" +
   "Reply with 2 answers — e.g. 'Y Y', 'Y N', 'N Y', or 'N N'";
 
-async function getFeedbackTemplate(): Promise<string> {
+async function getFeedbackTemplate(clubId: string): Promise<string> {
   const { data } = await supabase
     .from("message_templates")
     .select("body")
+    .eq("club_id", clubId)
     .contains("use_case_tags", ["session_feedback"])
     .limit(1)
     .maybeSingle();
@@ -192,7 +193,8 @@ export async function sendFeedbackForEvent(
     `${eligible.length} eligible / ${playerIds.length} total attendees`
   );
 
-  const templateBody = await getFeedbackTemplate();
+  const eventClubId: string = eligible[0]?.club_id ?? "";
+  const templateBody = await getFeedbackTemplate(eventClubId);
   const twilioAvailable = !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN);
 
   for (const player of eligible) {

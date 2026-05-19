@@ -359,7 +359,7 @@ export default function Dashboard() {
       toast.error(data.error ?? "Agent run failed");
     }
     await fetchMessages();
-  }, [fetchMessages, toast, club.slug]);
+  }, [fetchMessages, club.slug]);
 
   const runBatchAgent = useCallback(async () => {
     setBatchRunning(true);
@@ -388,7 +388,7 @@ export default function Dashboard() {
       setBatchRunning(false);
       setBatchStatus(null);
     }
-  }, [players, fetchMessages, toast, club.slug]);
+  }, [players, fetchMessages, club.slug]);
 
   const syncAll = useCallback(async () => {
     setSyncRunning(true);
@@ -405,7 +405,7 @@ export default function Dashboard() {
       toast.error("Sync failed");
       setSyncRunning(false);
     }
-  }, [toast, club.slug]);
+  }, [club.slug]);
 
   useEffect(() => {
     fetch(clubApiUrl(club.slug, "/api/sync/events/status"))
@@ -431,7 +431,7 @@ export default function Dashboard() {
         .catch(() => {});
     }, 15000);
     return () => clearInterval(interval);
-  }, [syncRunning, fetchData, toast]);
+  }, [syncRunning, fetchData]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 

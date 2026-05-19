@@ -1131,3 +1131,24 @@ For a new developer joining the project:
 - [ ] Never call `pnpm dev` at the workspace root — use restart_workflow instead
 - [ ] All DDL changes go to Supabase SQL Editor, not local migrations
 - [ ] When adding new Anthropic calls, use `claude-sonnet-4-5` for short generation tasks and `claude-sonnet-4-6` for the agent
+
+---
+
+## 15. Open Follow-Up Items
+
+### 21. Multi-tenant onboarding flow (Phase 0.5)
+
+Current onboarding flow is single-tenant only:
+
+- `OnboardingGuard` in `App.tsx` runs once on mount (empty dep array) and never re-checks when the active club changes.
+- `GET /api/onboarding/status` takes no slug; it queries the first/default club and returns its `onboarded` flag. A new club row with `onboarded=false` will not trigger the wizard.
+- `<Route path="/onboarding">` is not club-scoped — it has no `:slug` segment.
+
+**Required changes for Phase 0.5:**
+
+- Make the route club-scoped: `/c/:slug/onboarding`
+- `OnboardingGuard` needs to re-check on club context change — add `club.slug` to its dep array and call the status endpoint with `?slug=<slug>`
+- `GET /api/onboarding/status` and `POST /api/onboarding/complete` need `requireClub` middleware
+- `POST /api/onboarding/complete` should write `onboarded=true` for the specific club being onboarded
+
+Owner work, not Phase 0. Track separately.

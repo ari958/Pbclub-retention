@@ -1,0 +1,118 @@
+Two fixes, plus a design item to capture.
+
+═══════════════════════════════════════════════════════════════
+FIX — Session Ratings infinite retry loop
+═══════════════════════════════════════════════════════════════
+
+Three sub-fixes, do all three:
+
+1. DASHBOARD — remove toast from useCallback deps in 
+   SessionFeedback.tsx fetchTemplate
+   
+   Before:
+     const fetchTemplate = useCallback(async () => { ... }, 
+       [club.slug, toast]);
+   
+   After:
+     const fetchTemplate = useCallback(async () => { ... }, 
+       [club.slug]);
+   
+   Same rule applies to ANY useCallback or useMemo with toast, 
+   navigate, or other reference-unstable helpers in the deps. 
+   Sweep the dashboard:
+   
+     grep -rn "useCallback\|useMemo" artifacts/dashboard/src/ | \
+       xargs grep -l "toast\|navigate" 2>/dev/null
+   
+   For each match, verify toast/navigate aren't in the dep 
+   array. If they are, remove them.
+
+2. DASHBOARD — guard against empty slug in fetchTemplate
+   
+   At the top of fetchTemplate, add:
+     if (!club?.slug) return;
+   
+   AND make the useEffect early-return:
+     useEffect(() => {
+       if (!club?.slug) return;
+       fetchTemplate();
+     }, [fetchTemplate, club?.slug]);
+   
+   This prevents the page from firing requests during the brief 
+   moment when context is still loading.
+
+3. API SERVER — verify clubResolver returns 400, not 500, on 
+   missing/invalid slug
+   
+   In artifacts/api-server/src/lib/clubResolver.ts, the 
+   `requireClub` middleware wraps resolveClubId in try/catch 
+   and returns the right status from ClubResolutionError. But 
+   the report shows a 500 — which means either the resolver 
+   isn't being hit, or another middleware/handler is throwing.
+   
+   Reproduce and trace:
+   
+   curl -sv "http://localhost:8080/api/templates" 2>&1 | head -30
+   curl -sv "http://localhost:8080/api/templates?slug=" 2>&1 | head -30
+   curl -sv "http://localhost:8080/api/templates?slug=undefined" 2>&1 | head -30
+   
+   Paste the response codes and any error bodies. If any return 
+   500, find the throw site (paste the stack trace from the log) 
+   and fix it to be a 400 with a clear error message. A bad 
+   client request should never produce 500.
+
+After all three fixes, reload the Session Ratings page in the 
+browser. Watch the dev tools Network tab. There should be EXACTLY 
+ONE GET to /api/templates after the page loads. Confirm and 
+paste:
+   - Number of requests in 30 seconds (expected: 1)
+   - Response code (expected: 200)
+   - Does the page render the template correctly now?
+
+═══════════════════════════════════════════════════════════════
+DESIGN ITEM — Multi-tenant onboarding (deferred to Phase 0.5)
+═══════════════════════════════════════════════════════════════
+
+Don't fix this now. Just document it:
+
+In RUNBOOK.md / pulse-technical-docs.md, add to the open follow-up 
+items list at the end:
+
+  21. **Multi-tenant onboarding flow** (Phase 0.5)
+      Current onboarding flow is single-tenant only:
+      - OnboardingGuard runs once on mount (empty dep array)
+      - /api/onboarding/status takes no slug; queries first club
+      - /onboarding route has no :slug segment
+      
+      For a new paying club to onboard:
+      - Their clubs row needs onboarded=false set explicitly
+      - The wizard needs to be club-scoped: /c/:slug/onboarding
+      - OnboardingGuard needs to re-check on club context change, 
+        with club.slug in its dep array
+      - /api/onboarding/status and /api/onboarding/complete need 
+        requireClub middleware
+      
+      Owner work, not Phase 0. Track separately.
+
+═══════════════════════════════════════════════════════════════
+WHAT TO REPORT BACK
+═══════════════════════════════════════════════════════════════
+
+After the three fixes:
+  - tsc clean
+  - curl results showing the templates route returns 400 (not 
+    500) on bad slug
+  - Browser reload of /dashboard/c/pb-club/feedback — confirm 
+    exactly ONE request, 200 response, page renders correctly
+  - Result of the toast/navigate sweep grep — any other deps 
+    you had to fix?
+
+After the design item:
+  - Confirmation the new open item is in docs
+
+═══════════════════════════════════════════════════════════════
+DO NOT delete test-club yet
+═══════════════════════════════════════════════════════════════
+
+Need it for retest of the toast/navigate sweep (we may have 
+other pages with the same bug).
