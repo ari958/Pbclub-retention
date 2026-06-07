@@ -1,0 +1,44 @@
+CONTEXT
+We are wiring the Twilio SMS integration end-to-end. Prior sessions left an
+ambiguous state: handler code for inbound/STOP/delivery may exist, but outbound
+dispatch (twilio.messages.create), the pending-queue scheduler, and shortenUrl.ts
+are believed to be stubs. Do NOT trust this description — verify against the code.
+
+A2P 10DLC is NOT yet approved, so we will build and unit-test everything but gate
+all real sends behind an env flag SMS_LIVE (default "false"). When SMS_LIVE is
+false, the dispatch layer logs the payload and writes the message row as if sent
+(status progression), but does NOT call Twilio. This lets us test the full loop
+without a live campaign.
+
+GO-AHEAD POLICY: Complete Phase 0 (audit) and STOP. Report findings as a STATUS
+block before writing any code. Do not proceed to Phase 1 until I reply "go".
+
+=== PHASE 0 — AUDIT (read-only, no edits) ===
+
+Read and report the current real state of each of these. For each, report one of:
+EXISTS-WORKING / EXISTS-STUB / MISSING, with the file:line where you determined it.
+
+1. Outbound dispatch: search for `twilio.messages.create` and any Twilio client
+   init (`require('twilio')` / `import twilio`). Is there a real send call or a stub?
+2. shortenUrl.ts — does it call a real shortener or return its input?
+3. Pending-queue scheduler: is there any process reading
+   `messages WHERE status='pending' AND scheduled_send_at <= now()` and dispatching?
+4. Inbound webhook: route `/api/messages/webhook/inbound` — exists? What does it do
+   on STOP, on a normal reply?
+5. Delivery status webhook: any route handling Twilio status callbacks
+   (delivered/failed/error_code)?
+6. STOP/opt-out: does anything set `players.opted_out=true` and cancel pending sends?
+7. Env/secrets: are TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, and the club's
+   twilio_number present (names only — do NOT print secret values)?
+8. The `messages` columns actually present: confirm direction, status,
+   scheduled_send_at, sent_at, delivery_status, error_code, error_message,
+   link_clicked, link_clicked_at, reply_sentiment exist (per schema export).
+
+Output a STATUS block:
+  PHASE 0 AUDIT
+  - Outbound dispatch: <state> (<file:line>)
+  - shortenUrl: <state> ...
+  ... (all 8)
+  RECONCILIATION: one paragraph on what's real vs stub.
+
+Then STOP and wait for "go".
