@@ -1,0 +1,83 @@
+CONTEXT
+Per the Phase 0 audit, twilio.messages.create is already wired through
+sendViaTwilio() and is LIVE with no gate — any server with TWILIO creds set
+sends real SMS right now, including from the automated inbound feedback loop.
+This session adds (a) a single dry-run gate at the chokepoint, (b) a test-recipient
+override so live testing can't accidentally text a real member, and (c) two cheap
+bug fixes. We are NOT building the pending-queue scheduler this session.
+
+GO-AHEAD POLICY: Items are independent. Do all of Item 1 (a–e), then Items 2 and 3,
+then STOP and report a STATUS line per item (CLOSED / PARTIAL / DEFERRED). Verify
+with tsc / node --check before reporting. Do not start the scheduler.
+
+═══════════════════════════════════════════════════════════════════
+ITEM 1 — SMS_LIVE gate + test override (all in twilio.ts, the chokepoint)
+═══════════════════════════════════════════════════════════════════
+Goal: a single env-controlled switch that makes dry-run mode safe and the full
+loop testable without a live A2P campaign, plus a recipient override that prevents
+accidental real sends to members during live testing.
+
+1a. Add a migration (OUTPUT the SQL, do NOT auto-run — I run it in Supabase):
+    ALTER TABLE messages ADD COLUMN IF NOT EXISTS simulated boolean NOT NULL DEFAULT false;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+    GRANT ALL    ON ALL TABLES IN SCHEMA public TO service_role;
+
+1b. Gate sendViaTwilio() ITSELF (not the callers — so every path: /send, /bulk,
+    inbound feedback, future scheduler, is covered by one chokepoint):
+    - Read SMS_LIVE from env. Treat ONLY the exact string "true" as live;
+      anything else (unset, "false", "", "0") = dry-run. Fail safe to dry-run.
+    - When dry-run: do NOT call client.messages.create. Log the full payload
+      (to, from, body, and whether messaging-service or from-number path) at info
+      level with a clear "[SMS DRY-RUN]" prefix. Return a synthetic result whose
+      sid is the literal string "SIMULATED" so callers reading .sid don't break.
+    - Return a shape IDENTICAL to the live path so no caller needs changes.
+
+1c. Where sendViaTwilio's result is persisted to the messages row, set
+    simulated = (SMS_LIVE !== "true"), alongside the existing twilio_message_sid /
+    status writes. (sid "SIMULATED" is the human marker; simulated=true is the
+    queryable flag.)
+
+1d. Do NOT change status semantics: a dry-run message still progresses to
+    status='sent' and sets sent_at, so the downstream loop (threading, dashboard,
+    warm score) runs exactly as in production. The simulated flag is what
+    distinguishes it, not the status.
+
+1e. Test-recipient override. Inside sendViaTwilio, at the chokepoint, BEFORE any
+    send or dry-run log:
+    - Read SMS_TEST_OVERRIDE_TO from env. If set and non-empty, overwrite the
+      destination number with it for THIS send, and log
+      "[SMS OVERRIDE] original=<orig> redirected=<override>" at info level so the
+      real intended recipient stays visible.
+    - Applies in BOTH dry-run and live mode — this is the guard against an
+      accidental real text to a member during live testing.
+    - The persisted messages row must still record the ORIGINAL intended player_id
+      and recipient — the override affects ONLY Twilio's `to` field. Otherwise the
+      conversation thread attaches to the wrong player.
+    - Order of operations inside the function: resolve original recipient →
+      apply override (if set) → apply SMS_LIVE gate (live send vs dry-run log).
+
+═══════════════════════════════════════════════════════════════════
+ITEM 2 — template_id phantom column (messages.ts:372)
+═══════════════════════════════════════════════════════════════════
+The insert writes template_id but no such column exists on messages. Read first:
+if template_id is needed downstream, add the column via migration (OUTPUT SQL,
+don't auto-run). If nothing reads it, remove it from the insert payload. Report
+which path and why.
+
+═══════════════════════════════════════════════════════════════════
+ITEM 3 — clubs.twilio_number dead column
+═══════════════════════════════════════════════════════════════════
+Code uses TWILIO_PHONE_NUMBER env var; clubs.twilio_number is never read. Do NOT
+change behavior. Add a one-line comment at twilio.ts:15 noting clubs.twilio_number
+exists but is intentionally unused (env var is canonical), so the next reader
+doesn't trip on it. Per-club numbers are a later decision.
+
+═══════════════════════════════════════════════════════════════════
+REPORT
+═══════════════════════════════════════════════════════════════════
+  ITEM 1 (SMS_LIVE gate + override): <CLOSED/PARTIAL> — note that migration SQL
+    (1a) is pending my run in Supabase, and remind me to set SMS_TEST_OVERRIDE_TO
+    =+12013702546 in Replit secrets
+  ITEM 2 (template_id): <CLOSED> — <removed | added column>, one-line why
+  ITEM 3 (twilio_number comment): <CLOSED>
+Then STOP.

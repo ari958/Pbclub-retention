@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
-import { getTwilioClient, sendViaTwilio } from "../lib/twilio";
+import { sendViaTwilio } from "../lib/twilio";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { parseFeedbackReply } from "../lib/postSessionFeedback";
 import { findActiveExpectation, resolveExpectation } from "../lib/replyExpectations";
@@ -179,13 +179,13 @@ router.post("/messages/send", requireClub, async (req, res) => {
     : message.body;
 
   try {
-    const sid = await sendViaTwilio(player.phone, smsBody);
+    const { sid, simulated } = await sendViaTwilio(player.phone, smsBody);
     const now = new Date().toISOString();
 
     await Promise.all([
       supabase
         .from("messages")
-        .update({ status: "sent", twilio_message_sid: sid, sent_at: now })
+        .update({ status: "sent", twilio_message_sid: sid, simulated, sent_at: now })
         .eq("id", message_id),
       supabase
         .from("players")
@@ -193,8 +193,8 @@ router.post("/messages/send", requireClub, async (req, res) => {
         .eq("id", player.id),
     ]);
 
-    req.log.info({ message_id, twilio_sid: sid, to: player.phone }, "SMS sent");
-    res.json({ success: true, twilio_sid: sid, to: player.phone });
+    req.log.info({ message_id, twilio_sid: sid, simulated, to: player.phone }, "SMS sent");
+    res.json({ success: true, twilio_sid: sid, simulated, to: player.phone });
   } catch (err: unknown) {
     req.log.error({ err }, "Twilio send failed");
     const errMsg = err instanceof Error ? err.message : "Unknown error";
@@ -309,9 +309,6 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
     return;
   }
 
-  let twilioClient: ReturnType<typeof getTwilioClient> | null = null;
-  try { twilioClient = getTwilioClient(); } catch { /* Twilio not configured */ }
-
   const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const now = Date.now();
 
@@ -369,7 +366,6 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
         direction: "outbound",
         sent_by: "operator",
         status: "pending",
-        ...(template_id ? { template_id } : {}),
       })
       .select("id")
       .single();
@@ -381,21 +377,20 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
       continue;
     }
 
-    if (twilioClient) {
-      try {
-        const twilio_message_sid = await sendViaTwilio(player.phone, interpolated);
-        await supabase
-          .from("messages")
-          .update({ twilio_message_sid, status: "sent", sent_at: sentAt })
-          .eq("id", msgRow.id);
-      } catch (err) {
-        req.log.error({ err, player_id: player.id }, "Bulk: Twilio send failed");
-        // Do NOT delete the row — it is the audit trail even on failure
-        await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
-        failed++;
-        errors.push(player.id);
-        continue;
-      }
+    // sendViaTwilio handles the SMS_LIVE gate; dry-run returns { sid:"SIMULATED", simulated:true }
+    try {
+      const { sid: twilio_message_sid, simulated } = await sendViaTwilio(player.phone, interpolated);
+      await supabase
+        .from("messages")
+        .update({ twilio_message_sid, simulated, status: "sent", sent_at: sentAt })
+        .eq("id", msgRow.id);
+    } catch (err) {
+      req.log.error({ err, player_id: player.id }, "Bulk: Twilio send failed");
+      // Do NOT delete the row — it is the audit trail even on failure
+      await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
+      failed++;
+      errors.push(player.id);
+      continue;
     }
 
     // Update cooldown timestamp
@@ -577,7 +572,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
           "Thanks! Just reply with two answers like 'Y Y' or 'N Y' — " +
           "first for yourself, second for the other players.";
         try {
-          const sid = await sendViaTwilio(From, retryMsg);
+          const { sid, simulated } = await sendViaTwilio(From, retryMsg);
           await supabase.from("messages").insert({
             conversation_id: conversationId,
             player_id: player.id,
@@ -586,6 +581,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
             sent_by: "system",
             status: "sent",
             twilio_message_sid: sid,
+            simulated,
             sent_at: new Date().toISOString(),
           });
         } catch (err) {
@@ -619,7 +615,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
       // Send thanks
       const thanksMsg = "Thanks! That really helps us keep sessions great for everyone 🙌";
       try {
-        const sid = await sendViaTwilio(From, thanksMsg);
+        const { sid, simulated } = await sendViaTwilio(From, thanksMsg);
         const sentAt = new Date().toISOString();
         await supabase.from("messages").insert({
           conversation_id: conversationId,
@@ -629,6 +625,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
           sent_by: "system",
           status: "sent",
           twilio_message_sid: sid,
+          simulated,
           sent_at: sentAt,
         });
         await supabase.from("players").update({ last_outbound_at: sentAt }).eq("id", player.id);
