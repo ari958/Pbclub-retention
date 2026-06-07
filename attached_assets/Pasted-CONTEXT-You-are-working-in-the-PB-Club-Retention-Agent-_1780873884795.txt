@@ -1,0 +1,68 @@
+CONTEXT
+You are working in the PB Club Retention Agent codebase (Express + TypeScript API server, React/Vite dashboard, Supabase). This is a batch of FIVE independent debt items from RUNBOOK.md. Each is self-contained. Treat each item independently: if one fails or is ambiguous, STOP that item, record its STATUS, and move to the next. Do NOT let one failure block the others.
+
+For each item, end with a STATUS line: CLOSED / PARTIAL / DEFERRED / REVERTED, plus one sentence of evidence (file:line or query result).
+
+Verification gates: after any .ts edit, run `npx tsc --noEmit` (or `node --check` for .js) on the affected file before declaring it CLOSED. Do not skip this.
+
+Do not commit, deploy, or run any destructive SQL without showing me the diff/result first. Read before you edit.
+
+---
+
+ITEM 7 — Fix `scorToLinkStrategy` typo (expected: 5 min)
+The function in `warmScore.ts` is exported misspelled as `scorToLinkStrategy` (missing the 'e'); it should be `scoreToLinkStrategy`.
+1. grep the whole api-server/src for both spellings: `grep -rn "scorToLinkStrategy\|scoreToLinkStrategy" .`
+2. Rename the export in warmScore.ts to `scoreToLinkStrategy`.
+3. Update every import/call site (runbook says there is one in agent.ts — verify there are not others).
+4. `npx tsc --noEmit` clean.
+STATUS line required.
+
+---
+
+ITEM 9 — Remove redundant ternary in `playerTiming.ts` (expected: 2 min)
+In `sanitizeScheduledSendAt`, the after-hours rollover branch has `tmWeekend ? 8 : 8` (both arms are 8). The MINUTE differs (30 vs 0) and is correct — DO NOT touch the minute logic.
+1. Locate the `tmWeekend ? 8 : 8` expression.
+2. Replace just that hour ternary with the literal `8`, leaving the minute ternary untouched.
+3. Confirm by reading the surrounding 10 lines that behavior is unchanged.
+4. `npx tsc --noEmit` clean.
+STATUS line required.
+
+---
+
+ITEM 8 — Clean dirty player names (expected: 15 min) — DRY RUN FIRST, do not mutate yet
+1. Run the audit query (read-only) and paste the result:
+   SELECT COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE name <> TRIM(name)) AS dirty,
+          COUNT(*) FILTER (WHERE name LIKE '%  %') AS multi_space
+   FROM players;
+2. Run a read-only preview of exactly which rows would change, capped at 50:
+   SELECT id, name AS current, TRIM(REGEXP_REPLACE(name, '\s+', ' ', 'g')) AS proposed
+   FROM players
+   WHERE name <> TRIM(REGEXP_REPLACE(name, '\s+', ' ', 'g'))
+   LIMIT 50;
+3. STOP. Paste both results. Do NOT run the UPDATE.
+STATUS = PARTIAL (audit complete, mutation awaiting my go-ahead).
+
+---
+
+ITEM 15 — Document `attendances` upsert `ignoreDuplicates: true` decision (expected: 10 min)
+This is a documentation-only change — NO logic change.
+1. Open `syncEventAttendance.js`, find the attendances upsert with `ignoreDuplicates: true`.
+2. Add a code comment directly above it stating the decision: existing attendance rows are write-once; if PodPlay updates a signup's booked_at (e.g. reschedule), we intentionally keep the original value. Reference RUNBOOK open item 15.
+3. Do not change the option itself.
+STATUS line required.
+
+---
+
+ITEM 14 — Verify idempotency guard on scheduler tick (expected: 30 min) — VERIFY, don't assume
+Project history suggests a `last_run_day` guard may already be implemented. Confirm before changing anything.
+1. Read the scheduler tick code. Find where it checks `nightlyJob.status === "running"` before triggering.
+2. Check whether a per-day guard already exists (e.g. a `stats.last_run_day` or equivalent check that prevents a second run on the same club-local calendar day).
+3. If it EXISTS: report where, confirm it compares against club-local date (not UTC), STATUS = CLOSED (already implemented).
+4. If it does NOT exist: add a guard that records the club-local calendar day of the last successful run and refuses to start the chain again the same day. Show me the diff before finalizing. STATUS = PARTIAL (diff awaiting go-ahead).
+STATUS line required either way.
+
+---
+
+END OF BATCH
+Report all five STATUS lines together at the end in a single summary block.

@@ -224,6 +224,11 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
     if (pendingUpserts.length === 0) return;
     for (let i = 0; i < pendingUpserts.length; i += UPSERT_BATCH) {
       const batch = pendingUpserts.slice(i, i + UPSERT_BATCH);
+      // ignoreDuplicates: true — attendance rows are write-once.
+      // If PodPlay later updates a signup's booked_at (e.g. reschedule), we
+      // intentionally keep the original value recorded at first-sync time.
+      // Changing this to false would silently overwrite booking timestamps and
+      // corrupt player-timing analytics. See RUNBOOK open item 15.
       const { error } = await getSupabase()
         .from("attendances")
         .upsert(batch, {
