@@ -1,0 +1,56 @@
+CONTEXT
+We are doing a ONE-TIME live send test. This flips SMS_LIVE=true, which removes
+the dry-run safety on sendViaTwilio for the duration of the test. SMS_TEST_OVERRIDE_TO
+is set to +12013702546, so every outbound `to` rewrites to that number — this is
+the guard that makes a live flip safe (no real member can be texted). The test
+sends to Ari (de957a6c-66f0-4e1f-8d30-fd5e3187fef7), whose real number is also
++12013702546, so the text should land on that phone.
+
+A2P NOTE: if the 10DLC campaign is not approved, expect a carrier failure
+(e.g. error 30034) rather than a delivered text. That outcome is still useful —
+capture the error_code. Do not treat a carrier rejection as a code bug.
+
+GO-AHEAD POLICY: Run the whole sequence start to finish. The final step (restore
+SMS_LIVE to dark) is MANDATORY and must run even if the send fails. Report a
+STATUS block at the end.
+
+=== SEQUENCE ===
+
+1. PRE-CHECK (read-only, report before sending):
+   - Confirm SMS_TEST_OVERRIDE_TO == "+12013702546" in env. If NOT set or different,
+     STOP immediately and report — do not send.
+   - Report current SMS_LIVE value.
+
+2. FLIP LIVE:
+   - Set SMS_LIVE=true in env/secrets. Restart the server so it's picked up.
+   - Confirm via a log line or health check that the process restarted.
+
+3. SEND:
+   - Fire POST /api/messages/send to player de957a6c-66f0-4e1f-8d30-fd5e3187fef7.
+   - Capture the full HTTP response.
+
+4. CAPTURE EVIDENCE (pull in parallel):
+   - The persisted messages row: id, player_id, status, twilio_message_sid,
+     simulated, sent_at, delivery_status, error_code, error_message.
+   - The relevant log lines: [SMS OVERRIDE], the live send path (NOT dry-run this
+     time), the returned Twilio SID.
+   - Expected on success: twilio_message_sid is a real SID (starts "SM", not
+     "SIMULATED"), simulated=false, status='sent'. A real text arrives at
+     +12013702546.
+   - Expected on A2P failure: a real SID may still be returned but delivery_status
+     later flips to 'failed'/'undelivered' with an error_code via the status webhook.
+     Note: the status webhook is async — the row may show status='sent' immediately
+     and only update on the callback. Report the immediate row; I'll re-check the
+     webhook update after.
+
+5. RESTORE DARK (MANDATORY — run even if step 3 errored):
+   - Set SMS_LIVE back to unset/"false". Restart the server.
+   - Confirm SMS_LIVE is no longer "true" via log/health check.
+   - This must succeed. If it fails, say so loudly at the top of the report.
+
+=== REPORT ===
+  PRE-CHECK: override=<value>, SMS_LIVE before=<value>
+  SEND: HTTP <status>, twilio_sid=<sid>, simulated=<bool>, row status=<status>,
+        error_code=<code or none>
+  PHONE: (I will confirm whether the text arrived)
+  RESTORE: SMS_LIVE now=<value> — CONFIRMED DARK / FAILED
