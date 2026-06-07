@@ -1,0 +1,53 @@
+CONTEXT
+Live test confirmed error 30034 (A2P not registered) via the Twilio Console, but
+our DB never saw it because PUBLIC_API_URL is unset → no statusCallback registered →
+delivery_status stays null. We are in DEV. We will set PUBLIC_API_URL to the dev
+URL now so the callback path is at least exercised, KNOWING the dev URL is
+unreliable for inbound callbacks (sleeps, dev proxy). The durable fix is a prod
+URL at launch — we are recording that as a pre-launch blocker, not solving it now.
+
+GO-AHEAD POLICY: Both items, then STOP and report. Item 2 is documentation only.
+
+=== ITEM 1 — set PUBLIC_API_URL (dev) ===
+- Set PUBLIC_API_URL in Replit secrets to the current dev app URL:
+  https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev
+  (no trailing slash)
+- Confirm twilio.ts will now build statusCallbackUrl =
+  <PUBLIC_API_URL>/api/messages/webhook/status and spread it into the send call.
+- Do NOT send anything. Just confirm the value is read and the URL composes
+  correctly (log or echo the composed statusCallbackUrl at startup or via a
+  read-only check).
+- Report the exact composed callback URL.
+
+=== ITEM 2 — pre-launch blocker in RUNBOOK.md ===
+Add a new section to RUNBOOK.md titled "Pre-launch blockers (must clear before
+SMS_LIVE=true in production)". Add these entries with enough detail to act on
+later without re-deriving:
+
+  1. PUBLIC_API_URL must point to the PRODUCTION public URL (Railway per this
+     runbook), NOT the dev janeway.replit.dev URL. The dev URL sleeps and sits
+     behind the dev proxy, so Twilio status callbacks to /api/messages/webhook/status
+     fire unreliably or not at all. Symptom if wrong: messages send but
+     delivery_status / error_code stay null forever (carrier verdict invisible).
+     Verified 2026-06-07: with no PUBLIC_API_URL, SID SM08e6...47f9d showed
+     error 30034 in the Twilio Console but null in our DB.
+
+  2. SMS_TEST_OVERRIDE_TO must be CLEARED before real members receive texts.
+     While set, EVERY outbound `to` is rewritten to that number — so production
+     messages would all silently redirect to the test phone (+12013702546).
+
+  3. SMS_LIVE must be explicitly set to "true" in the prod environment (defaults
+     to dark everywhere). Only the exact string "true" goes live.
+
+  4. A2P 10DLC campaign must be APPROVED. Confirmed blocker as of 2026-06-07:
+     unregistered sends return carrier error 30034. No code change overcomes this.
+
+  Also add a one-line acceptance test: "First prod send — with SMS_TEST_OVERRIDE_TO
+  still pinned to the test number, flip SMS_LIVE=true and send to Ari
+  (de957a6c-66f0-4e1f-8d30-fd5e3187fef7). A 'delivered' status (not 30034) is the
+  green light. Then clear the override for real rollout."
+
+=== REPORT ===
+  ITEM 1: composed statusCallbackUrl = <url>; PUBLIC_API_URL set = <value>
+  ITEM 2: RUNBOOK.md section added — CLOSED
+Then STOP.
