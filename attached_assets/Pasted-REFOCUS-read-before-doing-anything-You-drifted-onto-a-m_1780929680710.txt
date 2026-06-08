@@ -1,0 +1,48 @@
+REFOCUS — read before doing anything.
+You drifted onto a message_templates.club_id migration triggered by startup log
+warnings. STOP that thread. It is a SEPARATE workstream (multi-tenant template
+scoping), it is NOT part of the queue scheduler work, and the DELETE FROM
+message_templates WHERE club_id IS NULL you proposed is DANGEROUS — those NULL
+rows are the live in-use global templates, not orphans. Do NOT run that ALTER,
+that DELETE, or anything touching message_templates this session. The club_id
+warnings are noise for now; ignore them.
+
+MIGRATION LEDGER (do not re-run these, just for your awareness):
+  - messages.simulated column — ALREADY RUN earlier this session. Done.
+  - idx_messages_pending_send index — RUN by me in Supabase. Assume present.
+  - message_templates.club_id — INTENTIONALLY DEFERRED. Do not touch.
+
+TASK: the queue poller (Phase B) is built but UNVERIFIED. Run three dark tests to
+prove it. SMS_LIVE is unset (dark) — every send simulates, nothing reaches a
+phone. Confirm SMS_LIVE is not "true" before starting; if it is, STOP and tell me.
+
+Test player: Ari, de957a6c-66f0-4e1f-8d30-fd5e3187fef7.
+For each test: INSERT a pending message row, hit POST /api/queue/poll-now, then
+SELECT the row back and capture the relevant [queue] log line.
+
+TEST 1 — happy path
+  Player sms_opt_in=true. Insert pending msg, scheduled_send_at = now() - 1 hour,
+  any short body. poll-now.
+  EXPECT: status='sent', simulated=true, twilio_message_sid set (likely
+  "SIMULATED"), sent_at set. Confirm NO real text (dark).
+
+TEST 2 — opt-out safety net
+  Set Ari sms_opt_in=false. Insert pending msg, scheduled_send_at = now() - 1h.
+  poll-now.
+  EXPECT: status='skipped', error_message mentions opted out, NO sid, no send.
+  AFTER THIS TEST: restore Ari sms_opt_in=true (important — leave him opted in).
+
+TEST 3 — TCPA roll-forward (exercises isInsideTcpaWindow + sanitizeScheduledSendAt)
+  sms_opt_in=true. Insert pending msg with scheduled_send_at set to a time that is
+  (a) <= now() so the poller picks it up, AND (b) outside the legal send window
+  (8:00am-7:30pm ET weekdays / 8:30am-7:30pm weekends). Easiest: use yesterday at
+  23:00 ET — that's both in the past and outside the window. poll-now.
+  EXPECT: status STAYS 'pending', scheduled_send_at REWRITTEN to the next valid
+  window (~08:00 or 08:30 ET), [queue] "rolled <id> to <time>" log line, NO send.
+
+REPORT as a table:
+  test | final status | scheduled_send_at (before→after) | sid | simulated | log line
+Then STOP. Do not start dashboard work or anything else.
+
+CLEANUP NOTE: these three test rows can stay (simulated). If you want, delete just
+the three rows you created by id at the end — do NOT bulk-delete anything.
