@@ -1,0 +1,97 @@
+CONTEXT
+Build the pending-queue scheduler: the missing piece that dispatches scheduled
+messages. All dispatch goes through the EXISTING gated sendViaTwilio (twilio.ts),
+so the scheduler inherits SMS_LIVE dry-run safety and the SMS_TEST_OVERRIDE_TO
+redirect for free — do NOT add a second Twilio path. We are in dev; SMS_LIVE is
+unset (dark), so this is fully testable without real sends.
+
+Opt-out is enforced in depth: STOP handler cancels pending rows (already built),
+the scheduler re-checks opt-out at dispatch (safety net, built here), and a
+SEPARATE follow-up will add opt-out filtering at generation time in the producers
+(audited here, NOT built here).
+
+GO-AHEAD POLICY: Do Phase A (audit, read-only), STOP, report. Do NOT build
+Phase B until I reply "go". Verify with tsc before reporting Phase B.
+
+═══════════════════════════════════════════════════════════════════
+PHASE A — AUDIT (read-only, no edits)
+═══════════════════════════════════════════════════════════════════
+Report each with file:line.
+
+1. Existing loops: is there ANY interval/cron/setInterval already running
+   (scheduler.ts runs the nightly chain — does it already poll for anything)?
+   We want to ADD a queue poller, not duplicate an existing loop or its
+   running-guard pattern.
+
+2. sanitizeScheduledSendAt in playerTiming.ts — confirm signature and that it
+   returns a TCPA-valid timestamp that rolls forward to the next valid window.
+   We will reuse it for past-window messages.
+
+3. Message status vocabulary: confirm the exact status values in use
+   ('pending','sent','skipped','cancelled','failed'?), and that scheduled_send_at
+   and the idx_messages_pending_send partial index exist. Report the exact value
+   the STOP handler uses when it cancels a pending message (so the scheduler's
+   opt-out skip matches that convention rather than inventing one).
+
+4. sendViaTwilio call path: signature, what it needs (to-number, body), and how
+   the manual /api/messages/send path persists the result afterward (sid, status,
+   simulated, sent_at). Phase B will REUSE that persistence path, not rewrite it.
+
+5. players.sms_opt_in — confirm this is the column the STOP handler sets false,
+   so the dispatch-time re-check reads the right field.
+
+6. OPT-OUT AT GENERATION TIME — for each producer, report whether it already
+   filters players with sms_opt_in=false BEFORE generating/queueing (file:line of
+   the filter, or "NO FILTER" if absent):
+   - milestoneCheck.ts
+   - monthlyRecap.ts
+   - postSessionFeedback.ts
+   - agent.ts (the /api/agent/run path)
+   Do NOT change anything — this scopes a separate follow-up, NOT part of the
+   scheduler build.
+
+STOP after Phase A. Report all 6, then wait for "go".
+
+═══════════════════════════════════════════════════════════════════
+PHASE B — BUILD (only after "go")
+═══════════════════════════════════════════════════════════════════
+Add an interval poller. Read POLL_INTERVAL_MS from env, default 5 minutes.
+Match the running-guard and (if present) the localDateStr/timezone patterns
+that scheduler.ts already uses. On each tick:
+
+  1. SELECT messages WHERE status='pending' AND scheduled_send_at <= now()
+     using the existing partial index. Cap the batch (e.g. 50/tick), oldest first.
+
+  2. For EACH due message, wrapped in its OWN try/catch (one failure must not
+     abort the batch — mark that row 'failed' with error_message, continue):
+
+     a. TCPA WINDOW: if now() is OUTSIDE the legal send window, do NOT send.
+        Recompute scheduled_send_at via sanitizeScheduledSendAt (next valid
+        window), UPDATE the row, leave status='pending'. Log
+        "[queue] rolled <id> to <new time> (outside TCPA window)". Move on.
+
+     b. OPT-OUT RE-CHECK (the one flag we re-validate at dispatch): read the
+        player's sms_opt_in. If false, set status to the SAME value the STOP
+        handler uses (per Phase A finding 3), log "[queue] skipped <id> — opted
+        out", do NOT send.
+
+     c. OTHERWISE dispatch via the EXISTING gated sendViaTwilio, and persist
+        sid/status/simulated/sent_at by REUSING the manual /send persistence path
+        (Phase A finding 4) — no parallel persistence block.
+
+  3. IDEMPOTENCY: guard overlapping ticks — if a tick is still running when the
+     next fires, skip it (match scheduler.ts's pattern; in-memory boolean is fine).
+
+  4. TEST ROUTE: add POST /api/queue/poll-now that runs exactly one tick on
+     demand, so I can test without waiting for the interval.
+
+═══════════════════════════════════════════════════════════════════
+REPORT (Phase B)
+═══════════════════════════════════════════════════════════════════
+  - Poller location + interval source (env var + default)
+  - Confirm dispatch REUSES sendViaTwilio (no second Twilio path)
+  - Confirm TCPA roll-forward REUSES sanitizeScheduledSendAt
+  - Confirm opt-out skip uses the STOP handler's status value (finding 3)
+  - Confirm persistence reuses the /send path (finding 4)
+  - tsc: clean?
+Then STOP.
