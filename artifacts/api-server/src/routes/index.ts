@@ -14,6 +14,7 @@ import socialGraphRouter from "./socialGraph";
 import recapRouter from "./recap";
 import onboardingRouter from "./onboarding";
 import clubsRouter from "./clubs";
+import queueRouter from "./queue";
 
 const router: IRouter = Router();
 
@@ -32,5 +33,6 @@ router.use(socialGraphRouter);
 router.use(recapRouter);
 router.use(onboardingRouter);
 router.use("/clubs", clubsRouter);
+router.use(queueRouter);
 
 export default router;

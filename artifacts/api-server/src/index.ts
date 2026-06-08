@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startScheduler } from "./lib/scheduler";
+import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
 
 const rawPort = process.env["PORT"];
@@ -109,4 +110,5 @@ app.listen(port, async (err) => {
 
   await seedAllClubTemplates();
   startScheduler();
+  startQueuePoller();
 });

@@ -1,0 +1,62 @@
+GO — build Phase B per the prior context, with these audit-driven specifics.
+Verify tsc clean before reporting. Do NOT build the agent.ts opt-out gate
+(separate follow-up).
+
+=== PREREQUISITE MIGRATION (output SQL, do NOT auto-run — I run in Supabase) ===
+The idx_messages_pending_send index does NOT exist (Finding 3). Output:
+  CREATE INDEX IF NOT EXISTS idx_messages_pending_send
+    ON messages (scheduled_send_at ASC)
+    WHERE status = 'pending' AND scheduled_send_at IS NOT NULL;
+Keep the "scheduled_send_at IS NOT NULL" clause — the poller only selects rows
+with a non-null scheduled time, and the partial index should match.
+
+=== POLLER ===
+Add a third setInterval (no conflict with the two existing loops, Finding 1).
+Read POLL_INTERVAL_MS from env, default 5 min. Use an in-memory "running"
+boolean guard (the existing loops use DB guards for their own purposes; in-memory
+is fine here per spec). If a tick is still running when the next fires, skip.
+
+Each tick:
+1. SELECT id, player_id, phone, body FROM messages
+   WHERE status='pending' AND scheduled_send_at <= now()
+   ORDER BY scheduled_send_at ASC LIMIT 50.
+   (Fetch player_id + phone up front, Finding 4 — no second player lookup for
+   dispatch. The opt-out re-check below is the ONE deliberate extra read.)
+
+2. For each message, in its OWN try/catch (one failure marks that row
+   status='failed' with error_message and continues the batch):
+
+   a. TCPA WINDOW: call sanitizeScheduledSendAt(new Date()).
+      - If it returns a Date AND now() is outside the legal window: UPDATE the row
+        with the new scheduled_send_at, leave status='pending', log
+        "[queue] rolled <id> to <new time> (outside TCPA window)", continue.
+      - DEFENSIVE: if sanitizeScheduledSendAt returns null, do NOT write null.
+        Leave status='pending', log "[queue] <id> sanitize returned null, leaving
+        as-is", continue. (Should not happen when passing now(), but guard it.)
+      - If now() IS inside the window, proceed to step b.
+
+   b. OPT-OUT RE-CHECK (Finding 5): fresh SELECT sms_opt_in for this player_id.
+      If false: UPDATE status='skipped',
+      error_message='Player opted out (dispatch-time re-check)', log
+      "[queue] skipped <id> — opted out", do NOT send. (status MUST be 'skipped'
+      to match the STOP handler convention, Finding 3 — not 'cancelled'.)
+
+   c. DISPATCH: reuse the /send persistence path exactly (Finding 4):
+        const { sid, simulated } = await sendViaTwilio(phone, body);
+        const now = new Date().toISOString();
+        Promise.all([
+          messages.update({status:'sent', twilio_message_sid:sid, simulated,
+            sent_at:now}).eq('id', id),
+          players.update({last_outbound_at:now}).eq('id', player_id),
+        ]);
+      No parallel Twilio path; sendViaTwilio is already gated.
+
+3. TEST ROUTE: POST /api/queue/poll-now runs exactly one tick on demand.
+
+=== REPORT ===
+  - Poller location + interval source
+  - Index migration SQL (flag it pending my run in Supabase)
+  - Confirm: reuses sendViaTwilio / reuses /send persistence / TCPA via
+    sanitizeScheduledSendAt with null-guard / opt-out skip uses 'skipped'
+  - tsc clean?
+Then STOP.
