@@ -221,6 +221,7 @@ Make it feel warm and personal. Reference their court partners by first name and
       direction: "outbound",
       sent_by: "agent",
       status: "pending",
+      sent_at: null,
     });
   if (msgErr) throw new Error(msgErr.message);
 

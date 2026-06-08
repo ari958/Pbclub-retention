@@ -393,13 +393,18 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       });
       if (res.ok) {
         const data = await res.json().catch(() => ({}));
-        const msg = data.message ?? data.body ?? null;
-        if (msg) {
-          setAgentResult(msg);
-          setResultDraft(msg);
+        if (data.skipped) {
+          setAgentResult("No message — player opted out of SMS");
+          toast.info("No message — player opted out of SMS");
+        } else {
+          const msg = data.message ?? data.body ?? null;
+          if (msg) {
+            setAgentResult(msg);
+            setResultDraft(msg);
+          }
+          toast.success("Message ready in queue");
+          onDataChanged?.();
         }
-        toast.success("Message ready in queue");
-        onDataChanged?.();
       } else {
         const data = await res.json().catch(() => ({}));
         toast.error(data.error ?? "Agent run failed");

@@ -178,6 +178,13 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
 
   const { profile, attendance } = assembled;
 
+  // ── Opt-in gate — bail before any Anthropic call or DB INSERT ──────────────
+  if (!profile.sms_opt_in) {
+    req.log.info({ player_id }, "[agent] skipped — player opted out of SMS");
+    res.json({ skipped: true, reason: "opted_out", message: null });
+    return;
+  }
+
   // Derive last_visit_date and programs_attended from attendance history
   // attendance is already ordered desc by attended_at from assembleProfile
   const last_visit_date: string | null = attendance.length > 0 ? attendance[0].attended_at : null;
@@ -542,6 +549,7 @@ router.post("/agent/run", agentRateLimit, async (req, res) => {
       link_strategy,
       scheduled_send_at: scheduledSendAt?.toISOString() ?? null,
       send_strategy,
+      sent_at: null,
     };
 
     const { data, error } = await supabase.from("messages").insert(payload).select("id").single();

@@ -215,6 +215,7 @@ async function persistMilestone(
       direction: "outbound",
       sent_by: "agent",
       status: "pending",
+      sent_at: null,
     });
   if (msgErr) throw new Error(msgErr.message);
 

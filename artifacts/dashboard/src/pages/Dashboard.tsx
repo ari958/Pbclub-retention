@@ -353,7 +353,12 @@ export default function Dashboard() {
       body: JSON.stringify({ player_id: playerId }),
     });
     if (res.ok) {
-      toast.success("Message ready in queue");
+      const data = await res.json().catch(() => ({}));
+      if (data.skipped) {
+        toast.info("No message — player opted out of SMS");
+      } else {
+        toast.success("Message ready in queue");
+      }
     } else {
       const data = await res.json().catch(() => ({}));
       toast.error(data.error ?? "Agent run failed");
@@ -373,6 +378,7 @@ export default function Dashboard() {
         return;
       }
       let generated = 0;
+      let skipped = 0;
       for (let i = 0; i < targets.length; i++) {
         setBatchStatus(`Generating ${i + 1} of ${targets.length}…`);
         const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {
@@ -380,10 +386,15 @@ export default function Dashboard() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ player_id: targets[i].id }),
         });
-        if (res.ok) generated++;
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          if (data.skipped) skipped++;
+          else generated++;
+        }
       }
       await fetchMessages();
-      toast.success(`${generated} message${generated !== 1 ? "s" : ""} generated`);
+      const skippedNote = skipped > 0 ? `, ${skipped} skipped (opted out)` : "";
+      toast.success(`${generated} message${generated !== 1 ? "s" : ""} generated${skippedNote}`);
     } finally {
       setBatchRunning(false);
       setBatchStatus(null);

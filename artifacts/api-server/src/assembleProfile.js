@@ -14,7 +14,7 @@ export async function assembleProfile(player_id) {
   const [profileResult, attendanceResult] = await Promise.all([
     supabase
       .from("players")
-      .select("club_id, name, skill_level, membership_status, progression_status, notes, coach_assigned_level")
+      .select("club_id, name, skill_level, membership_status, progression_status, notes, coach_assigned_level, sms_opt_in")
       .eq("id", player_id)
       .single(),
 

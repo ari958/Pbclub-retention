@@ -229,6 +229,7 @@ export async function sendFeedbackForEvent(
           direction: "outbound",
           sent_by: "system",
           status: "pending",
+          sent_at: null,
         })
         .select("id")
         .single();
