@@ -1,0 +1,46 @@
+Reading routes/index.ts and checking the current scheduler call site before writing:
+
+Reading index.ts for the startScheduler call site before writing all files in parallel:
+
+Writing all four files in parallel:
+
+Wiring up the router and poller start in parallel:
+
+Adding router.use(queueRouter) and the startQueuePoller call in parallel:
+
+Adding the startQueuePoller() call alongside startScheduler():
+
+Now running tsc:
+
+One-line fix — Supabase builder doesn't expose .catch():
+
+tsc clean. Restarting the server to confirm the poller starts cleanly:
+
+Server up. Startup log confirms all three pollers:
+
+[scheduler] Scheduler started — checking every 60s
+[scheduler] Feedback poller started — checking every 30 minutes
+[queue] Queue poller started  intervalMs: 300000
+PHASE B — REPORT
+Poller location + interval source
+artifacts/api-server/src/lib/queuePoller.ts
+POLL_INTERVAL_MS from process.env.POLL_INTERVAL_MS (parsed as int), defaulting to 5 * 60 * 1000 (5 min). Started from src/index.ts:116 alongside startScheduler().
+
+Prerequisite migration — run in Supabase SQL Editor before going live:
+
+CREATE INDEX IF NOT EXISTS idx_messages_pending_send
+  ON messages (scheduled_send_at ASC)
+  WHERE status = 'pending' AND scheduled_send_at IS NOT NULL;
+⚠️ PENDING YOUR RUN — index does not currently exist. The poller will work without it (sequential scan) but will be unacceptably slow at scale.
+
+Confirmations:
+
+Check	Result
+Reuses sendViaTwilio — no second Twilio path	✓ — queuePoller.ts:148 calls sendViaTwilio(phone, body)
+Reuses /send persistence block exactly	✓ — Promise.all([messages.update({status:'sent', twilio_message_sid:sid, simulated, sent_at}), players.update({last_outbound_at})]) at lines 152–162
+TCPA roll-forward via sanitizeScheduledSendAt	✓ — called at line 86 when isInsideTcpaWindow(now) is false; null-guard at line 88 logs and skips without writing null back
+TCPA window check is a separate helper	✓ — isInsideTcpaWindow() mirrors the window math from playerTiming.ts without calling sanitize(now()) directly (which returns null inside the window due to the past-guard at the end of that function — noted in code comment)
+Opt-out skip uses "skipped" (matches STOP handler)	✓ — queuePoller.ts:112: status: "skipped", error_message: "Player opted out (dispatch-time re-check)"
+In-memory running guard	✓ — let running = false boolean at line 195; skips overlapping ticks
+Test route	✓ — POST /api/queue/poll-now in routes/queue.ts, calls runQueueTick() directly
+tsc: clean ✓
