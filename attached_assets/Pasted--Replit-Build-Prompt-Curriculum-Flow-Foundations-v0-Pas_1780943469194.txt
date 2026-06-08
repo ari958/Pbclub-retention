@@ -1,0 +1,142 @@
+# Replit Build Prompt — Curriculum Flow Foundations (v0)
+
+Paste this whole prompt into the Replit agent. It is designed to run unattended.
+
+---
+
+## Context & ground rules
+
+You are building the **foundational layer** for a new "Curriculum Flow" feature in the PB Club retention platform. This is NOT the full feature — it is the safe, swappable substrate the full feature will sit on. The full feature depends on the Selkirk unified-curriculum definition, which is **not available yet**. Therefore:
+
+- **Quarantine every rung-definition assumption behind a single config object** so it can be swapped in one place when Selkirk's real definition lands. Do not scatter rung logic across files.
+- This build adds a new table, new library functions, and read-only audit scripts. It does **not** touch the agent hot path, the scheduler, or any existing write path. Do not modify `agent.ts`, `scheduler.ts`, `warmScore.ts`, `playerTiming.ts`, `churnScore.ts`, or any route handler.
+
+### Architectural rules you must follow (from RUNBOOK.md — non-negotiable)
+
+1. **Supabase client:** `.ts` files import the shared singleton from `api-server/src/lib/supabaseClient.ts`. Never call `createClient(...)` inline in a `.ts` file. `.js` scripts may manage their own client but must use `SUPABASE_SERVICE_ROLE_KEY` directly, never an anon fallback.
+2. **RLS pattern** for any new table — exactly this, nothing more:
+   ```sql
+   ALTER TABLE <table> ENABLE ROW LEVEL SECURITY;
+   CREATE POLICY service_role_all_<table> ON <table> FOR ALL TO service_role USING (true) WITH CHECK (true);
+   CREATE POLICY anon_read_<table> ON <table> FOR SELECT TO anon USING (true);
+   ```
+   Then run the default-grants block:
+   ```sql
+   GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+   GRANT ALL    ON ALL TABLES IN SCHEMA public TO service_role;
+   ```
+3. **All timestamp columns are `timestamptz`.** Add a `BEFORE UPDATE` `updated_at` trigger using the existing shared `set_updated_at()` function if the table is mutable.
+4. **Batch operations must paginate** — Supabase caps reads at 1,000 rows. Any full-table fetch must loop with `.range()` until exhausted.
+5. **Read source before editing.** For each file you touch, read it first. Verify with `tsc --noEmit` (or `node --check` for `.js`) after each step.
+
+### Execution policy
+
+- Work the steps **in order**. Each step is independent — if one fails, record the failure and continue to the next; do not let one failure cascade.
+- After each step, print a **STATUS line**: `STEP N: CLOSED | PARTIAL | DEFERRED | FAILED — <one sentence>`.
+- Do **not** run the migration against the live database automatically. Generate the SQL into a file and print it; I will run it in the Supabase SQL Editor myself. (The audit scripts in Step 5 are read-only and you MAY run those.)
+- At the very end, print a consolidated STATUS summary and a "What I need from Ari" list.
+
+---
+
+## STEP 1 — Migration: `level_history` table (SQL file only, do not execute)
+
+Create `migrations/CURRICULUM_FLOW_001_level_history.sql`. This is the append-only spine of the whole feature.
+
+Table `level_history`:
+- `id bigserial PRIMARY KEY`
+- `player_id uuid NOT NULL REFERENCES players(id) ON DELETE CASCADE`
+- `club_id uuid NOT NULL REFERENCES clubs(id)`
+- `from_level text` (nullable — null means "first known assignment")
+- `to_level text NOT NULL`
+- `from_rank int` (nullable)
+- `to_rank int NOT NULL`
+- `source text NOT NULL` — enum-like, one of: `coach`, `backfill`, `behavior_inferred`. Add a CHECK constraint.
+- `note text` (nullable)
+- `assigned_at timestamptz NOT NULL DEFAULT now()`
+- `created_at timestamptz NOT NULL DEFAULT now()`
+
+Indexes:
+- `idx_level_history_player_assigned ON level_history (player_id, assigned_at DESC)`
+- `idx_level_history_club ON level_history (club_id)`
+
+Apply the standard RLS block and the default-grants block above. No `updated_at` trigger needed — this table is append-only (immutable rows). Add a SQL comment at the top of the file noting that rows are append-only and should never be UPDATEd or DELETEd except via player-delete cascade.
+
+Print the full SQL to the console. Do NOT execute it.
+
+## STEP 2 — Backfill script (SQL file only, do not execute)
+
+Create `migrations/CURRICULUM_FLOW_002_backfill_seed.sql`. For every player who has a non-null `coach_assigned_level`, insert one seed row into `level_history`:
+- `from_level = NULL`, `to_level = players.coach_assigned_level`
+- `to_rank` = the matching `level_taxonomy.rank` for that `(club_id, level)`
+- `source = 'backfill'`
+- `assigned_at = COALESCE(players.updated_at, now())` (best available proxy for when the level was set)
+- `note = 'Seeded from coach_assigned_level at backfill'`
+
+Make it idempotent: wrap in a `WHERE NOT EXISTS (SELECT 1 FROM level_history lh WHERE lh.player_id = players.id)` guard so re-running doesn't duplicate seeds. Print the SQL. Do NOT execute.
+
+## STEP 3 — Rung resolver: `lib/curriculumFlow.ts`
+
+Create `api-server/src/lib/curriculumFlow.ts`. This is where ALL rung-definition assumptions are quarantined.
+
+Export a single config object at the top, clearly commented as the **swap point** for the real Selkirk definition:
+
+```typescript
+// ⚠️ SWAP POINT — provisional rung mapping until the Selkirk unified curriculum
+// definition is available. Everything rung-related routes through here so the
+// real definition can replace this one object without touching detector logic.
+export const RUNG_CONFIG = {
+  // ordered low→high; rank mirrors level_taxonomy.rank
+  // resolver maps an attendance to a rung using, in priority order:
+  //   1. explicit event tag (preferred — skill level lives in event tags)
+  //   2. program_type / program_name keyword match (fallback)
+  //   3. null (unresolvable — counts as "no rung signal")
+};
+```
+
+Functions to export (all pure where possible, no DB writes):
+- `loadTaxonomy(clubId): Promise<{level, rank}[]>` — fetches `level_taxonomy` for the club via the singleton, sorted by rank. Cache in-module.
+- `resolveAttendanceRung(attendance, taxonomy): {level, rank} | null` — applies the priority order above. Must be defensive: missing tags → fall through to keyword → null. NEVER throw.
+- `buildPlayerRungTimeline(playerId): Promise<{attended_at, level, rank, event_id}[]>` — paginated fetch of all the player's attendances (oldest→newest), each resolved to a rung, nulls dropped. This is the per-player input both detectors consume.
+
+Read `SUPABASE_SCHEMA_EXPORT.md` and any existing event-tag handling (check `syncEventAttendance.js` and `assembleProfile.js` for how tags/program_type are currently read) before writing the resolver, so the field access matches reality. Verify with `tsc --noEmit`.
+
+## STEP 4 — Detectors: `lib/curriculumDetectors.ts`
+
+Create `api-server/src/lib/curriculumDetectors.ts`. Pure functions over the timeline from Step 3. No DB access, fully unit-testable.
+
+```typescript
+export interface StallSignal { stalled: boolean; rank: number; sessionsAtRank: number; daysAtRank: number; lastAdvanceAt: string | null; }
+export interface RetreatSignal { retreated: boolean; peakRank: number; currentRank: number; retreatedAt: string | null; sessionsSinceRetreat: number; }
+```
+
+- `detectStall(timeline, opts)` — player is stalled if they have ≥ `opts.minSessions` (default 4) attendances at their current top rank with no upward rank movement for ≥ `opts.windowDays` (default 60). Parameterize both; do not hardcode.
+- `detectRetreat(timeline, opts)` — player retreated if their max rank ever reached exceeds their current sustained rank, AND they've stayed at the lower rank for ≥ `opts.minSessionsSinceRetreat` (default 2) sessions. Distinguish a real retreat from a one-off dabble-up-then-back.
+
+Both must handle: empty timeline, single attendance, all-same-rung. Return the typed signal with `stalled/retreated = false` and zeroed fields rather than throwing.
+
+Write a small test file `api-server/src/lib/__tests__/curriculumDetectors.test.ts` with hand-built timelines covering: healthy climber (neither fires), classic stall, classic retreat, dabble-up-then-back (retreat should NOT fire), empty/single. Use whatever test runner the repo already has; if none, write plain assertion functions runnable via `node`/`tsx` and document how to run them. Verify with `tsc --noEmit`.
+
+## STEP 5 — Coverage audit (READ-ONLY — you MAY run this)
+
+Create `api-server/src/scripts/auditCurriculumCoverage.ts` (runnable via `tsx`). Read-only. It answers the spec's open question 3. Paginate all fetches. Print a report:
+
+- Total players; players with non-null `coach_assigned_level` (count + %).
+- Distribution of `coach_assigned_level` across the 6 taxonomy rungs.
+- Of all attendances, what % resolve to a rung via `resolveAttendanceRung` (tag hit vs keyword fallback vs unresolved) — this tells us how good the booking→rung mapping is RIGHT NOW.
+- Count of players whose resolved timeline has ≥4 attendances (i.e. enough history for stall detection to be meaningful).
+- Run `detectStall` and `detectRetreat` across all players (in-memory, no writes) and print: how many players currently flag stall, how many flag retreat. This is a dry-run sanity check of the detectors against real data.
+
+**Run this script** and include its full output in your final report. This is the most valuable artifact for me — it tells me whether the data can support the feature before we build the agent integration.
+
+## STEP 6 — Docs
+
+Append a new section to `migrations/` as `CURRICULUM_FLOW_README.md` summarizing: what was built, the SWAP POINT location, the two SQL files awaiting manual execution, how to run the audit and the tests, and an explicit "NOT built yet / next" list (agent catch integration, coach worklist UI, level_history write path on coach reassignment, benchmarking across clubs).
+
+---
+
+## Final output
+
+Print:
+1. Consolidated STATUS lines for all 6 steps.
+2. The Step 5 audit output in full.
+3. "What I need from Ari": the Selkirk rung definition (the SWAP POINT), confirmation to run the two SQL files, and any field-access mismatches you hit in the resolver.
