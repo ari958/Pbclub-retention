@@ -230,6 +230,23 @@ export async function computePlayerTiming(
   return result;
 }
 
+// ─── TCPA send-window constants (single definition point) ────────────────────
+// queuePoller imports isInsideSendWindow; sanitizeScheduledSendAt uses the
+// constants directly so it can distinguish before-open vs after-close for rolling.
+
+const TCPA_OPEN_WEEKDAY = 8.0;  // 08:00 ET
+const TCPA_OPEN_WEEKEND = 8.5;  // 08:30 ET
+const TCPA_CLOSE        = 19.5; // 19:30 ET (courtesy buffer)
+
+/** True when `date` falls inside the legal SMS send window in ET. */
+export function isInsideSendWindow(date: Date): boolean {
+  const lc = etComponents(date);
+  const isWeekend = lc.weekday === 0 || lc.weekday === 6;
+  const localHour = lc.hour + lc.minute / 60;
+  return localHour >= (isWeekend ? TCPA_OPEN_WEEKEND : TCPA_OPEN_WEEKDAY)
+      && localHour <= TCPA_CLOSE;
+}
+
 // ─── FUNCTION 2: sanitizeScheduledSendAt ──────────────────────────────────────
 
 export function sanitizeScheduledSendAt(
@@ -239,8 +256,7 @@ export function sanitizeScheduledSendAt(
   const lc = etComponents(proposedSendAt);
   const isWeekend = lc.weekday === 0 || lc.weekday === 6;
 
-  const windowOpenHour   = isWeekend ? 8.5 : 8.0;  // 08:30 weekends, 08:00 weekdays
-  const windowCloseHour  = 19.5;                     // 19:30 always (TCPA courtesy buffer)
+  const windowOpenHour  = isWeekend ? TCPA_OPEN_WEEKEND : TCPA_OPEN_WEEKDAY;
 
   const localHour = lc.hour + lc.minute / 60;
 
@@ -250,9 +266,9 @@ export function sanitizeScheduledSendAt(
     const openMin  = Math.round((windowOpenHour % 1) * 60);
     const openHour = Math.floor(windowOpenHour);
     result = setLocalTime(proposedSendAt, openHour, openMin);
-  } else if (localHour > windowCloseHour) {
-    const tomorrow   = new Date(proposedSendAt.getTime() + 24 * 60 * 60 * 1000);
-    const tmWeekend  = (() => { const d = etComponents(tomorrow).weekday; return d === 0 || d === 6; })();
+  } else if (localHour > TCPA_CLOSE) {
+    const tomorrow  = new Date(proposedSendAt.getTime() + 24 * 60 * 60 * 1000);
+    const tmWeekend = (() => { const d = etComponents(tomorrow).weekday; return d === 0 || d === 6; })();
     result = setLocalTime(tomorrow, 8, tmWeekend ? 30 : 0);
   } else {
     result = proposedSendAt;

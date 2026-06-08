@@ -1,36 +1,11 @@
 import { supabase } from "./supabaseClient";
 import { sendViaTwilio } from "./twilio";
-import { sanitizeScheduledSendAt } from "./playerTiming";
+import { sanitizeScheduledSendAt, isInsideSendWindow } from "./playerTiming";
 import { logger } from "./logger";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
 const BATCH_LIMIT = 50;
-
-// ─── TCPA window helper ────────────────────────────────────────────────────────
-// Mirrors the window logic inside sanitizeScheduledSendAt so we can determine
-// whether now() is inside the window WITHOUT calling sanitize with now() directly.
-// (Calling sanitize(now()) inside the window returns null because the result
-// equals now(), which fails the "past → skip" guard at the end of that function.)
-
-function isInsideTcpaWindow(date: Date): boolean {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York",
-      hour: "numeric",
-      minute: "numeric",
-      hour12: false,
-      weekday: "short",
-    })
-      .formatToParts(date)
-      .map((p) => [p.type, p.value]),
-  );
-  const localHour =
-    (parseInt(parts.hour, 10) % 24) + parseInt(parts.minute, 10) / 60;
-  const isWeekend = parts.weekday === "Sat" || parts.weekday === "Sun";
-  const openHour = isWeekend ? 8.5 : 8.0;
-  return localHour >= openHour && localHour <= 19.5;
-}
 
 // ─── One tick ─────────────────────────────────────────────────────────────────
 
@@ -80,7 +55,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     try {
       // ── a. TCPA WINDOW ──────────────────────────────────────────────────────
       const tickNow = new Date();
-      if (!isInsideTcpaWindow(tickNow)) {
+      if (!isInsideSendWindow(tickNow)) {
         const nextWindow = sanitizeScheduledSendAt(tickNow);
         if (nextWindow === null) {
           // Defensive: should not happen when now() is outside the window,
