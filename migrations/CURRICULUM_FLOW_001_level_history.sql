@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS level_history (
   from_rank    int,                     -- NULL = first known assignment
   to_rank      int          NOT NULL,
   source       text         NOT NULL
-                            CHECK (source IN ('coach', 'backfill', 'behavior_inferred')),
+                            CHECK (source IN ('coach', 'backfill', 'behavior_inferred', 'synthetic')),
   note         text,
   assigned_at  timestamptz  NOT NULL DEFAULT now(),
   created_at   timestamptz  NOT NULL DEFAULT now()

@@ -1,0 +1,59 @@
+# Replit Build Prompt — Synthetic Coach Assignments (dev/test data)
+
+Context: coach_assigned_level coverage is 7/2006 players (0.3%). This is a dev environment, NOT production. We need synthetic coach assignments derived from real booking behavior so the Curriculum Flow detectors, confidence ladder, and (future) coach worklist have realistic test data. Synthetic data must be clearly marked, deterministic, and reversible in one command.
+
+## Ground rules (same as always)
+
+- Read each file before editing. `tsc --noEmit` after every TS change.
+- `.ts` files use the shared singleton from `lib/supabaseClient.ts`. Paginate all reads (1,000-row cap).
+- Do NOT modify agent.ts, scheduler.ts, or any existing write path.
+- **Never overwrite a real coach assignment.** The 7 players with existing non-null `coach_assigned_level` are untouchable.
+- All scripts default to **dry-run** (print what would happen, write nothing). Live writes only behind an explicit `--apply` flag.
+- STATUS line per step (CLOSED / PARTIAL / DEFERRED / FAILED). Stop and report if a step's preconditions fail — do not improvise schema changes.
+
+## STEP 0 — Precondition check
+
+Query the live DB: does the `level_history` table exist?
+- If NO: the migrations haven't been run. Amend `migrations/CURRICULUM_FLOW_001_level_history.sql` so the `source` CHECK constraint includes `'synthetic'` (full list: `coach`, `backfill`, `behavior_inferred`, `synthetic`). Print a reminder that Ari must run 001 then 002 in the Supabase SQL Editor before the seed script can apply. Continue building the scripts (they'll dry-run against a missing table gracefully — detect and report, don't crash).
+- If YES: generate `migrations/CURRICULUM_FLOW_003_synthetic_source.sql` containing only the CHECK-constraint amendment (drop + re-add with the new value list). Print the SQL, do NOT execute — Ari runs it manually.
+
+## STEP 1 — Seed script: `api-server/src/scripts/seedSyntheticCoachLevels.ts`
+
+Runnable via `tsx`. Dry-run by default; `--apply` to write.
+
+Logic:
+1. Load taxonomy via `loadTaxonomy` and build each player's resolved timeline via `buildPlayerRungTimeline` (reuse `lib/curriculumFlow.ts` — do not duplicate resolution logic).
+2. Eligible players: ≥1 resolved attendance AND `coach_assigned_level IS NULL`. (Skip the 7 real assignments; skip players with no resolved timeline.)
+3. Baseline rank per player = modal rank of their resolved attendances (ties → most recent sustained rank).
+4. Deterministic assignment via a simple hash of `player_id` (e.g. sum of char codes mod 100) mapped to buckets:
+   - 0–69 → coach level = baseline rank (aligned)
+   - 70–84 → baseline − 1, floor at rank 1 (synthetic "deluded": booking above coach level)
+   - 85–94 → baseline + 1, ceiling at max rank (synthetic "ready to advance")
+   - 95–99 → skip (leave unassigned)
+5. `assigned_at`: backdate deterministically 30–180 days using the same hash (e.g. 30 + hash % 151 days ago) so stall/daysAtRank math gets variety.
+6. On `--apply`, per player (batch the writes):
+   - UPDATE `players.coach_assigned_level` to the level name for the chosen rank
+   - INSERT into `level_history`: from_level NULL, to_level = chosen level, ranks accordingly, `source = 'synthetic'`, `assigned_at` = backdated value, `note = 'SYNTHETIC dev seed — derived from modal booking rank, bucket=<aligned|deluded|ready>'`
+7. Idempotent: if a player already has a `level_history` row with `source='synthetic'`, skip them entirely.
+
+Dry-run output: total eligible, bucket counts (aligned / deluded / ready / skipped), 10 sample rows (player_id prefix, modal rank, assigned level, bucket, backdated date), and a confirmation that the 7 real assignments were excluded.
+
+## STEP 2 — Wipe script: `api-server/src/scripts/wipeSyntheticCoachLevels.ts`
+
+Dry-run by default; `--apply` to write. Logic:
+1. Fetch all `level_history` rows where `source = 'synthetic'`.
+2. For each affected player: set `players.coach_assigned_level = NULL` **only if** its current value still equals the synthetic `to_level` (guard: a real coach may have reassigned since seeding — never null a newer real value).
+3. Delete the synthetic `level_history` rows.
+4. Dry-run prints: rows to delete, players to null, players protected by the guard.
+
+## STEP 3 — Verify
+
+1. `tsc --noEmit` clean.
+2. Run seed script in dry-run mode against live DB and include full output in the report.
+3. If (and only if) Step 0 found `level_history` exists AND migration 003's constraint change has been applied — which you can test by attempting the dry-run's constraint introspection — note in the report whether `--apply` is ready to run or still blocked on manual SQL.
+4. Do NOT run `--apply` yourself. Ari decides.
+5. Update `migrations/CURRICULUM_FLOW_README.md`: new section "Synthetic dev data" — how to seed, how to wipe, the bucket distribution, and a bold warning that this data must be wiped before any production cutover (add it to the pre-launch checklist mentality: wipe-synthetic belongs next to the SMS_LIVE flip).
+
+## Final output
+
+Consolidated STATUS lines, the dry-run output in full, and "What I need from Ari" (which SQL files to run manually, in what order, and the exact `--apply` commands to run when ready).

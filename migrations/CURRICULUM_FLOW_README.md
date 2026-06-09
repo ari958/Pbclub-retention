@@ -110,6 +110,58 @@ threshold edge cases. Exit 0 = all pass.
 
 ---
 
+## Synthetic dev data
+
+> **⚠ WIPE BEFORE ANY PRODUCTION CUTOVER.** Synthetic assignments must be removed before real coaches start using the system. Add the wipe step to your pre-launch checklist alongside the `SMS_LIVE` flip and A2P registration.
+
+### What it is
+
+511 players will receive a deterministically-derived `coach_assigned_level` seeded from their modal booking rank. All synthetic rows are tagged `source='synthetic'` in `level_history` and carry the note `"SYNTHETIC dev seed — derived from modal booking rank, bucket=<aligned|deluded|ready>"`. The 7 real coach assignments are never touched.
+
+### Bucket distribution (dry-run 2026-06-09)
+
+| Bucket | Hash range | Logic | Count |
+|---|---|---|---|
+| aligned | 0–69 | coach level = modal rank | 373 |
+| deluded | 70–84 | coach level = modal rank − 1 | 89 |
+| ready | 85–94 | coach level = modal rank + 1 | 49 |
+| skip | 95–99 | no assignment | 23 |
+| **total eligible** | | | **511** |
+
+### How to seed
+
+Step 1 — Run the SQL migrations in the Supabase SQL Editor (if not already done):
+```
+1. migrations/CURRICULUM_FLOW_001_level_history.sql
+2. migrations/CURRICULUM_FLOW_002_backfill_seed.sql
+```
+
+Step 2 — Dry-run (safe, no writes):
+```bash
+pnpm --filter @workspace/api-server exec tsx src/scripts/seedSyntheticCoachLevels.ts
+```
+
+Step 3 — Apply (after confirming dry-run output looks right):
+```bash
+pnpm --filter @workspace/api-server exec tsx src/scripts/seedSyntheticCoachLevels.ts --apply
+```
+
+Idempotent: re-running `--apply` skips players that already have a `source='synthetic'` row.
+
+### How to wipe
+
+```bash
+# Dry-run first
+pnpm --filter @workspace/api-server exec tsx src/scripts/wipeSyntheticCoachLevels.ts
+
+# Apply
+pnpm --filter @workspace/api-server exec tsx src/scripts/wipeSyntheticCoachLevels.ts --apply
+```
+
+The wipe guards against real reassignments: if a coach has changed a player's level since seeding, that player's `coach_assigned_level` is left alone (only the `level_history` row is deleted).
+
+---
+
 ## NOT built yet — next steps
 
 | Item | Notes |
