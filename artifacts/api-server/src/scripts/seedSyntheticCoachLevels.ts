@@ -44,10 +44,16 @@ function assignBucket(
   baseRank: number,
   maxRank: number
 ): { bucket: Bucket; assignedRank: number } {
-  if (hash >= 95) return { bucket: "skip",    assignedRank: 0 };
-  if (hash >= 85) return { bucket: "ready",   assignedRank: Math.min(baseRank + 1, maxRank) };
-  if (hash >= 70) return { bucket: "deluded", assignedRank: Math.max(baseRank - 1, 1) };
-  return              { bucket: "aligned",  assignedRank: baseRank };
+  if (hash >= 95) return { bucket: "skip", assignedRank: 0 };
+  if (hash >= 85) {
+    const assignedRank = Math.min(baseRank + 1, maxRank);
+    return { bucket: assignedRank === baseRank ? "aligned" : "ready", assignedRank };
+  }
+  if (hash >= 70) {
+    const assignedRank = Math.max(baseRank - 1, 1);
+    return { bucket: assignedRank === baseRank ? "aligned" : "deluded", assignedRank };
+  }
+  return { bucket: "aligned", assignedRank: baseRank };
 }
 
 /** Backdate deterministically: 30–180 days ago using the same hash. */
