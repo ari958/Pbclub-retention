@@ -75,6 +75,7 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
     await appendJobLog(JOB_IMPORT, "Nightly: player import started");
     try {
       const importStats: Record<string, number> = await importAllPlayers(
+        CLUB_ID,
         (msg: string) => appendJobLog(JOB_IMPORT, msg),
         () => isCancelled(JOB_IMPORT),
         true  // skipAttendanceSync — nightly chain handles this in step 2
@@ -93,6 +94,7 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
     await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS} days)`);
     try {
       const syncStats: Record<string, number> = await syncEventAttendance(
+        CLUB_ID,
         (msg: string) => appendJobLog(JOB_EVENTS, msg),
         () => isCancelled(JOB_EVENTS),
         INCREMENTAL_DAYS
