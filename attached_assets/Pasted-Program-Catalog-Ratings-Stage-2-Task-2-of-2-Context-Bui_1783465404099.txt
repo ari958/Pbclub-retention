@@ -1,0 +1,31 @@
+Program Catalog & Ratings, Stage 2 (Task 2 of 2)
+Context: Building the rated program catalog. Stage 1 discovery is done and settled:
+
+Capacity = totalTeams × teamSize (= totalTeams; teamSize is 1 everywhere). Fill rate = signups._total / capacity.
+stats and waitlist are always null — ignore. No waitlist-depth metric in v1.
+Level comes from the event's tags array (e.g. "Advanced Beginner", "All Levels", "Intermediate"), NOT from the program name.
+Price signal is admissionRate.regular / .member (numeric). Revenue/court-hour is DEFERRED — chargingStrategy: "court+" means the court-fee component is resolved at settlement and not exposed in the event payload. Do NOT compute or display any revenue-per-court-hour metric in v1. Price may be shown as displayed context only.
+One bulk GET /events returns all needed fields inline (signups._total, totalTeams, teamSize, admissionRate, admissionRating, tags). Nightly sweep = one call, no per-event fan-out.
+
+Two data-integrity findings from the name dump that this task must handle:
+
+program_type is DIRTY: the same name appears under different program_type values (e.g. "Advanced Intermediate Coach Led 60 & 60" tagged both "Clinics" and "Open Play"). Do NOT trust program_type as ground truth. Assign the canonical archetype type during normalization using name + tags + program_type as inputs, name pattern winning.
+Names bake in promo/time/level/duration modifiers ("Half Price," "$24," "Morning," "Late Night," "(3.5-3.99)", "3 Hour"). These are NOT part of the archetype identity. Strip them; the archetype is the base format.
+
+Peak/off-peak definition (deterministic, from startTime in America/New_York):
+
+Weekend (Sat/Sun): all hours = PEAK
+Weekday: 6pm–10pm (hour 18–21) = PEAK; all other hours = OFF-PEAK
+Classify by startTime only — no straddle logic.
+
+Scope filter: Catalog includes ONLY Open Play and Clinics archetypes. Exclude Private Event, Co-Working, Kids Class, Leagues from the rated catalog (their attendance rows stay in the DB for accounting, but they are not archetypes). Because program_type is dirty, apply the exclusion by canonical classification, not raw program_type alone.
+GO-AHEAD POLICY: This task has two phases. Do Phase A, STOP, and report. Do NOT proceed to Phase B until I confirm the mapping.
+Phase A — Normalization proposal (AUDIT ONLY, no writes):
+
+Read all distinct program_name / program_type from attendances (full history).
+Propose a canonical archetype mapping: for each raw name, the canonical archetype it folds into, the assigned canonical type (Open Play / Clinic), and whether it's IN or OUT of the rated catalog (with reason for OUT).
+Group the open-play family sensibly — social open play across time slots should collapse toward one archetype (peak/off-peak is a slot attribute, not a separate archetype); but keep genuinely distinct formats separate (e.g. Instructional/Coach-Guided Open Play, Drill-and-Stay, Challenge Court, Ladies, Queer Pickleball, DUPR-Tracked — these are real format distinctions, not just time/price modifiers). Use judgment and EXPLAIN each non-obvious grouping.
+Output as a review table: raw_name | attendance_rows | → canonical_archetype | canonical_type | IN/OUT | note. Sort by attendance_rows desc.
+Do NOT write to the programs table yet. Do NOT modify attendances. STOP and report the proposed mapping for my review.
+
+Verification gates: tsc clean, node --check on any new files. No live data mutation in Phase A.
