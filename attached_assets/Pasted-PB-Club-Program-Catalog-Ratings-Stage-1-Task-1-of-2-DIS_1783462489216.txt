@@ -1,0 +1,17 @@
+PB Club — Program Catalog & Ratings, Stage 1 (Task 1 of 2: DISCOVERY ONLY)
+Context: We're building a program catalog that rates each canonical program archetype on performance. Source data is the attendances table (Supabase) plus per-event capacity/price from the PodPlay API. Before building anything, we need to confirm the real shape of two things the OpenAPI spec left typed as untyped object: event stats and signups. Everything downstream (fill rate, revenue/court-hour, waitlist depth) depends on knowing where capacity actually lives.
+Go-ahead policy: This task is read-only discovery. Make the calls, report findings, then STOP. Do NOT write migrations, create tables, modify the programs table, or touch any sync code yet.
+Task:
+
+Using the existing PodPlay client (x-api-key auth, base https://pbclub.podplay.app/apis/v2), call GET /events/{eventId} for these three events (chosen for different capacity/pricing shapes):
+
+019ef12d-2f6f-7bba-8927-b6478180f166 — Advanced Beginner 60&60 Clinic
+019ef0fe-6db7-7bba-891a-7b2b32c4ffc2 — Free Community Open Play
+019ef0ff-2176-7bba-891d-068b55d87865 — $16 Summer Advanced Beginner
+
+
+For each event, report the actual populated structure (field names + example values) of: stats, signups, waitlist, tables (including items), reservations._total, totalTeams, teamSize, admissionRate, admissionRating, recurrence, series, tags.
+Answer specifically: where does event capacity (the max-participants ceiling) live? Candidates: a field inside stats, court/table count × slots-per-court, or totalTeams × teamSize. Report which it is, with the real numbers for all three events, and show the computed fill rate = signups ÷ capacity for each so we can sanity-check it.
+Confirm whether GET /events (the list endpoint) returns these same stats/capacity fields inline, or whether they only populate on a per-event GET /events/{eventId}. This decides whether the nightly rating sweep is one bulk call or N per-event calls (rate-limit implications).
+
+Output: A STATUS line per item (CLOSED / PARTIAL / DEFERRED), then stop and report back. Do not proceed to the rating build
