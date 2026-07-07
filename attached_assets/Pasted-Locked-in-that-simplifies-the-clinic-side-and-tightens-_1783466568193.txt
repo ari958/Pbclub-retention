@@ -1,0 +1,64 @@
+Locked in — that simplifies the clinic side and tightens the type rule.
+So the rule is now cleaner than what I proposed: a clinic is a scheduled, instructor-led session with defined curriculum/structure (Learn to Play, 60&60, 30&30, Path to Intermediate, Workshop, Play With the Pro, DUPR Assessment). Anything where the court opens up for rotational play — even if it starts with drilling or a coach is present — is open play. Drill & Stay and Skills & Drills end in open rotation, so they're open play. That also aligns them with PodPlay's own tags (which had them as Open Play all along), so there's no override needed for those.
+Which means the only format that overrides its PodPlay tag is 60&60 — a true clinic that occasionally got mis-tagged Open Play. Everything else takes PodPlay's designation as-is. Even cleaner.
+Updated catalog:
+OPEN PLAY (8): Social Open Play, Coach-Guided Open Play, Challenge Court Open Play, Ladies Open Play, Queer Pickleball, DUPR-Tracked Open Play, Drill & Stay, Skills & Drills
+CLINIC (7): Learn to Play, 30&30 Drill & Play, 60&60 Drill & Play, Path to Intermediate, Workshop, Play With the Pro, DUPR Assessment
+OUT: Private / Co-Working / Kids / Leagues / one-time specials.
+The two you didn't flag I'm leaving as proposed: Workshop absorbs single-skill clinics (skill sliceable later), and DUPR-Tracked vs. DUPR Assessment stay separate. Say so if either should change; otherwise they're locked.
+That's the confirmed mapping. Folding it into Phase B now — here's the ready-to-run build prompt with the real archetypes seeded in.
+
+PB Club — Program Catalog & Ratings, Stage 2 Phase B (BUILD)
+All classification decisions are final (below). Proceed through all steps; STOP-and-report only on the guard conditions in each step.
+Locked parameters:
+
+Data window: ratings computed over events with startTime >= 2026-02-01 (America/New_York). Pre-Feb rows stay in DB for player first-attendance/history accounting but are excluded from all rating computations.
+Capacity = totalTeams × teamSize; fill rate = signups._total / capacity.
+Revenue/court-hour: DEFERRED — chargingStrategy:"court+" hides the court component. Do NOT compute or display any revenue-per-court-hour metric. Price (admissionRate.regular/.member) may appear as display context only.
+stats and waitlist are always null — ignore. No waitlist-depth metric.
+Level from event tags (Beginner / Advanced Beginner / Intermediate / Advanced Intermediate / Advanced / All Levels), NOT from name.
+Two peak axes, both derived from startTime (America/New_York):
+
+Daily peak: weekend (Sat/Sun) any hour = peak; weekday hour 18–21 = peak; else off-peak.
+Seasonal peak: month in [Oct, Nov, Dec, Jan, Feb, Mar] = peak season; else off-peak season.
+Classify by start time only; no straddle logic.
+
+
+
+Canonical archetypes (seed the programs table with exactly these):
+canonical_type = open_play: Social Open Play, Coach-Guided Open Play, Challenge Court Open Play, Ladies Open Play, Queer Pickleball, DUPR-Tracked Open Play, Drill & Stay, Skills & Drills
+canonical_type = clinic: Learn to Play, 30&30 Drill & Play, 60&60 Drill & Play, Path to Intermediate, Workshop, Play With the Pro, DUPR Assessment
+Type rule: each archetype's canonical_type is authoritative. The ONLY format that overrides its PodPlay event-type tag is 60&60 (definitionally a clinic; some instances were mis-tagged Open Play). All other archetypes align with PodPlay's designation. For any open-play-vs-clinic ambiguity not covered by a named archetype, PodPlay's designation wins.
+Excluded from catalog (retain rows for accounting, classify as null with reason): Private Event, Co-Working, Kids Class/Camp, Leagues, one-time specials (Grand Opening, New Year's Eve, Special Event Night).
+Step 1 — programs table as archetype registry.
+
+One row per archetype above. Migration to add columns if absent: id, club_id, canonical_name, canonical_type, match_rules (jsonb: name keywords/patterns that fold raw names in), overrides_podplay_type (boolean; true only for 60&60), source_event_id (nullable, for the later publish/clone stage), active, created_at, updated_at (+ set_updated_at trigger per runbook).
+match_rules are DATA, not hardcoded logic — re-grouping later is a row edit.
+Multi-tenant: every row carries club_id; use ClubContext/requireClub, no hardcoded PB Club ID in logic.
+
+Step 2 — Classifier classifyEvent(event) → {archetypeId|null, reason}.
+
+Pure function. Input: PodPlay event (name, tags, program_type, startTime). Matches against programs.match_rules.
+Type assignment: archetype canonical_type wins where overrides_podplay_type; else take PodPlay program_type; ambiguous → PodPlay wins.
+Derive is_daily_peak and is_peak_season from startTime per definitions above.
+Derive level from tags.
+Returns null (with reason) for excluded categories.
+Unit-test against a fixture of real names from the dump: every intended-IN name resolves to exactly one archetype; every OUT name → null. Report any name matching zero or ≥2 archetypes — do not silently resolve; surface as a mapping bug. (This is a STOP condition.)
+
+Step 3 — Rating engine programRatings.ts, per archetype, sliceable by daily-peak and season.
+
+Fill rate: mean signups._total / capacity, with n (event count) always reported alongside.
+Registration velocity: median days between booked_at and startTime.
+Time-performance grid: fill rate by day-of-week × daily-peak.
+New vs. returning mix: per event's signups, share whose first-ever attendance is/isn't this event (cross-ref player_id first-attendance across FULL history, not just post-Feb).
+Price context (display only): modal admissionRate.regular/.member. Labeled context, not a rating.
+NO fabricated composite score. Surface real metrics. If a sort is needed, sort by fill rate with n shown. (ClubOwnerIQ calculateSkillScores anti-pattern — do not reintroduce.)
+
+Step 4 — Persistence + nightly refresh.
+
+One bulk GET /events (live/upcoming fill) + historical attendances (velocity, mix, trailing fill). No per-event fan-out.
+Store in program_ratings keyed (program_id, daily_peak, season, computed_at), queryable without recompute.
+Wire as a nightly scheduler step at 2am operator-local; guard behind existing idempotency/last_run_day pattern.
+
+Step 5 — Read API GET /api/programs/catalog (club-scoped, requireClub): archetypes + ratings for the calendar builder. SELECT-only from dashboard; all reads via API server per runbook write-path rules.
+Verification: tsc clean; node --check on new files; classifier unit tests green; dry-run printing the rated catalog to console for eyeball BEFORE nightly wiring goes live. Report per-step STATUS (CLOSED/PARTIAL/DEFERRED) + the console dump.

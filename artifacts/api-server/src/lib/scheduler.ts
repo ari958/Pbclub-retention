@@ -9,6 +9,7 @@ import { computeBuddyPairs } from "./socialGraph";
 import { runChurnScoreBatch } from "./churnScore";
 import { runMilestoneBatch } from "./milestoneCheck";
 import { runMonthlyRecapBatch } from "./monthlyRecap";
+import { computeProgramRatings } from "./programRatings";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 
@@ -207,6 +208,27 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
       }
     } catch (err: any) {
       await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);
+    }
+
+    // Step 8: Program ratings recompute (non-fatal, every night)
+    try {
+      await appendJobLog(JOB_NIGHTLY, "Step 8: recomputing program ratings");
+      const result = await computeProgramRatings(
+        CLUB_ID,
+        (msg) => appendJobLog(JOB_NIGHTLY, msg),
+      );
+      await appendJobLog(
+        JOB_NIGHTLY,
+        `Step 8 complete — archetypes: ${result.archetypes_computed}, ` +
+          `podplay_events: ${result.podplay_events_classified}, ` +
+          `attendances: ${result.attendances_classified}, ` +
+          `ratings_upserted: ${result.ratings_upserted}`,
+      );
+      if (result.errors > 0) {
+        await appendJobLog(JOB_NIGHTLY, `Step 8 had ${result.errors} non-fatal errors`);
+      }
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Program ratings error (non-fatal): ${err.message}`);
     }
 
     // Mark nightly_sync done — persist last_run_day so a same-day restart skips re-fire
