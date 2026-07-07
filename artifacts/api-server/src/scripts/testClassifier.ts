@@ -70,7 +70,7 @@ const ARCHETYPES: Archetype[] = [
     match_priority: 15,
     overrides_podplay_type: false,
     match_rules: {
-      keywords: ["challenge court", "king of the court", "queen of the court", "ladder play", "with prizes", "winners stay"],
+      keywords: ["challenge court", "king of the court", "queen of the court", "ladder play", "ladder week", "with prizes", "winners stay"],
       require_podplay_types: ["Open Play"],
     },
   },
@@ -207,6 +207,7 @@ const FIXTURE: Case[] = [
   { name: "Challenge Court Style Open Play - Winners Stay",                             type: "Open Play", expected: "Challenge Court Open Play" },
   { name: "4 Hour Open Play w/ Challenge Court",                                        type: "Open Play", expected: "Challenge Court Open Play" },
   { name: "Saturday Night Challenge Court Social Open Play",                            type: "Open Play", expected: "Challenge Court Open Play" },
+  { name: "Intermediate 3.0 - 3.5 Ladder Week 4",                                      type: "Open Play", expected: "Challenge Court Open Play" },
 
   // ── Coach-Guided Open Play ────────────────────────────────────────────────
   { name: "Coach Guided Intermediate Open Play",              type: "Open Play", expected: "Coach-Guided Open Play" },

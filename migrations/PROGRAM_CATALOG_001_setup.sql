@@ -98,7 +98,7 @@ ON CONFLICT (club_id, canonical_name) DO NOTHING;
 -- ── Priority 15: Challenge Court (before Coach-Guided to win on "King of the Court" overlap) ──
 INSERT INTO programs (club_id, name, canonical_name, canonical_type, match_priority, overrides_podplay_type, active, match_rules)
 VALUES (v_club_id, 'Challenge Court Open Play', 'Challenge Court Open Play', 'open_play', 15, false, true,
-  '{"keywords":["challenge court","king of the court","queen of the court","ladder play","with prizes","winners stay"],"require_podplay_types":["Open Play"]}'::jsonb)
+  '{"keywords":["challenge court","king of the court","queen of the court","ladder play","ladder week","with prizes","winners stay"],"require_podplay_types":["Open Play"]}'::jsonb)
 ON CONFLICT (club_id, canonical_name) DO NOTHING;
 
 -- ── Priority 20: specific format archetypes ───────────────────────────────
