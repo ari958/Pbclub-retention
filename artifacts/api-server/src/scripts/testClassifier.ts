@@ -121,7 +121,7 @@ const ARCHETYPES: Archetype[] = [
     canonical_type: "clinic",
     match_priority: 20,
     overrides_podplay_type: false,
-    match_rules: { keywords: ["path to intermediate"], require_podplay_types: ["Clinics"] },
+    match_rules: { keywords: ["path to intermediate", "path to 4.0"], require_podplay_types: ["Clinics"] },
   },
   {
     id: "a14",
@@ -129,7 +129,7 @@ const ARCHETYPES: Archetype[] = [
     canonical_type: "clinic",
     match_priority: 20,
     overrides_podplay_type: false,
-    match_rules: { keywords: ["workshop", "pickleball iq", "serving clinic", "reset clinic"], require_podplay_types: ["Clinics"] },
+    match_rules: { keywords: ["workshop", "pickleball iq", "serving clinic", "reset clinic", "fitness hiit", "fitness"], require_podplay_types: ["Clinics"] },
   },
   // Priority 100 — catch-all
   {
@@ -246,8 +246,11 @@ const FIXTURE: Case[] = [
   { name: "Path to Intermediate",             type: "Clinics", expected: "Path to Intermediate" },
   { name: "Clinic Series - Path to Intermediate Level 1", type: "Clinics", expected: "Path to Intermediate" },
   { name: "Path to Intermediate LEVEL 2",    type: "Clinics", expected: "Path to Intermediate" },
+  { name: "Path to 4.0",                      type: "Clinics", expected: "Path to Intermediate" },
+  { name: "Path to 4.0 Level 1",              type: "Clinics", expected: "Path to Intermediate" },
 
   // ── Workshop ──────────────────────────────────────────────────────────────
+  { name: "Pickleball Fitness HIIT",                         type: "Clinics", expected: "Workshop" },
   { name: "Fast Hands and Counters Workshop",                type: "Clinics", expected: "Workshop" },
   { name: "Dinking Dominance Workshop",                      type: "Clinics", expected: "Workshop" },
   { name: "Dinking Dominance Workshop - Intermediate",       type: "Clinics", expected: "Workshop" },
@@ -292,6 +295,7 @@ const FIXTURE: Case[] = [
   // ── OUT: one-time specials (typed Open Play but excluded by name) ─────────
   { name: "Grand Opening Open Play/Open House",  type: "Open Play", expected: null },
   { name: "New Years Eve Party Event",           type: "Open Play", expected: null },
+  { name: "Mystery Partner Scramble",            type: "Party",     expected: null },
   { name: "Test Session",                        type: "",          expected: null },
   { name: "DUPR open play test",                 type: "Open Play", expected: null },
 ];

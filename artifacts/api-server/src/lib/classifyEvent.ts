@@ -68,6 +68,7 @@ const EXCLUDED_TYPES = new Set([
   "Kids Class",
   "Leagues",
   "Tournaments",
+  "Party",
 ]);
 
 // One-time special events that are typed "Open Play" but are not programs

@@ -129,12 +129,12 @@ ON CONFLICT (club_id, canonical_name) DO NOTHING;
 
 INSERT INTO programs (club_id, name, canonical_name, canonical_type, match_priority, overrides_podplay_type, active, match_rules)
 VALUES (v_club_id, 'Path to Intermediate', 'Path to Intermediate', 'clinic', 20, false, true,
-  '{"keywords":["path to intermediate"],"require_podplay_types":["Clinics"]}'::jsonb)
+  '{"keywords":["path to intermediate","path to 4.0"],"require_podplay_types":["Clinics"]}'::jsonb)
 ON CONFLICT (club_id, canonical_name) DO NOTHING;
 
 INSERT INTO programs (club_id, name, canonical_name, canonical_type, match_priority, overrides_podplay_type, active, match_rules)
 VALUES (v_club_id, 'Workshop', 'Workshop', 'clinic', 20, false, true,
-  '{"keywords":["workshop","pickleball iq","serving clinic","reset clinic"],"require_podplay_types":["Clinics"]}'::jsonb)
+  '{"keywords":["workshop","pickleball iq","serving clinic","reset clinic","fitness hiit","fitness"],"require_podplay_types":["Clinics"]}'::jsonb)
 ON CONFLICT (club_id, canonical_name) DO NOTHING;
 
 -- ── Priority 100: Social Open Play — catch-all for remaining Open Play ─────
