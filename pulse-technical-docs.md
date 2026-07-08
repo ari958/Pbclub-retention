@@ -1113,6 +1113,17 @@ If Twilio is not configured, bulk send still creates `conversations` and `messag
 ### `monthly_recaps` dedup only applies on non-dry-run
 `dry_run=true` skips the dedup check. Running the test endpoint multiple times for the same player and month will generate new Claude messages each time (but not persist anything).
 
+### attendances is a tracked-member-only subset (fill must source from API)
+`attendances` rows cover only the members we track in Supabase — typically **2–6× fewer** than the true session headcount reported by PodPlay's `signups._total`. This means:
+- **Fill rate** (`final_signups / total_teams`) MUST be sourced from the PodPlay API (stored in `event_fill`) — never from counting `attendances` rows.
+- Velocity and new-player share CAN use `attendances` but must be labeled "member-subset signals" in any UI or downstream logic, not presented as full-population figures.
+
+### event_fill: fill_rate capped at 100% (2 known overbookings)
+Two events in `event_fill` have `fill_rate > 1.0` due to post-signup court edits in PodPlay (capacity was reduced after signups were already recorded). These events are **retained with `fill_rate` clamped to 1.0** in all rating computations — they are not dropped, because the event happened and should count as full. The `is_canceled=false` flag is correct for both. If future overbookings accumulate, add a `WHERE fill_rate <= 1.0` filter only after confirming the cause.
+
+### "Pickleball Fitness HIIT" deliberately left unclassified
+`Pickleball Fitness HIIT` (PodPlay type: `Clinics`) does **not** fold into the Workshop archetype. Conditioning is not a skill clinic, and a broad "fitness" keyword risks false matches on future unrelated events. It is treated as an intentional exclusion (stored in `event_fill` with `archetype_id = null`). Revisit as a dedicated archetype if the format recurs consistently (≥5 past events). Do not add "fitness hiit" or "fitness" to Workshop's `match_rules.keywords` without a separate archetype decision.
+
 ---
 
 ## 14. Onboarding Checklist

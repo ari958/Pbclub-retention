@@ -60,6 +60,17 @@ function IconSettings() {
   );
 }
 
+function IconProgramming() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M5 6.5L3 8.5L5 10.5" />
+      <path d="M11 6.5L13 8.5L11 10.5" />
+      <path d="M9 5.5L7 11.5" />
+    </svg>
+  );
+}
+
 interface SidebarProps {
   lastSynced?: string | null;
   messageCount?: number;
@@ -118,6 +129,7 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
           badge: messagesBadge > 0 ? messagesBadge : undefined,
           replyAlert: unreadReplies > 0,
         },
+        { label: "Programming", path: `/c/${slug}/programming`, icon: <IconProgramming /> },
         { label: "Settings", path: `/c/${slug}/settings`, icon: <IconSettings /> },
       ]
     : [];

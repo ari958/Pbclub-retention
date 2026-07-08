@@ -109,7 +109,9 @@ async function main() {
     if (!slotMap.has(key)) slotMap.set(key, { n: 0, rates: [] });
     const slot = slotMap.get(key)!;
     slot.n++;
-    slot.rates.push(row.fill_rate);
+    // Clamp to 1.0: 2 known overbookings (post-signup court edits in PodPlay).
+    // Count as full — cap, don't drop, so n stays accurate.
+    slot.rates.push(Math.min(row.fill_rate, 1.0));
   }
 
   // 4. Print catalog

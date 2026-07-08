@@ -131,7 +131,10 @@ export async function computeProgramRatings(
       const s: Season = row.is_peak_season ? "peak" : "off_peak";
       const slot = accumulators.get(row.archetype_id as string)?.get(slotKey(dp, s));
       if (!slot) continue;
-      slot.fill_rates.push(row.fill_rate as number);
+      // Clamp to 1.0: 2 known overbookings exist where final_signups > total_teams
+      // due to post-signup court edits in PodPlay. The event still happened and
+      // counts as full; we cap rather than drop so n stays accurate.
+      slot.fill_rates.push(Math.min(row.fill_rate as number, 1.0));
       stats.event_fill_rows_used++;
     }
 

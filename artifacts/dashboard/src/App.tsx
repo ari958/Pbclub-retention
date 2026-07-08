@@ -8,6 +8,7 @@ import Assessments from "./pages/Assessments";
 import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
 import SessionFeedback from "./pages/SessionFeedback";
+import Programming from "./pages/Programming";
 import Onboarding from "./pages/Onboarding";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -321,6 +322,14 @@ export default function App() {
                 element={
                   <ErrorBoundary pageName="Session Feedback">
                     <SessionFeedback />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="programming"
+                element={
+                  <ErrorBoundary pageName="Programming">
+                    <Programming />
                   </ErrorBoundary>
                 }
               />
