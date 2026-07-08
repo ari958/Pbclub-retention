@@ -303,16 +303,29 @@ router.post("/sync/events/cancel", async (_req, res) => {
 
 const JOB_NIGHTLY = "nightly_sync";
 
-router.post("/sync/nightly", async (_req, res) => {
+router.post("/sync/nightly", async (req, res) => {
   const current = await getJob(JOB_NIGHTLY);
   if (current.status === "running") {
     return res.status(409).json({ error: "Nightly sync already running" });
   }
 
-  runNightlyChain().catch(() => {});
+  // Optional manual catch-up override — widens the incremental window for
+  // steps 2 (event sync), 3 (confidence recompute), and 8a (event fill).
+  // Omit for normal nightly behavior (14 days). When provided, this run does
+  // NOT pass todayStr, so it never sets last_run_day — the scheduler's
+  // same-day dedup guard is unaffected.
+  const rawDays = (req.body as any)?.incrementalDays;
+  const incrementalDays =
+    typeof rawDays === "number" && Number.isFinite(rawDays) && rawDays > 0
+      ? Math.floor(rawDays)
+      : undefined;
+
+  runNightlyChain(undefined, incrementalDays).catch(() => {});
 
   return res.status(202).json({
-    message: "Nightly chain started (import → incremental event sync)",
+    message: incrementalDays
+      ? `Nightly chain started (manual catch-up — ${incrementalDays}-day window)`
+      : "Nightly chain started (import → incremental event sync)",
     statusUrl: "/api/sync/nightly/status",
   });
 });

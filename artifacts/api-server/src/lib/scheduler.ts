@@ -66,10 +66,16 @@ function isTimeToRun(scheduledTime: string, timezone: string): boolean {
   return nowH === h && nowM === m;
 }
 
-export async function runNightlyChain(todayStr?: string): Promise<void> {
+export async function runNightlyChain(todayStr?: string, incrementalDaysOverride?: number): Promise<void> {
+  const INCREMENTAL_DAYS_EFFECTIVE = incrementalDaysOverride ?? INCREMENTAL_DAYS;
   logger.info("[scheduler] Starting nightly chain");
   await startJob(JOB_NIGHTLY);
-  await appendJobLog(JOB_NIGHTLY, "Nightly chain started");
+  await appendJobLog(
+    JOB_NIGHTLY,
+    incrementalDaysOverride
+      ? `Nightly chain started (manual catch-up — window override: ${INCREMENTAL_DAYS_EFFECTIVE} days)`
+      : "Nightly chain started"
+  );
 
   try {
     // Step 1: Player import
@@ -93,13 +99,13 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
 
     // Step 2: Incremental event sync (last 14 days)
     await startJob(JOB_EVENTS);
-    await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS} days)`);
+    await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS_EFFECTIVE} days)`);
     try {
       const syncStats: Record<string, number> = await syncEventAttendance(
         CLUB_ID,
         (msg: string) => appendJobLog(JOB_EVENTS, msg),
         () => isCancelled(JOB_EVENTS),
-        INCREMENTAL_DAYS
+        INCREMENTAL_DAYS_EFFECTIVE
       );
       const cancelled = await isCancelled(JOB_EVENTS);
       await finishJob(JOB_EVENTS, cancelled ? "cancelled" : "done", syncStats);
@@ -118,9 +124,9 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
 
     // Step 3: Incremental confidence recompute for players with recent tagged sessions
     await startJob(JOB_CONFIDENCE_NIGHTLY);
-    await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS} days`);
+    await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS_EFFECTIVE} days`);
     try {
-      const cutoff = new Date(Date.now() - INCREMENTAL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+      const cutoff = new Date(Date.now() - INCREMENTAL_DAYS_EFFECTIVE * 24 * 60 * 60 * 1000).toISOString();
       const { data: recentRows, error: recentErr } = await supabase
         .from("attendances")
         .select("player_id")
@@ -217,7 +223,7 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
       const fillStats = await syncEventFill(
         CLUB_ID,
         (msg) => appendJobLog(JOB_NIGHTLY, msg),
-        { mode: "incremental", incrementalDays: INCREMENTAL_DAYS },
+        { mode: "incremental", incrementalDays: INCREMENTAL_DAYS_EFFECTIVE },
       );
       await appendJobLog(
         JOB_NIGHTLY,
