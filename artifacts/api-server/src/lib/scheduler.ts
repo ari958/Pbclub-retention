@@ -10,6 +10,7 @@ import { runChurnScoreBatch } from "./churnScore";
 import { runMilestoneBatch } from "./milestoneCheck";
 import { runMonthlyRecapBatch } from "./monthlyRecap";
 import { computeProgramRatings } from "./programRatings";
+import { syncEventFill } from "./eventFillSync";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 
@@ -210,22 +211,40 @@ export async function runNightlyChain(todayStr?: string): Promise<void> {
       await appendJobLog(JOB_NIGHTLY, `Monthly recap error (non-fatal): ${err.message}`);
     }
 
-    // Step 8: Program ratings recompute (non-fatal, every night)
+    // Step 8a: Incremental event fill sync — fetch capacity for newly-completed sessions
     try {
-      await appendJobLog(JOB_NIGHTLY, "Step 8: recomputing program ratings");
+      await appendJobLog(JOB_NIGHTLY, "Step 8a: syncing event fill for recently-completed sessions");
+      const fillStats = await syncEventFill(
+        CLUB_ID,
+        (msg) => appendJobLog(JOB_NIGHTLY, msg),
+        { mode: "incremental", incrementalDays: INCREMENTAL_DAYS },
+      );
+      await appendJobLog(
+        JOB_NIGHTLY,
+        `Step 8a complete — fetched=${fillStats.fetched} ` +
+          `skipped_already=${fillStats.skipped_already_recorded} ` +
+          `errors=${fillStats.errors}`,
+      );
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Event fill sync error (non-fatal): ${err.message}`);
+    }
+
+    // Step 8b: Program ratings recompute (non-fatal, every night)
+    try {
+      await appendJobLog(JOB_NIGHTLY, "Step 8b: recomputing program ratings");
       const result = await computeProgramRatings(
         CLUB_ID,
         (msg) => appendJobLog(JOB_NIGHTLY, msg),
       );
       await appendJobLog(
         JOB_NIGHTLY,
-        `Step 8 complete — archetypes: ${result.archetypes_computed}, ` +
-          `podplay_events: ${result.podplay_events_classified}, ` +
+        `Step 8b complete — archetypes: ${result.archetypes_computed}, ` +
+          `fill_events: ${result.event_fill_rows_used}, ` +
           `attendances: ${result.attendances_classified}, ` +
           `ratings_upserted: ${result.ratings_upserted}`,
       );
       if (result.errors > 0) {
-        await appendJobLog(JOB_NIGHTLY, `Step 8 had ${result.errors} non-fatal errors`);
+        await appendJobLog(JOB_NIGHTLY, `Step 8b had ${result.errors} non-fatal errors`);
       }
     } catch (err: any) {
       await appendJobLog(JOB_NIGHTLY, `Program ratings error (non-fatal): ${err.message}`);

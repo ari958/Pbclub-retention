@@ -1,0 +1,23 @@
+ Historical fill backfill + rating rebuild (BUILD)
+Confirmed inputs: 321 past events (startTime < now, since Feb 1) resolve via GET /events/{id}, each carrying totalTeams and final signups._total.
+Capacity/fill rule (final): fill_rate = signups._total / totalTeams. Do NOT use teamSize — totalTeams is the seat count already. Numerator is the API's signups._total (all registrants), NOT our attendances row count (which is a biased subset of tracked members only — see runbook note).
+Step 1 — Backfill job (backfillEventFill.ts).
+
+For each distinct event_id in attendances with attended_at >= 2026-02-01 and past startTime (~321 events): call GET /events/{id}, extract totalTeams, signups._total, startTime, status, isCanceled.
+Compute fill_rate = signups._total / totalTeams. Guard against totalTeams = 0 (skip/null those, log them).
+Store per event in a new event_fill table: event_id, club_id, archetype_id (via classifier), total_teams, final_signups, fill_rate, start_time, is_daily_peak, is_peak_season, is_canceled, fetched_at.
+Skip canceled events (isCanceled=true) — exclude from fill averages.
+Batched and resumable like existing heavy syncs: 50–100ms sleep between calls, checkpoint to job_logs, resume from last completed ID on failure. Support one-time manual invocation for the initial backfill.
+
+Step 2 — Rebuild rating engine on historical fill.
+
+Replace forward-looking pre-reg fill with historical fill from event_fill (completed events only — the real utilization metric).
+Per archetype, sliced by daily-peak and season: mean fill_rate, with n (completed-event count) always shown.
+Keep velocity and new-vs-returning but label them explicitly as tracked-member-only signals (computed over our attendances subset, not all registrants). Fill rate is the one full-population metric; do not blur.
+
+Step 3 — Nightly upkeep.
+
+Nightly job fetches newly-completed events not yet in event_fill and appends. Fill accrues as sessions complete. No re-fetch of recorded events.
+
+Runbook note: attendances captures only tracked members — a variable, biased fraction of true attendance (PodPlay signups._total runs 2–6× our row count per event). Any attendance-derived metric is a member-subset signal. Fill rate must always source signups + totalTeams from the API.
+Verification: tsc clean; node --check; run the one-time backfill on ~321 events; dry-run print the rebuilt catalog with historical fill + n per archetype. Report per-step STATUS and the console dump. STOP at the dump for eyeball before nightly wiring.
