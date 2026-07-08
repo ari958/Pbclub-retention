@@ -74,13 +74,135 @@ function mode(arr: number[]): number | null {
   return Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
 }
 
+// ── Variant helpers ───────────────────────────────────────────────────────────
+// Variants = per-raw-program-name breakdown within an archetype.
+// Names sourced from attendances.program_name (member-subset, but name is reliable).
+
+export interface VariantDayStats {
+  fill_rate: number | null;
+  event_count: number;
+}
+
+export interface ProgramVariant {
+  raw_name: string;
+  event_count: number;
+  peak_day: VariantDayStats | null;
+  off_peak_day: VariantDayStats | null;
+}
+
+interface FillRow {
+  event_id: string;
+  archetype_id: string;
+  fill_rate: number;
+  is_daily_peak: boolean;
+}
+
+// Load all (event_id, program_name) pairs from attendances without a large IN clause
+// (avoids PostgREST URL-length limit). We paginate 1000 rows at a time and dedup
+// in memory, then the caller filters to only the event_ids it cares about.
+async function fetchEventNameMap(neededIds: Set<string>): Promise<Map<string, string>> {
+  const map = new Map<string, string>();
+  if (!neededIds.size) return map;
+  let page = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("attendances")
+      .select("event_id, program_name")
+      .not("event_id", "is", null)
+      .not("program_name", "is", null)
+      .range(page * 1000, (page + 1) * 1000 - 1);
+    if (error) throw new Error(`fetchEventNameMap: ${error.message}`);
+    if (!data?.length) break;
+    for (const row of data) {
+      const eid = row.event_id as string;
+      if (neededIds.has(eid) && !map.has(eid) && row.program_name)
+        map.set(eid, row.program_name as string);
+    }
+    if (data.length < 1000) break;
+    page++;
+  }
+  return map;
+}
+
+function buildVariantMap(
+  fillRows: FillRow[],
+  eventNameMap: Map<string, string>,
+): Map<string, ProgramVariant[]> {
+  // archetypeId → raw_name → { peak: fills[], offpeak: fills[] }
+  const accum = new Map<string, Map<string, { peak: number[]; offpeak: number[] }>>();
+
+  for (const row of fillRows) {
+    const name = eventNameMap.get(row.event_id);
+    if (!name) continue;
+    if (!accum.has(row.archetype_id)) accum.set(row.archetype_id, new Map());
+    const byName = accum.get(row.archetype_id)!;
+    if (!byName.has(name)) byName.set(name, { peak: [], offpeak: [] });
+    const slots = byName.get(name)!;
+    const clamped = Math.min(row.fill_rate, 1.0);
+    if (row.is_daily_peak) slots.peak.push(clamped);
+    else slots.offpeak.push(clamped);
+  }
+
+  const result = new Map<string, ProgramVariant[]>();
+  for (const [archetypeId, byName] of accum) {
+    const variants: ProgramVariant[] = [];
+    for (const [raw_name, slots] of byName) {
+      const totalN = slots.peak.length + slots.offpeak.length;
+      const avgFill = (arr: number[]) =>
+        arr.length > 0
+          ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 1000) / 1000
+          : null;
+      variants.push({
+        raw_name,
+        event_count: totalN,
+        peak_day:
+          slots.peak.length > 0
+            ? { fill_rate: avgFill(slots.peak), event_count: slots.peak.length }
+            : null,
+        off_peak_day:
+          slots.offpeak.length > 0
+            ? { fill_rate: avgFill(slots.offpeak), event_count: slots.offpeak.length }
+            : null,
+      });
+    }
+    variants.sort((a, b) => b.event_count - a.event_count);
+    result.set(archetypeId, variants);
+  }
+  return result;
+}
+
+// Fetch all classified event_fill rows for a club (optionally within a window)
+// and build the archetype → variants map.  Used by both catalog paths.
+export async function fetchVariantsForClub(
+  clubId: string,
+  cutoff?: string,
+): Promise<Map<string, ProgramVariant[]>> {
+  let query = supabase
+    .from("event_fill")
+    .select("event_id, archetype_id, fill_rate, is_daily_peak")
+    .eq("club_id", clubId)
+    .eq("is_canceled", false)
+    .not("archetype_id", "is", null)
+    .not("fill_rate", "is", null);
+  if (cutoff) query = (query as any).gte("start_time", cutoff);
+  const { data, error } = await query;
+  if (error) throw new Error(`fetchVariantsForClub: ${error.message}`);
+  const rows: FillRow[] = (data ?? []).map((r: any) => ({
+    event_id: r.event_id as string,
+    archetype_id: r.archetype_id as string,
+    fill_rate: r.fill_rate as number,
+    is_daily_peak: r.is_daily_peak as boolean,
+  }));
+  const nameMap = await fetchEventNameMap(new Set(rows.map((r) => r.event_id)));
+  return buildVariantMap(rows, nameMap);
+}
+
 // ── Windowed (on-the-fly) rating computation ──────────────────────────────────
-// Used by the catalog route when ?days=7|30|90 is requested.
-// Skips attendances (velocity/new_player_share are too thin over short windows).
+// Season is collapsed — fill_rate and n aggregate over peak + off-peak season.
+// Attendances skipped (velocity/new_player_share too thin over short windows).
 
 export interface WindowedRatingSlice {
   daily_peak: boolean;
-  season: Season;
   fill_rate: number | null;
   event_count: number;
   median_velocity_days: null;
@@ -94,6 +216,7 @@ export interface WindowedArchetypeEntry {
   match_priority: number;
   overrides_podplay_type: boolean;
   ratings: WindowedRatingSlice[];
+  variants: ProgramVariant[];
 }
 
 export async function computeProgramRatingsForWindow(
@@ -105,19 +228,15 @@ export async function computeProgramRatingsForWindow(
 
   const archetypes = await loadArchetypes(clubId);
 
-  // Accumulators: archetypeId → slotKey → fill_rates[]
-  const accumulators = new Map<string, Map<string, number[]>>();
+  // 2-slot accumulators: archetypeId → { peak: fills[], offpeak: fills[] }
+  const accumulators = new Map<string, { peak: number[]; offpeak: number[] }>();
   for (const arch of archetypes) {
-    const slotMap = new Map<string, number[]>();
-    for (const dp of [true, false]) {
-      for (const s of SEASONS) slotMap.set(slotKey(dp, s), []);
-    }
-    accumulators.set(arch.id, slotMap);
+    accumulators.set(arch.id, { peak: [], offpeak: [] });
   }
 
   const { data: fillRows, error: fillErr } = await supabase
     .from("event_fill")
-    .select("archetype_id, fill_rate, is_daily_peak, is_peak_season")
+    .select("event_id, archetype_id, fill_rate, is_daily_peak")
     .eq("club_id", clubId)
     .eq("is_canceled", false)
     .not("archetype_id", "is", null)
@@ -126,35 +245,40 @@ export async function computeProgramRatingsForWindow(
 
   if (fillErr) throw new Error(`event_fill window query: ${fillErr.message}`);
 
+  const rawRows: FillRow[] = [];
   for (const row of fillRows ?? []) {
-    const dp = row.is_daily_peak as boolean;
-    const s: Season = row.is_peak_season ? "peak" : "off_peak";
-    const slot = accumulators.get(row.archetype_id as string)?.get(slotKey(dp, s));
-    if (!slot) continue;
-    slot.push(Math.min(row.fill_rate as number, 1.0));
+    const accum = accumulators.get(row.archetype_id as string);
+    if (!accum) continue;
+    const clamped = Math.min(row.fill_rate as number, 1.0);
+    if (row.is_daily_peak) accum.peak.push(clamped);
+    else accum.offpeak.push(clamped);
+    rawRows.push({
+      event_id: row.event_id as string,
+      archetype_id: row.archetype_id as string,
+      fill_rate: row.fill_rate as number,
+      is_daily_peak: row.is_daily_peak as boolean,
+    });
   }
+
+  // Build variants
+  const nameMap = await fetchEventNameMap(new Set(rawRows.map((r) => r.event_id)));
+  const variantMap = buildVariantMap(rawRows, nameMap);
 
   const result: WindowedArchetypeEntry[] = [];
   for (const arch of archetypes) {
-    const slotMap = accumulators.get(arch.id);
-    if (!slotMap) continue;
+    const accum = accumulators.get(arch.id);
+    if (!accum) continue;
 
     const ratings: WindowedRatingSlice[] = [];
-    for (const dp of [true, false]) {
-      for (const s of SEASONS) {
-        const fills = slotMap.get(slotKey(dp, s)) ?? [];
-        if (fills.length === 0) continue;
-        const fillRate = fills.reduce((a, b) => a + b, 0) / fills.length;
-        ratings.push({
-          daily_peak: dp,
-          season: s,
-          fill_rate: Math.round(fillRate * 1000) / 1000,
-          event_count: fills.length,
-          median_velocity_days: null,
-          new_player_share: null,
-        });
-      }
-    }
+    const avg = (arr: number[]) =>
+      arr.length > 0
+        ? Math.round((arr.reduce((a, b) => a + b, 0) / arr.length) * 1000) / 1000
+        : null;
+
+    if (accum.peak.length > 0)
+      ratings.push({ daily_peak: true,  fill_rate: avg(accum.peak),    event_count: accum.peak.length,    median_velocity_days: null, new_player_share: null });
+    if (accum.offpeak.length > 0)
+      ratings.push({ daily_peak: false, fill_rate: avg(accum.offpeak), event_count: accum.offpeak.length, median_velocity_days: null, new_player_share: null });
 
     result.push({
       id: arch.id,
@@ -163,6 +287,7 @@ export async function computeProgramRatingsForWindow(
       match_priority: arch.match_priority,
       overrides_podplay_type: arch.overrides_podplay_type,
       ratings,
+      variants: variantMap.get(arch.id) ?? [],
     });
   }
 

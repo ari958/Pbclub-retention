@@ -1,0 +1,19 @@
+ Programming catalog: drill-down + season column removal
+Two changes to the Programming (catalog) view and its API.
+1. Remove the peak-season / off-peak-season split from the display.
+
+Collapse the four columns (peak-day × peak-season crossed) into two: Peak Day and Off-Peak Day. Aggregate over both seasons — a peak-day cell now means "peak day, all seasons."
+Keep is_peak_season in event_fill (do not drop the column or the data) — just stop surfacing it in the catalog view and the ratings API response.
+Recompute n per cell over the merged seasons (this roughly doubles n per cell — update the confidence badges accordingly).
+
+2. Make each archetype row expandable to its raw program-name variants.
+
+The archetype row stays as the summary (name, total events, per-slot fill + n) — the default collapsed view is unchanged except for the season-column removal.
+On expand (click the row), show one sub-row per distinct raw program_name that classified into that archetype, within the selected window.
+Each sub-row shows the same columns as the parent: Peak Day fill + n, Off-Peak Day fill + n, total events — computed for that specific raw name from event_fill joined back to the raw name per event_id.
+Carry the confidence badges (high n≥20 / low 5–19 / thin <5) down to each sub-row, so thin variants are visibly low-trust.
+Sort sub-rows by event count desc (the proven, high-volume variants surface first; the n=1 one-offs sink).
+Data source: event_fill already has event_id, total_teams, final_signups, start_time, is_daily_peak. Join to the raw program_name per event_id (from attendances or wherever the event's raw name lives). No new PodPlay calls — this is a group-by we currently discard at the archetype level.
+
+API: extend GET /api/programs/catalog so each archetype includes a variants[] array (raw_name, per-slot fill, n) — or add a GET /api/programs/catalog/:archetypeId/variants endpoint if lazy-loading on expand is cleaner. Your call on eager vs. lazy; note which and why.
+Verification: tsc clean; confirm Social Open Play expands to its ~50 raw-name variants with correct per-variant fill and n; confirm the two-column (peak/off-peak day) layout replaces the four-column season split; confirm no season data was deleted from event_fill. Report STATUS and a screenshot or console dump of Social Open Play expanded.

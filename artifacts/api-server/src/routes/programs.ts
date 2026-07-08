@@ -3,7 +3,7 @@ import { Router, type IRouter } from "express";
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
-import { computeProgramRatingsForWindow } from "../lib/programRatings";
+import { computeProgramRatingsForWindow, fetchVariantsForClub } from "../lib/programRatings";
 
 const router: IRouter = Router();
 
@@ -79,15 +79,15 @@ router.get("/programs/catalog", requireClub, async (req, res) => {
 
     const programIds = archetypes.map((a: any) => a.id as string);
 
-    // 2. Latest ratings for these archetypes
-    //    program_ratings has UNIQUE(program_id, daily_peak, season) so
-    //    each program has at most 4 rows (2 daily_peak × 2 season).
+    // 2. Latest ratings — collapse season → 2 rows per archetype (daily_peak only)
+    //    program_ratings stores up to 4 rows per archetype (daily_peak × season).
+    //    We merge peak + off_peak season into one row per daily_peak value,
+    //    using weighted-average fill_rate and summed event_count.
     const { data: ratings, error: ratingErr } = await supabase
       .from("program_ratings")
       .select(
         "program_id, daily_peak, season, fill_rate, event_count, " +
-          "median_velocity_days, new_player_share, " +
-          "modal_price_regular, modal_price_member, computed_at",
+          "median_velocity_days, new_player_share, computed_at",
       )
       .eq("club_id", clubId)
       .in("program_id", programIds);
@@ -97,42 +97,78 @@ router.get("/programs/catalog", requireClub, async (req, res) => {
       return res.status(500).json({ error: ratingErr.message });
     }
 
-    // Group ratings by program_id
-    const ratingsByProgram = new Map<string, object[]>();
-    for (const r of ratings ?? []) {
-      const pid = (r as any).program_id as string;
-      if (!ratingsByProgram.has(pid)) ratingsByProgram.set(pid, []);
-      ratingsByProgram.get(pid)!.push(r);
+    // Merge season rows: key = `${program_id}|${daily_peak}`
+    interface MergedSlot {
+      fill_rate: number | null;
+      event_count: number;
+      median_velocity_days: number | null;
+      new_player_share: number | null;
+      computed_at: string | null;
     }
-
-    // Latest computed_at across all rating rows (for the response envelope)
+    const merged = new Map<string, MergedSlot>();
     let latestComputedAt: string | null = null;
+
     for (const r of ratings ?? []) {
-      const ca = (r as any).computed_at as string | null;
-      if (ca && (!latestComputedAt || ca > latestComputedAt)) {
-        latestComputedAt = ca;
+      const key = `${(r as any).program_id}|${(r as any).daily_peak}`;
+      const n2   = (r as any).event_count as number ?? 0;
+      const fill2  = (r as any).fill_rate  as number | null;
+      const vel2   = (r as any).median_velocity_days as number | null;
+      const share2 = (r as any).new_player_share     as number | null;
+      const ca     = (r as any).computed_at as string | null;
+      if (ca && (!latestComputedAt || ca > latestComputedAt)) latestComputedAt = ca;
+
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, { fill_rate: fill2, event_count: n2, median_velocity_days: vel2, new_player_share: share2, computed_at: ca });
+      } else {
+        const n1    = existing.event_count;
+        const total = n1 + n2;
+        existing.event_count = total;
+        // Weighted-average fill_rate
+        if (existing.fill_rate !== null && fill2 !== null)
+          existing.fill_rate = Math.round(((existing.fill_rate * n1 + fill2 * n2) / total) * 1000) / 1000;
+        else if (fill2 !== null)
+          existing.fill_rate = fill2;
+        // Velocity — take the season with more events (medians can't be properly weighted)
+        if (vel2 !== null && (existing.median_velocity_days === null || n2 > n1))
+          existing.median_velocity_days = vel2;
+        // new_player_share — weighted average
+        if (existing.new_player_share !== null && share2 !== null)
+          existing.new_player_share = Math.round(((existing.new_player_share * n1 + share2 * n2) / total) * 1000) / 1000;
+        else if (share2 !== null)
+          existing.new_player_share = share2;
       }
     }
 
-    // 3. Assemble response
-    const catalog = (archetypes as any[]).map((arch) => ({
-      id: arch.id,
-      canonical_name: arch.canonical_name,
-      canonical_type: arch.canonical_type,
-      match_priority: arch.match_priority,
-      overrides_podplay_type: arch.overrides_podplay_type,
-      ratings: (ratingsByProgram.get(arch.id) ?? []).map((r: any) => ({
-        daily_peak: r.daily_peak,
-        season: r.season,
-        fill_rate: r.fill_rate,
-        event_count: r.event_count,
-        median_velocity_days: r.median_velocity_days,
-        new_player_share: r.new_player_share,
-        modal_price_regular: r.modal_price_regular,
-        modal_price_member: r.modal_price_member,
-        computed_at: r.computed_at,
-      })),
-    }));
+    // 3. Variants from event_fill (all-time, no cutoff for precomputed path)
+    const variantMap = await fetchVariantsForClub(clubId);
+
+    // 4. Assemble response
+    const catalog = (archetypes as any[]).map((arch) => {
+      const pid = arch.id as string;
+      const archRatings: object[] = [];
+      for (const dp of [true, false]) {
+        const slot = merged.get(`${pid}|${dp}`);
+        if (slot) {
+          archRatings.push({
+            daily_peak:            dp,
+            fill_rate:             slot.fill_rate,
+            event_count:           slot.event_count,
+            median_velocity_days:  slot.median_velocity_days,
+            new_player_share:      slot.new_player_share,
+          });
+        }
+      }
+      return {
+        id:                   arch.id,
+        canonical_name:       arch.canonical_name,
+        canonical_type:       arch.canonical_type,
+        match_priority:       arch.match_priority,
+        overrides_podplay_type: arch.overrides_podplay_type,
+        ratings:  archRatings,
+        variants: variantMap.get(pid) ?? [],
+      };
+    });
 
     return res.json({ computed_at: latestComputedAt, archetypes: catalog });
   } catch (err: unknown) {
