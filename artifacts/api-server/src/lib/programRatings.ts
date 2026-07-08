@@ -74,6 +74,101 @@ function mode(arr: number[]): number | null {
   return Number(Object.entries(freq).sort((a, b) => b[1] - a[1])[0][0]);
 }
 
+// ── Windowed (on-the-fly) rating computation ──────────────────────────────────
+// Used by the catalog route when ?days=7|30|90 is requested.
+// Skips attendances (velocity/new_player_share are too thin over short windows).
+
+export interface WindowedRatingSlice {
+  daily_peak: boolean;
+  season: Season;
+  fill_rate: number | null;
+  event_count: number;
+  median_velocity_days: null;
+  new_player_share: null;
+}
+
+export interface WindowedArchetypeEntry {
+  id: string;
+  canonical_name: string;
+  canonical_type: string;
+  match_priority: number;
+  overrides_podplay_type: boolean;
+  ratings: WindowedRatingSlice[];
+}
+
+export async function computeProgramRatingsForWindow(
+  clubId: string,
+  days: number,
+): Promise<{ computed_at: string; archetypes: WindowedArchetypeEntry[] }> {
+  const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+  const now = new Date().toISOString();
+
+  const archetypes = await loadArchetypes(clubId);
+
+  // Accumulators: archetypeId → slotKey → fill_rates[]
+  const accumulators = new Map<string, Map<string, number[]>>();
+  for (const arch of archetypes) {
+    const slotMap = new Map<string, number[]>();
+    for (const dp of [true, false]) {
+      for (const s of SEASONS) slotMap.set(slotKey(dp, s), []);
+    }
+    accumulators.set(arch.id, slotMap);
+  }
+
+  const { data: fillRows, error: fillErr } = await supabase
+    .from("event_fill")
+    .select("archetype_id, fill_rate, is_daily_peak, is_peak_season")
+    .eq("club_id", clubId)
+    .eq("is_canceled", false)
+    .not("archetype_id", "is", null)
+    .not("fill_rate", "is", null)
+    .gte("start_time", cutoff);
+
+  if (fillErr) throw new Error(`event_fill window query: ${fillErr.message}`);
+
+  for (const row of fillRows ?? []) {
+    const dp = row.is_daily_peak as boolean;
+    const s: Season = row.is_peak_season ? "peak" : "off_peak";
+    const slot = accumulators.get(row.archetype_id as string)?.get(slotKey(dp, s));
+    if (!slot) continue;
+    slot.push(Math.min(row.fill_rate as number, 1.0));
+  }
+
+  const result: WindowedArchetypeEntry[] = [];
+  for (const arch of archetypes) {
+    const slotMap = accumulators.get(arch.id);
+    if (!slotMap) continue;
+
+    const ratings: WindowedRatingSlice[] = [];
+    for (const dp of [true, false]) {
+      for (const s of SEASONS) {
+        const fills = slotMap.get(slotKey(dp, s)) ?? [];
+        if (fills.length === 0) continue;
+        const fillRate = fills.reduce((a, b) => a + b, 0) / fills.length;
+        ratings.push({
+          daily_peak: dp,
+          season: s,
+          fill_rate: Math.round(fillRate * 1000) / 1000,
+          event_count: fills.length,
+          median_velocity_days: null,
+          new_player_share: null,
+        });
+      }
+    }
+
+    result.push({
+      id: arch.id,
+      canonical_name: arch.canonical_name,
+      canonical_type: arch.canonical_type,
+      match_priority: arch.match_priority,
+      overrides_podplay_type: arch.overrides_podplay_type,
+      ratings,
+    });
+  }
+
+  return { computed_at: now, archetypes: result };
+}
+
 // ── Public API ────────────────────────────────────────────────────────────────
 
 export interface RatingStats {

@@ -3,6 +3,7 @@ import { Router, type IRouter } from "express";
 import { fetchAvailablePrograms } from "../fetchAvailablePrograms.js";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
+import { computeProgramRatingsForWindow } from "../lib/programRatings";
 
 const router: IRouter = Router();
 
@@ -38,10 +39,24 @@ router.get("/programs", requireClub, async (req, res) => {
 //   { daily_peak, season, fill_rate, event_count, median_velocity_days,
 //     new_player_share, modal_price_regular, modal_price_member, computed_at }
 
+const VALID_DAYS = new Set([7, 30, 90]);
+
 router.get("/programs/catalog", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
 
   try {
+    // ── Windowed path: ?days=7|30|90 → live computation from event_fill ─────
+    const daysRaw = req.query.days;
+    if (daysRaw !== undefined) {
+      const days = parseInt(daysRaw as string, 10);
+      if (!VALID_DAYS.has(days)) {
+        return res.status(400).json({ error: "days must be 7, 30, or 90" });
+      }
+      const result = await computeProgramRatingsForWindow(clubId, days);
+      return res.json(result);
+    }
+
+    // ── Default path: precomputed program_ratings ─────────────────────────
     // 1. Active archetypes for this club
     const { data: archetypes, error: archErr } = await supabase
       .from("programs")

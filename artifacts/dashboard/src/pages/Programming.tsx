@@ -129,28 +129,47 @@ function SlotCell({ rating }: { rating: Rating | undefined }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
+type DaysFilter = 7 | 30 | 90 | null;
+
+const FILTER_OPTIONS: { label: string; value: DaysFilter }[] = [
+  { label: "All time", value: null },
+  { label: "90d",      value: 90 },
+  { label: "30d",      value: 30 },
+  { label: "7d",       value: 7 },
+];
+
 export default function Programming() {
   const [archetypes, setArchetypes] = useState<Archetype[]>([]);
   const [computedAt, setComputedAt] = useState<string | null>(null);
+  const [days, setDays] = useState<DaysFilter>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
+      setLoading(true);
+      setError(null);
       try {
-        const res = await fetch("/api/programs/catalog?slug=pb-club");
+        const url = days
+          ? `/api/programs/catalog?slug=pb-club&days=${days}`
+          : "/api/programs/catalog?slug=pb-club";
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`catalog fetch: ${res.status}`);
         const data: CatalogResponse = await res.json();
-        setArchetypes(data.archetypes);
-        setComputedAt(data.computed_at);
+        if (!cancelled) {
+          setArchetypes(data.archetypes);
+          setComputedAt(data.computed_at);
+        }
       } catch (err: any) {
-        setError(err.message);
+        if (!cancelled) setError(err.message);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     load();
-  }, []);
+    return () => { cancelled = true; };
+  }, [days]);
 
   // Index rating slices by archetype id + slot key
   const ratingIndex = new Map<string, RatingSlice>();
@@ -185,6 +204,41 @@ export default function Programming() {
             Historical utilization per archetype, sourced from completed past events.
             Fill rate = final signups ÷ capacity (full-population, not member-subset).
           </p>
+        </div>
+
+        {/* Time filter chips */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 24, alignItems: "center" }}>
+          <span style={{ fontFamily: C.mono, fontSize: 11, color: C.textDim, marginRight: 4 }}>
+            WINDOW
+          </span>
+          {FILTER_OPTIONS.map((opt) => {
+            const active = days === opt.value;
+            return (
+              <button
+                key={String(opt.value)}
+                onClick={() => setDays(opt.value)}
+                style={{
+                  fontFamily: C.mono,
+                  fontSize: 11,
+                  fontWeight: active ? 700 : 400,
+                  color: active ? C.bg : C.textSub,
+                  background: active ? C.accent : "transparent",
+                  border: `1px solid ${active ? C.accent : C.border}`,
+                  borderRadius: 5,
+                  padding: "5px 12px",
+                  cursor: "pointer",
+                  transition: "all 0.12s",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+          {days !== null && (
+            <span style={{ fontFamily: C.mono, fontSize: 10, color: C.textDim, marginLeft: 6 }}>
+              velocity &amp; new-player share hidden for windowed views
+            </span>
+          )}
         </div>
 
         {/* Summary strip */}
