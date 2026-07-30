@@ -1,0 +1,187 @@
+# Phase 0.5 — Cancellation Scope Probe & Threshold Data
+
+**Mode:** Read-only, with exactly one narrowly-scoped exception (Item 1, `PREVIEW` only).
+**Scope:** 4 items, independent.
+**Deliverable:** written report per §Report Format. No implementation, no new application code.
+
+---
+
+## Context
+
+Phase 0 established that PodPlay exposes a real cancellation endpoint:
+
+```
+POST /events/{eventId}/cancellation
+GET  /events/{eventId}/cancellation
+```
+
+Request body fields: `type` (`PREVIEW` | `ORDER`), `reason` (`WEATHER` | `LOW_TURNOUT` | `OTHER`), `reasonText` (free text, max 40 chars), plus server-computed `status` (`DRAFT`/`FAILED`/`PENDING`/`CONFIRMED`) and `summary` (contains `policy`, `cancellingUser`, `cancellationTime`, `validUntilTime`).
+
+`type: "PREVIEW"` appears to be a dry-run that returns what a cancellation *would* do without executing it. `type: "ORDER"` is the real thing.
+
+Two questions remain before anything gets built:
+
+1. **Does our `x-api-key` have scope to cancel?** Authentication is settled — `PODPLAY_API_KEY` via `x-api-key` header, established in `syncPlayerAttendance.js` and `fetchAvailablePrograms.js`. Authorization on a mutating admin route is not. Reads are proven extensively; writes are not, and a prior POST path (open-invitations auto-create) had to be disabled pending PodPlay's response. The spec's `bearer` declaration is generated noise — every one of the 593 operations carries it, including ones that demonstrably work with `x-api-key`.
+2. **What is the real false-positive rate at each candidate decision offset?** PodPlay's native auto-cancel bottoms out at 3 hours. We want to know whether a custom 2-hour check is worth rebuilding execution for, or whether native-at-3h is good enough.
+
+---
+
+## Hard constraints
+
+**1. `type: "ORDER"` is forbidden. Absolutely and without exception.**
+
+The only permitted value in any request body in this task is `"PREVIEW"`. Do not send `"ORDER"`. Do not send it to test error handling, do not send it against a past event on the theory that it's harmless, do not send it because a preview response suggests confirmation is the next step. If any part of this task appears to require `ORDER` to complete, the correct action is to mark the item BLOCKED and report.
+
+A confirmed cancellation notifies real members and may trigger real refunds. It cannot be undone from here.
+
+**2. No other write-shaped calls to PodPlay.** No `POST /events/clones`, no `PATCH /events/{eventId}`, no signup mutations, no `POST /events/{eventId}/signups/{signupId}/cancellation`. Item 1's PREVIEW is the single exception in this entire task.
+
+**3. No Supabase writes.** SELECT only. No INSERT/UPDATE/DELETE, no DDL, no migrations. Scratch output goes to `/tmp/phase05/`.
+
+**4. No application code changes.** Nothing in `api-server/` or `dashboard/`. Scratch scripts in `/tmp/phase05/` only.
+
+**5. Never echo secrets.** `PODPLAY_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, and any other credential must not appear in report output, logs, or saved files.
+
+---
+
+## Go-ahead policy
+
+Run all four items unattended. Do not pause for confirmation between items.
+
+**Stop the current item and report if:**
+- Any response indicates a cancellation record was actually created or an event's state changed
+- You receive 429 or explicit rate limiting
+- Completing an item would require `ORDER`, another write, or a code change
+
+Item failures do not cascade. Mark and move on.
+
+---
+
+## Item 1 — Cancellation scope probe (PREVIEW only)
+
+This is the go/no-go for the whole custom-canceller path.
+
+**Event selection.** Pick two events and report exactly which you chose and why:
+
+- **Event A — a past event.** Already concluded, at least 30 days ago, ideally low attendance.
+- **Event B — an upcoming event.** Furthest-out event available, lowest current signup count, non-prime-time. Explicitly avoid anything within the next 72 hours and anything with a large registrant list.
+
+Two events, not one, because the responses disambiguate. A 422 on a past event is likely a business rule ("can't cancel something that already happened") and says nothing about auth. A 401/403 on both is a scope problem. Comparing them separates the two.
+
+**Steps, in order:**
+
+1. **Baseline read.** `GET /events/{eventId}/cancellation` for both A and B *before* anything else. Record status code and body. On a never-cancelled event this may return 422 rather than an empty result — the open-invitations endpoint behaves that way, so treat 422 as a probable null case, not an error. This baseline is what Step 5 compares against.
+
+2. **Minimal-body preview on Event A.** POST with the smallest plausible body:
+   ```json
+   { "type": "PREVIEW" }
+   ```
+   Record the full status code, headers, and response body verbatim.
+
+3. **If Step 2 returned a validation error**, add fields one at a time until it's accepted — `reason: "LOW_TURNOUT"` first, then `reasonText` if needed. Report the minimal accepted body. The schema marks `status`, `reason`, and `summary` as both `required` and `readOnly`, which is contradictory and almost certainly a NestJS DTO generation artifact — so discover the real requirement empirically rather than trusting it.
+
+4. **Repeat on Event B** with whatever body Step 2/3 established.
+
+5. **Verify nothing persisted.** `GET /events/{eventId}/cancellation` again for both. Compare to the Step 1 baseline. The `status` enum includes `DRAFT`, so it is entirely possible a PREVIEW creates a draft record — if it does, that is a significant finding and must be reported prominently. Also re-fetch `GET /events/{eventId}` for both and confirm the event's own state and signup count are unchanged.
+
+**Report specifically:**
+
+- Does `x-api-key` authorize this endpoint? Yes / No / Ambiguous, with the status codes that justify the answer.
+- The complete PREVIEW response body for Event B, unmodified (redact member PII values, keep field names and structure).
+- What `summary.policy` value came back, and does the response quantify refunds — amounts, counts, per-registrant breakdown?
+- Does the response indicate anything about member notification? Any field suggesting emails/SMS would be sent, how many, to whom?
+- Is `validUntilTime` populated, and how far out? This determines whether a preview→order flow has to complete inside a time budget.
+- Did PREVIEW create any persistent record?
+
+**STATUS:**
+
+---
+
+## Item 2 — Cancellation policies
+
+`GET /cancellation-policies` — call it and report the full response.
+
+Cross-reference against the `summary.policy` enum seen in the spec: `FREE_OF_CHARGE`, `10MIN_GRACE`, `PLUS_6HS_IN_ADVANCE`, `PLUS_12HS_IN_ADVANCE`, `PLUS_24HS_IN_ADVANCE`, `BETWEEN_12HS_TO_2HS_IN_ADVANCE`, `24HS_OR_LESS_IN_ADVANCE`, `2HS_OR_LESS_IN_ADVANCE`, `FULL_REFUND_VIRTUAL_CREDITS`, `FULL_REFUND`, `NO_REFUND`, `CANCELED_BY_ADMIN`, `TENANT_CUSTOM`.
+
+Answer:
+
+- Which policy is configured for PB Club, and does it vary by program type?
+- What does `CANCELED_BY_ADMIN` resolve to — full refund, credit, or something else? This is presumably the policy that applies when *we* cancel, so it's the one that matters.
+- Is the refund cash or virtual credits? (`FULL_REFUND` vs `FULL_REFUND_VIRTUAL_CREDITS` are distinct enum values, so both exist in the model.)
+- Do the time-window policies (`2HS_OR_LESS_IN_ADVANCE` etc.) apply to club-initiated cancellations, or only to members cancelling their own signups? If they apply to club cancellations, the refund cost of cancelling changes with *when* we cancel — which would make the 2h-vs-3h question financial as well as operational.
+
+**STATUS:**
+
+---
+
+## Item 3 — Late-booking curve, full dataset
+
+The earlier run was partial. Supabase caps result sets (default 1000 rows), so paginate explicitly with `.range(from, to)` in a loop until exhausted, and **report the total row count processed** so we can confirm it's the full set this time.
+
+Window: last 120 days. Source: `attendances`, using `booked_at` (real PodPlay signup timestamp from `signup.summary.invitation.createdDate`) against `attended_at` (event start, `timestamptz` since the 2026-05-07 migration).
+
+**1. Coverage.** Total attendance rows in window; how many have non-NULL `booked_at` AND non-NULL `event_id`, as a percentage. Also report the earliest date at which `booked_at` looks reliably captured rather than backfilled. If coverage is under ~80%, mark PARTIAL and report the number — everything below is unreliable without it.
+
+**2. Point-in-time counts.** Per `event_id`, count signups as of **T-1h, T-2h, T-3h, T-4h, T-6h, T-12h, T-24h**, plus the final count.
+
+T-3h is mandatory — it's PodPlay's native offset and the entire build-vs-native decision turns on comparing it to T-2h. It was missing from the previous run.
+
+**3. The curve.** Across all events, fraction of final signups booked by each cutoff, as a distribution: p10 / p50 / p90. Not a mean.
+
+**4. False-positive table.** This is the deliverable that decides the build. For each combination of offset ∈ {2h, 3h, 4h, 6h, 12h} and threshold N ∈ {2,3,4,5,6,7,8}:
+
+| Column | Meaning |
+|---|---|
+| `events_triggered` | events where count-at-offset < N |
+| `false_positives` | of those, how many reached final count ≥ N |
+| `fp_rate` | false_positives ÷ events_triggered |
+| `true_positives` | of those, how many stayed below N (correctly cancelled) |
+
+Then state plainly: **at threshold N, what is the FP rate at 2h versus 3h?** That single delta is the answer to whether custom execution is worth building.
+
+**5. Resolve the contradiction.** The previous run reported 65% FP at T-2h/N=4 *and* that booking concentrates in the T-24h–T-4h window. Those are inconsistent — if booking is largely done by T-4h, T-2h counts are near-final and FP should be low. A high FP rate at T-2h implies heavy last-minute booking, which matches the club's `late` archetype (<0.5d lead). Determine which is actually true from the full dataset and say so explicitly.
+
+**6. Segment.** Break the FP table down by program archetype (join `programs` via `match_rules` / `program_type`) and by weekday-evening vs. other time bands. Per-archetype offsets and thresholds are the expected output of the rules layer, so we need to know whether the segments actually diverge.
+
+**Caveats to state in the report:** if a member cancels their signup, does the `attendances` row get deleted, updated, or left in place? If withdrawals are invisible, all counts are optimistic and the FP rates are understated. Check whether `attendances` has any status/cancelled column and report.
+
+Save the full per-event result set to `/tmp/phase05/late-booking-curve.csv` and the FP table to `/tmp/phase05/fp-table.csv`. Summarize both inline.
+
+**STATUS:**
+
+---
+
+## Item 4 — Contact coverage
+
+Quantify whether Supabase can serve as the notification data source, avoiding N per-registrant PodPlay calls at decision time.
+
+1. Does `players` have an email column at all? If yes: how many of 2,006 rows are populated, as a percentage? If no such column exists, say so — that's the finding.
+2. Phone coverage: how many players have a usable phone number stored locally?
+3. `external_id` (PodPlay user ID) coverage — needed to map signups back to local rows.
+4. For a real upcoming event, take the signup list from `GET /events/{eventId}/signups`, extract the `owner.id` values, and report: what fraction resolve to a local `players` row via `external_id`, and of those, what fraction have a usable email?
+
+That last number is the one that matters. If it's high, notification reads from Supabase and the N+1 problem disappears. If it's low, notification requires per-registrant PodPlay lookups inside the decision window, and email coverage becomes a prerequisite rather than an optimization.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Single markdown report, per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED | DEFERRED
+Findings: <determination, with raw output where requested>
+Blockers: <what stopped you, if anything>
+Implications: <one or two lines — what this means for the build>
+```
+
+Close with:
+
+1. **Go/no-go on custom cancellation** — does the key have scope, yes or no.
+2. **The 2h-vs-3h number** — FP rate at each, at the threshold the data supports.
+3. **Recommendation** — native-at-3h, or custom-at-2h, with the number that justifies it.
+
+Confirm explicitly at the end: **`type: "ORDER"` was never sent; no cancellation was created; no other writes were made to PodPlay or Supabase; no application code was modified.**
