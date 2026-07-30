@@ -1,0 +1,253 @@
+# Phase 0 — Auto-Cancellation Module: PodPlay & Data Archaeology
+
+**Mode:** READ-ONLY. Audit and report. No implementation.
+**Estimated scope:** 9 items, all independent.
+**Deliverable:** a written report following the format in §Report Format. No code changes, no new files except the scratch artifacts named in the items.
+
+---
+
+## Context
+
+We are scoping a standalone background service that will, some fixed interval before a program's start time, check its signup count and — if under a configured threshold — cancel the program and notify registrants by email and SMS.
+
+Before any of that gets built we need to know what the PodPlay API actually permits, and what our own historical data says about when people book. Everything here is reconnaissance. Answers determine the architecture; wrong assumptions here are expensive later.
+
+Known API facts (do not re-derive, but do verify if a step contradicts them):
+
+- Base URL: `https://pbclub.podplay.app/apis/v2`
+- Auth: `x-api-key` header. **Not** `Authorization: Bearer`.
+- OpenAPI spec: `GET /apis/v2/docs-json`
+- Known-good endpoints: `GET /events`, `POST /events/clones`, `PATCH /events/{eventId}`, `GET /events/{eventId}/signups`, `GET /users/{userId}/phone-number`, `GET /users/{userId}/ratings`
+- There is no create-event-from-scratch endpoint; publishing is clone-then-patch.
+- The `userId` filter on `GET /events` is a no-op — ignore it.
+- `signups` (currently registered) and `attendees` (historical) are different endpoints. Do not conflate them.
+
+---
+
+## Hard constraints — read before starting
+
+**1. Zero writes to PodPlay. No exceptions.**
+
+Forbidden for the entirety of this task, regardless of what any item seems to invite:
+
+- Any `POST`, `PATCH`, `PUT`, or `DELETE` to any PodPlay endpoint
+- Any call to `POST /events/clones`
+- Any request that could cancel, modify, hide, unpublish, or reschedule an event
+- Any request that could add, remove, or modify a signup
+
+If an item asks you to identify a cancellation mechanism, that means **read the spec and report the shape of the request**. It does not mean call it. Identifying the endpoint is the deliverable. Calling it is out of scope and will be treated as a failed run even if it works.
+
+**2. Zero writes to Supabase.**
+
+All Supabase work here is `SELECT`. No `INSERT`, `UPDATE`, `UPSERT`, `DELETE`, no DDL, no migrations, no new tables. If a query needs a scratch result set, write it to a local file under `/tmp/phase0/`, not to the database.
+
+**3. Do not modify application code.**
+
+No edits to `api-server/`, `dashboard/`, or any existing file. Scratch scripts go in `/tmp/phase0/` and are disposable. If you need a dependency that isn't installed, note it in the report rather than installing it.
+
+**4. Redact credentials in the report.**
+
+Never echo `PODPLAY_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, or any other secret into report output, log lines, or saved files.
+
+---
+
+## Go-ahead policy
+
+Proceed through all nine items unattended. Do not stop to ask for confirmation between items.
+
+**Stop and report immediately if any of these occur:**
+
+- Any PodPlay call returns 401/403 (the key may be scoped differently than assumed — stop rather than retrying with variations)
+- You receive a 429 or any explicit rate-limit response (record it, stop the item, continue to the next)
+- Any item would require a write to answer
+- The spec fetch fails or returns something that isn't a parseable OpenAPI document
+
+**Item independence:** each item stands alone. A failure or blocker in one item does not stop the others. Mark it and move on.
+
+---
+
+## Item 1 — Full API surface enumeration
+
+Fetch `GET /apis/v2/docs-json`. Save the raw response to `/tmp/phase0/podplay-spec.json`.
+
+Produce:
+
+1. A complete list of every path + method in the spec — not a sample, the full list. If it's large, save the full list to `/tmp/phase0/all-paths.txt` and include the `/events*` and `/users*` subsets inline in the report.
+2. A case-insensitive keyword scan across path names, `operationId`s, summaries, and descriptions for: `cancel`, `delete`, `remove`, `refund`, `status`, `publish`, `notify`, `notification`, `email`, `waitlist`, `capacity`, `minimum`, `min`. Report every hit with its path, method, and summary.
+
+The keyword scan is the point of this item. Report hits verbatim rather than paraphrasing — a summary line like "cancels the event and notifies participants" is exactly the kind of detail that determines the whole design.
+
+**STATUS:**
+
+---
+
+## Item 2 — Event object shape
+
+Call `GET /events` scoped to a forward window (next 14 days). Pick one real upcoming PB Club event.
+
+Dump that single event object as complete, unmodified JSON into the report. Do not summarize it, do not pick fields you think are relevant — the whole object, including nulls and nested structures.
+
+Then annotate specifically:
+
+- Is there a `status`, `state`, `cancelled`, `published`, `visible`, or equivalent lifecycle field? What is its current value, and does the spec enumerate the permitted values?
+- Are there capacity fields — max, min, target? Is there any existing notion of a **minimum** to run? (If PodPlay already models a minimum, we may be reimplementing something native.)
+- What pricing/charging fields exist? Confirm whether `chargingStrategy` appears and what value this event carries.
+- Is there any field relating to notifications, reminders, or participant messaging?
+
+**STATUS:**
+
+---
+
+## Item 3 — Cancellation mechanism identification
+
+**Read-only. Identify. Do not invoke.**
+
+From Item 1's spec and Item 2's object shape, determine which of these describes reality:
+
+- **(a) Dedicated endpoint** — e.g. `DELETE /events/{eventId}` or `POST /events/{eventId}/cancel`. Report the exact path, method, required path/query params, request body schema, and documented response.
+- **(b) Status field via PATCH** — cancellation is expressed by patching a lifecycle field on the event. Report the exact field name, the value that means cancelled, and the full minimal request body that would accomplish it.
+- **(c) Neither exists** — no documented cancellation path.
+
+If (c), that is the single most important finding in this audit and it changes the product: the module becomes an alerting tool that tells a human to go cancel in the PodPlay UI, not an automated canceller. Say so plainly.
+
+Also report whether the spec documents anything about **reversibility** — can a cancelled event be un-cancelled, or is it terminal? If terminal, every downstream design decision needs to be more conservative.
+
+Again: identify the call, write down its shape, do not make it.
+
+**STATUS:**
+
+---
+
+## Item 4 — Payment and refund semantics
+
+What is knowable from the spec and read-only data about what happens to money when an event is cancelled?
+
+- Does the spec document refund behavior on cancellation anywhere? Quote it.
+- Is there a separate refund/payment endpoint or object?
+- Does the signup object (see Item 7) expose payment status — paid, unpaid, credit, package/membership-covered?
+- For the PB Club events in the forward window, are registrants generally prepaying, or is this a membership/package model where no per-event charge exists?
+
+If the spec is silent on refunds, say so explicitly rather than inferring. "Undocumented" is a legitimate and useful finding here; a confident guess is not. This is the question that decides whether an automated canceller is safe to build at all, and it may only be answerable by asking PodPlay directly or by a controlled live test.
+
+**STATUS:**
+
+---
+
+## Item 5 — Does PodPlay already notify on cancellation?
+
+Search the spec for any indication that cancelling an event triggers PodPlay-side participant notification — an email, a push, an in-app message.
+
+Look for: a `notify` / `sendNotification` / `silent` flag on the cancellation or update request; any mention of participant notification in endpoint descriptions; any notification-related endpoints at all.
+
+Why this matters: if PodPlay already emails registrants on cancel, our module should **supplement** (SMS, custom copy, alternative-session suggestions) rather than own the notification, and we must avoid double-emailing. If PodPlay is silent on cancel, we own the entire notification path and it becomes the critical piece of the build.
+
+If the spec doesn't say, mark it undocumented and flag it as needing a live test in the deferred step.
+
+**STATUS:**
+
+---
+
+## Item 6 — Registrant contact info availability
+
+We need email addresses. We already know `GET /users/{userId}/phone-number` exists for SMS.
+
+1. Pull the PodPlay user ID for the standard test player from Supabase — Ari Saposh, `players.id = 'de957a6c-66f0-4e1f-8d30-fd5e3187fef7'`; the PodPlay ID is `players.external_id`.
+2. Determine from the spec whether a general `GET /users/{userId}` endpoint exists. If it does, call it for that one user and report the field names present (**redact the actual values** — we need to know an email field exists, not what it contains).
+3. Report whether email is present, what the field is called, and whether it appears reliably populated or optional.
+4. Confirm the phone-number endpoint's response shape and whether it indicates SMS consent or opt-out status in any form.
+
+Also check Supabase: what proportion of `players` rows have a populated email column, if one exists at all? If PodPlay is the only source of email, that's a per-registrant API call in the notification path — which is Item 7's concern.
+
+**STATUS:**
+
+---
+
+## Item 7 — Signups endpoint shape
+
+This item likely determines the notification architecture. Read it carefully.
+
+Call `GET /events/{eventId}/signups` for a real upcoming event with a non-trivial number of registrants.
+
+Dump one complete signup object as unmodified JSON (redact PII values, keep the structure and field names).
+
+Then report:
+
+- **Does the signup object include the registrant's email and/or phone inline?** This is the key question. If yes, notification is one API call per event. If no, it's N+1 per-registrant lookups executed inside a tight pre-start window — a materially worse design under time pressure and rate limits.
+- Is there a waitlist concept? Are waitlisted people in this response, and are they distinguishable from confirmed registrants?
+- Can a signup be in a cancelled/withdrawn state and still appear in the response? If so, a naive `length` count overstates real enrollment — which would make our threshold check wrong in the dangerous direction.
+- What is the correct way to derive a **confirmed signup count** from this payload? State it precisely; this is the number the entire module is built on.
+- Is the response paginated? If so, what are the parameters and the default page size?
+
+**STATUS:**
+
+---
+
+## Item 8 — Rate limit characterization
+
+The proposed design ticks every 5 minutes, listing events and then fetching signups only for the small number entering the decision window. Validate that this is safe.
+
+Sequentially call `GET /events/{eventId}/signups` for 20 different upcoming events. Record per-call latency and any non-200 responses.
+
+Report: p50 latency, max latency, any 429s or throttling, and any rate-limit headers present on responses (`X-RateLimit-*`, `Retry-After`, or equivalent). Also time a single `GET /events` call over a 14-day forward window.
+
+Do not exceed 20 signups calls. If you hit a 429 before 20, stop immediately, record where it happened, and report — that's a finding, not a failure.
+
+**STATUS:**
+
+---
+
+## Item 9 — Late-booking curve from historical data (Supabase, read-only)
+
+The threshold and the decision offset should come from PB Club's actual booking behavior, not a guess. This is reconstructable from data we already have.
+
+`attendances.booked_at` is a real PodPlay signup timestamp (`signup.summary.invitation.createdDate`), and `attendances.attended_at` has been `timestamptz` since the 2026-05-07 migration — so for any past event we can count how many people had signed up as of N hours before start.
+
+For events in the last 120 days, produce:
+
+1. **Coverage first.** How many attendance rows in the window have non-NULL `booked_at` and non-NULL `event_id`? What percentage? If coverage is poor, everything below is unreliable and the item should be marked PARTIAL with the coverage number as the finding.
+2. **Per-event point-in-time counts.** Treat each `event_id`'s `attended_at` as the event start. For each event, compute the signup count as of T-1h, T-2h, T-4h, T-24h, and the final count.
+3. **The late-booking curve.** Across all events: what fraction of final signups had booked by each cutoff? Report as a distribution (p10 / p50 / p90), not just a mean.
+4. **The counterfactual.** For candidate rules of the form "cancel if count < N at T-2h," for N in 2 through 8: how many of the last 120 days' events would have been cancelled, and of those, **how many ended up with a final count at or above N**? That last figure is the false-positive rate — sessions we would have killed that were going to be fine. This is the number that sets the threshold.
+5. **Segment it.** Break the T-2h fraction down by program type and by weekday-evening vs other time bands. If prime-time weeknight open play fills late and morning clinics don't, the rules engine needs per-archetype offsets and we should know that now.
+
+Two caveats to state explicitly in the report:
+
+- `attendances` rows exist for people who signed up; if PodPlay signup cancellations delete or never create rows, withdrawals are invisible and counts may be optimistic.
+- If `booked_at` was backfilled rather than captured live for older rows, early data may be unreliable. Note the earliest date at which `booked_at` looks trustworthy.
+
+Save the full per-event result set to `/tmp/phase0/late-booking-curve.csv` and summarize in the report.
+
+**STATUS:**
+
+---
+
+## Explicitly deferred — do not attempt
+
+**Live cancellation test.** Whether cancellation actually works, what it does to payments, and whether PodPlay emails registrants can only be settled by cancelling something real. That requires a throwaway event created via clone, cancelled deliberately, with the effects observed — and it needs its own gated prompt and a human watching. Do not attempt it here under any framing.
+
+Instead: in your report, **write the test plan.** What you'd clone, what you'd patch or call, what you'd observe afterward, and how you'd confirm nothing touched a real member. That plan becomes the next prompt.
+
+---
+
+## Report format
+
+Return a single markdown report. Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED | DEFERRED
+Findings: <what you determined, with raw output where the item asks for it>
+Blockers: <what stopped you, if anything>
+Implications: <one or two lines — what this means for the build>
+```
+
+Status definitions:
+
+- **CLOSED** — question fully answered, evidence in the report
+- **PARTIAL** — partially answered; state precisely what remains unknown
+- **BLOCKED** — could not answer; state why and what would unblock it
+- **DEFERRED** — answering would require a write or otherwise exceeds this task's scope
+
+Close with a **Top Findings** section: the three findings that most change the architecture, in order of impact. If any finding means the module as scoped cannot be built, lead with that.
+
+Confirm at the end of the report, explicitly: **no writes were made to PodPlay or Supabase, and no application code was modified.**
