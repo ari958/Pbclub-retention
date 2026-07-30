@@ -1,0 +1,186 @@
+# Phase 0.6 — Threshold Data Integrity & Write-Scope Probes
+
+**Mode:** Read-only. All write-scope testing uses deliberately-invalid bodies that cannot succeed.
+**Scope:** 5 items, independent.
+**Deliverable:** written report per §Report Format.
+
+---
+
+## Context
+
+Phase 0.5 established that `x-api-key` is authorized for `POST /events/{eventId}/cancellation` (201 on a live future event, `PREVIEW` confirmed non-persisting, service account identity `API Key Access / PB Club`). It also found `/cancellation-policies` returns **403** — so key scope is **not uniform across the API**. Cancellation being authorized tells us nothing about clone, patch, or webhook scope.
+
+Two things now block the build, and neither is about refunds:
+
+1. **The threshold numbers may be an artifact of missing data.** `booked_at` coverage was 69.9%. If rows lacking `booked_at` were counted toward each event's final total but never toward any as-of-T-N count, every event shows a phantom late surge that never happened — inflating false-positive rates at every cutoff. The distribution is consistent with this: `p10 = 0.000` and `p90 = 1.000` at *every* cutoff, and identical p50 at T-1h, T-2h, and T-3h, look like quantization from a handful of usable rows per event rather than a real booking curve.
+
+2. **Autonomous programming needs write scope that hasn't been tested.** Clone, patch, and webhook creation are each separately unproven.
+
+Refunds are settled and not in scope here: club-initiated cancellation is `FREE_OF_CHARGE` with `cancellationFee: 0`, members are made whole, and member self-cancellation charges only inside the cancellation window. The only open detail is cash vs. virtual credits, which is one field on a PREVIEW (Item 5).
+
+---
+
+## Hard constraints
+
+**1. No successful writes to PodPlay.**
+
+Forbidden outright: `type: "ORDER"` on any cancellation, any `PATCH` with a valid body, any `POST /events/clones` with a valid body, any successful `POST /outbound-webhooks`.
+
+Item 3 deliberately sends **invalid** bodies to distinguish 403 from 400. If any probe in Item 3 unexpectedly returns 2xx, a resource was created — **stop immediately**, record the ID and full response, and report. Do not attempt cleanup; there is no `DELETE /events/{eventId}` in the spec and cleanup may require the admin UI.
+
+**2. `PREVIEW` is permitted** (proven non-mutating in Phase 0.5) and is used in Item 5.
+
+**3. No Supabase writes.** SELECT only. Scratch output to `/tmp/phase06/`.
+
+**4. No application code changes.**
+
+**5. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Run all five items unattended. Stop and report if any probe returns 2xx where a 4xx was expected, or on any 429.
+
+Item failures do not cascade.
+
+---
+
+## Item 1 — Recompute the late-booking curve with explicit missing-data handling
+
+The single question: **is the T-2h/T-3h result real, or an artifact of 30% missing `booked_at`?**
+
+**1. State the prior treatment.** Read `/tmp/phase05/` scripts if still present, or reconstruct: in the previous run, how were rows with NULL `booked_at` handled? Specifically — did they contribute to each event's **final** count while being excluded from **as-of-T-N** counts? Answer this explicitly before recomputing. If that is what happened, it alone explains the results.
+
+**2. Compute per-event coverage,** not just global. For each `event_id`: total rows, rows with non-null `booked_at`, and the ratio. Report the distribution of per-event coverage.
+
+**3. Recompute on a clean subset.** Restrict to events where per-event `booked_at` coverage is **≥ 90%**. Report how many events survive. If fewer than ~60 events survive, say so and mark PARTIAL — the analysis cannot support per-program-type thresholds at that sample size.
+
+For the clean subset, recompute:
+- point-in-time counts at T-1h, T-2h, T-3h, T-4h, T-6h, T-12h, T-24h, plus final
+- fraction-of-final at each cutoff (p10/p50/p90)
+- the full FP table: offset × threshold N ∈ {2..8}, with `events_triggered`, `false_positives`, `fp_rate`, `true_positives`
+
+**4. Report `n` per event.** Include the median and distribution of usable rows per event. If the median is under ~8, the fraction-of-final metric is quantized and p-values are not meaningful at that resolution — say so plainly rather than reporting three decimal places.
+
+**5. Run both treatments side by side** for the clean subset: (a) events with any missing `booked_at` excluded entirely, (b) all events, missing rows excluded from both numerator and denominator. If the two agree, the result is robust. If they diverge, report the divergence — that is the finding.
+
+**6. Re-segment** by program type (Clinic vs Open Play) and weekday-evening vs other, on the clean subset only, with `n` reported per segment.
+
+Save to `/tmp/phase06/curve-clean.csv` and `/tmp/phase06/fp-table-clean.csv`.
+
+**STATUS:**
+
+---
+
+## Item 2 — Reconcile local counts against PodPlay
+
+Native auto-cancel fires on **PodPlay's** signup count. Item 1 calibrates a threshold against **local `attendances`** rows. If those two numbers differ systematically, a threshold tuned on one and handed to the other is miscalibrated.
+
+Phase 0.5 Item 4 already showed the gap exists: 14 of 16 signups resolved locally. Earlier project work established that `signups._total` from PodPlay is the credible number, not the local subset.
+
+For **20 past events** spanning the last 120 days (mix of Clinic and Open Play):
+
+1. Local final count: rows in `attendances` for that `event_id`.
+2. PodPlay count: `GET /events/{eventId}` → `signups._total`, and separately `GET /events/{eventId}/signups` filtered to `status === "CONFIRMED"`.
+3. Report per event: local, PodPlay `_total`, PodPlay confirmed-only, and the deltas.
+
+Then answer:
+- Is local a consistent undercount, an overcount, or noisy?
+- What is the median and p90 absolute difference?
+- Does `_total` differ from the confirmed-only count? (It should, if cancelled signups are included — this is the `includeCanceled` issue.)
+- **Does `guests` inflate head count relative to signup count?** Report total `guests` across the sampled signups.
+
+If local is a consistent undercount of ~1–2, thresholds calibrated locally must be adjusted upward before being set as native `lowTurnoutAutoCancelAttendeeCount`.
+
+**STATUS:**
+
+---
+
+## Item 3 — Write-scope probes (non-mutating)
+
+`/cancellation-policies` returned 403 while cancellation returned 201, so scope must be tested per-endpoint.
+
+**Technique.** NestJS runs auth guards before validation pipes. Phase 0.5 demonstrated this: the past-event cancellation probe returned **400** ("Unable to cancel past event"), not 403 — authorization passed, then the business rule rejected. So sending a **deliberately invalid body** distinguishes cleanly:
+
+- **403** → key lacks scope on this endpoint
+- **400 / 422** → key has scope; the body was rejected on its merits
+- **2xx** → something was created. Stop and report.
+
+Probe each of these with a body that cannot possibly succeed — an empty object `{}`, or a body with a single obviously-invalid field. Do not send anything that could validate.
+
+| Endpoint | Method | Why it matters |
+|---|---|---|
+| `/events/clones` | POST | program creation — gates the self-programming vision |
+| `/events/{eventId}` | PATCH | setting `lowTurnoutAutoCancel*`; also the publish path |
+| `/outbound-webhooks` | POST | event-driven architecture vs polling |
+| `/events/{eventId}/open-invitations` | POST | targeted invitations; previously disabled pending PodPlay's response |
+| `/custom-emails` | POST | first-party notification path |
+| `/templates/from-event/{eventId}` | POST | possible cleaner publish path than clone-then-patch |
+
+For PATCH, use the far-future zero-signup event from Phase 0.5 (`019fa9c4-9fcd-7997-af7b-47589f541076`) and send an invalid field value — for example `{"totalTeams": "not-a-number"}`. Do **not** send a valid patch.
+
+Also run the read side, which is safe and informative:
+- `GET /outbound-webhooks` — 200 or 403? Are any webhooks already registered?
+- `GET /outbound-webhooks/events` — does it return the 79-type list?
+- `GET /templates` — 200 or 403?
+
+**Report:** a table of endpoint → status code → interpretation (scope / no scope / ambiguous). Flag any 2xx prominently.
+
+**STATUS:**
+
+---
+
+## Item 4 — Does a clone inherit the auto-cancel fields?
+
+The Phase 0.5 recommendation was a "one-time PATCH script over event templates." That only holds if cloned events inherit `lowTurnoutAutoCancelAttendeeCount` and `lowTurnoutAutoCancelHoursBefore` from their source. If they don't, every newly published event needs the PATCH applied at creation — which means a settings layer has to exist regardless, and the work is not a one-time migration.
+
+**Read-only first:**
+
+1. From the spec, dump the full `POST /events/clones` request body schema, expanding the `sourceEvent` and `clonedEvent` nested DTOs. Report every field in `clonedEvent`.
+2. Do `lowTurnoutAutoCancelAttendeeCount` / `lowTurnoutAutoCancelHoursBefore` appear as overridable at clone time?
+3. Does the spec document inheritance behavior anywhere?
+
+**Empirical, read-only:** find any existing PB Club event where either field is non-null. If none exist anywhere in the tenant, say so — it means the feature has never been used and inheritance cannot be observed from existing data.
+
+If the spec is inconclusive and no non-null examples exist, mark **DEFERRED** and state clearly that a gated live clone test is required. Do not perform it here — there is no `DELETE /events/{eventId}`, so a clone is a permanent artifact requiring manual admin-UI cleanup.
+
+**STATUS:**
+
+---
+
+## Item 5 — Refund form (rider, not a blocker)
+
+Club cancellation is `FREE_OF_CHARGE` and members are made whole — settled, not in question. The only open detail is whether reimbursement lands as **cash** or **virtual credits**, since the enum treats `FULL_REFUND` and `FULL_REFUND_VIRTUAL_CREDITS` as distinct.
+
+Run one `PREVIEW` (`{"type": "PREVIEW"}`) against an upcoming event that has **paid** registrants. Report `summary.policy`, `summary.refund.reimbursement`, `summary.refund.virtualCredits`, and `summary.refund.passes._total`.
+
+Confirm afterward with `GET /events/{eventId}/cancellation` that nothing persisted, as in Phase 0.5.
+
+One paragraph is sufficient. This determines a field in the decision log, not the architecture.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED | DEFERRED
+Findings:
+Blockers:
+Implications:
+```
+
+Apply the status honestly — if a coverage or sample-size floor stated in the item is not met, the status is PARTIAL even when numbers were produced.
+
+Close with:
+
+1. **Do the Phase 0.5 threshold conclusions survive?** State whether T-2h ≈ T-3h holds on clean data, and whether the Clinic/Open Play split holds at the surviving sample size.
+2. **Write-scope map** — one line per endpoint: authorized / not authorized / ambiguous.
+3. **Is the native-auto-cancel migration a one-time script or an ongoing settings layer?** Per Item 4.
+
+Confirm explicitly: **no `ORDER` was sent; no event, clone, webhook, invitation, email, or template was created; no PATCH succeeded; no Supabase writes; no application code modified.**
