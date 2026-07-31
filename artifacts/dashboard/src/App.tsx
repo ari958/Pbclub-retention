@@ -9,6 +9,8 @@ import Messages from "./pages/Messages";
 import Settings from "./pages/Settings";
 import SessionFeedback from "./pages/SessionFeedback";
 import Programming from "./pages/Programming";
+import Programs from "./pages/Programs";
+import Rules from "./pages/Rules";
 import Onboarding from "./pages/Onboarding";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -330,6 +332,22 @@ export default function App() {
                 element={
                   <ErrorBoundary pageName="Programming">
                     <Programming />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="programs"
+                element={
+                  <ErrorBoundary pageName="Programs">
+                    <Programs />
+                  </ErrorBoundary>
+                }
+              />
+              <Route
+                path="rules"
+                element={
+                  <ErrorBoundary pageName="Rules">
+                    <Rules />
                   </ErrorBoundary>
                 }
               />

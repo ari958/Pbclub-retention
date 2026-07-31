@@ -1,0 +1,126 @@
+# Phase 1.0 — Nav Flag & Native Cancellation Audit
+
+**Scope:** 2 items. Item 1 is a small reversible frontend change. Item 2 is read-only analysis that reports back.
+**Deliverable:** Item 1 implemented; Item 2 reported per §Report Format. No UI built for Item 2 yet — we decide what to build after seeing the data.
+
+---
+
+## Context
+
+We're refocusing the dashboard onto a new feature area — a programming agent that decides what programs to run, when to change them, and when to cancel them. Pulse's retention surfaces are being hidden, not removed.
+
+The first real screen will be an audit of what PodPlay's **native** auto-cancel has already done. Background: 95 of 270 upcoming PB Club events have `lowTurnoutAutoCancelAttendeeCount: 4` and `lowTurnoutAutoCancelHoursBefore: 3` (some at 8h) configured. Against the club's own booking history, N=4 at T-3h has a modeled false-positive rate of ~44% — roughly half the sessions it cancels would have reached 4+ players by start time.
+
+Item 2 replaces that model with the actual list.
+
+---
+
+## Hard constraints
+
+**1. No writes to PodPlay.** Item 2 is `GET` only. No `PATCH`, no `POST`, no cancellation calls of any kind. Do not clear or modify any `lowTurnoutAutoCancel*` field on any event — that is a later, separately gated step.
+
+**2. No Supabase writes.** Item 2 is `SELECT` only. No new tables, no migrations, no backfills. Scratch output to `/tmp/phase1/`.
+
+**3. Item 1 deletes nothing.** Routes, components, and files stay. Only nav link rendering changes.
+
+**4. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Implement Item 1 fully. Run Item 2 and report. Do not build UI for Item 2.
+
+Stop and report if Item 1 requires deleting or moving files beyond the nav component, or if any Item 2 query would require a write.
+
+---
+
+## Item 1 — Feature-flag the Pulse navigation
+
+**Goal:** the dashboard shows only programming-agent surfaces by default; Pulse retention screens remain fully functional and reachable, just not linked.
+
+1. **Read first.** Locate the nav/sidebar component and enumerate every current nav entry with its route and the component it renders. Report this list before changing anything.
+
+2. Add an env-driven flag, defaulting to programming mode:
+   - `VITE_NAV_MODE` (or match whatever env convention the dashboard already uses — check `dashboard/src` for existing `import.meta.env` usage and follow it)
+   - Values: `programming` (default) | `pulse` | `all`
+
+3. Conditionally render nav entries by mode. **Do not unmount routes** — the router keeps every existing route registered so direct URLs still work. This is link visibility only.
+
+4. Nav entries in `programming` mode:
+   - **Programs** — placeholder page, empty state, copy: "No decisions recorded yet."
+   - **Rules** — placeholder page, empty state
+   - **Settings** — existing Settings page, unchanged
+
+5. In `pulse` mode, the current nav renders exactly as it does today. In `all` mode, both sets render.
+
+6. Verify `tsc --noEmit` passes.
+
+Placeholder pages should be minimal — a heading and an empty state. No layout work; the real screens come later.
+
+**STATUS:**
+
+---
+
+## Item 2 — What has the native canceller actually cancelled?
+
+Read-only. This is the analysis behind the first real screen.
+
+### 2a. Find the cancelled events
+
+`GET /events` with `includeCanceled=true` over the last 120 days. Use the documented query params (`startTime`, `endTime`, `page`, `ipp`) rather than fetching everything and filtering client-side.
+
+Identify cancelled events. Check the event object for `isCanceled`, and also `GET /events/{eventId}/cancellation` on candidates to retrieve the cancellation record where one exists.
+
+Report: total events in window, how many cancelled, and what fields distinguish a cancelled event.
+
+### 2b. Attribute each cancellation
+
+For each cancelled event, record:
+
+| Field | Source |
+|---|---|
+| event id, name, start time, program type | event object |
+| `lowTurnoutAutoCancelAttendeeCount` / `HoursBefore` | event object — was native config set? |
+| cancellation `reason` | `GET /events/{eventId}/cancellation` |
+| `cancellingUser` | same — human admin vs. system vs. `API Key Access` |
+| cancellation timestamp | same |
+| hours before start it was cancelled | computed |
+
+The key split: **which cancellations came from the native low-turnout rule, and which were human decisions** (weather, coach illness, facility). If `reason` is `LOW_TURNOUT` and native config was set and the cancellation landed at roughly the configured offset, attribute it to the native rule. State your attribution logic explicitly and report how many cancellations are ambiguous.
+
+### 2c. The counterfactual
+
+This is the number that matters. For each cancellation attributed to the native rule:
+
+- Signup count at cancellation time (from `attendances.booked_at` where available, or the cancellation record if it carries one)
+- **Would it have filled?** There is no post-cancellation booking data — once cancelled, nobody else could sign up. So estimate from the archetype's historical curve: given `k` signups at T-3h for this program type and slot, what fraction of comparable *non-cancelled* events reached 4+?
+
+Be explicit that this is an estimate, not an observation. Report the comparison set size for each estimate. Where the comparison set is under ~10 events, say so rather than reporting a percentage.
+
+### 2d. Summarize
+
+- How many sessions has the native rule cancelled in 120 days?
+- Estimated false positives, with the uncertainty band
+- Total registrants affected — people who had booked and got cancelled on. Cross-reference to `players` and report how many are currently `lapsing` or `dormant`. **A player who was cancelled on and then stopped coming is the churn story this whole product is about.**
+- Break down by program type. Clinics vs Open Play is expected to differ sharply.
+
+Save the per-event table to `/tmp/phase1/native-cancellations.csv`.
+
+**STATUS:**
+
+---
+
+## Report format
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+Findings:
+Blockers:
+Implications:
+```
+
+For Item 2, close with a plain-language summary: **in the last 120 days, the native rule cancelled X sessions affecting Y registrants, of which an estimated Z would have filled.** If the data doesn't support an estimate, say that instead of producing a soft number — a stated unknown is more useful here than a number with no support.
+
+Confirm explicitly: **no writes to PodPlay; no `lowTurnoutAutoCancel*` field modified; no Supabase writes; no files deleted.**

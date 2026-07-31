@@ -1,8 +1,17 @@
 import { Link, useLocation } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { useClubStatus } from "@/lib/ClubContext";
 import { ClubSwitcher } from "./ClubSwitcher";
+
+// ─── Nav mode ─────────────────────────────────────────────────────────────────
+// VITE_NAV_MODE controls which nav entries are visible.
+//   programming  (default) — programming-agent surfaces only
+//   pulse                  — Pulse retention surfaces only (original nav)
+//   all                    — both sets visible
+type NavMode = "programming" | "pulse" | "all";
+const NAV_MODE: NavMode =
+  (import.meta.env.VITE_NAV_MODE as NavMode | undefined) ?? "programming";
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -71,6 +80,34 @@ function IconProgramming() {
   );
 }
 
+function IconPrograms() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <path d="M4 6h8M4 8.5h5M4 11h6" />
+    </svg>
+  );
+}
+
+function IconRules() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 5v3.5l2.5 2" />
+    </svg>
+  );
+}
+
+// ─── Nav item type ────────────────────────────────────────────────────────────
+
+interface NavItem {
+  label: string;
+  path: string;
+  icon: ReactNode;
+  badge?: number;
+  replyAlert?: boolean;
+}
+
 interface SidebarProps {
   lastSynced?: string | null;
   messageCount?: number;
@@ -116,12 +153,13 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
 
   const messagesBadge = messageCount + unreadReplies;
 
-  const navItems = slug
+  // ── Nav entries by mode ─────────────────────────────────────────────────
+  const pulseItems: NavItem[] = slug
     ? [
-        { label: "Dashboard", path: `/c/${slug}/dashboard`, icon: <IconDashboard /> },
-        { label: "Players", path: `/c/${slug}/players`, icon: <IconPlayers /> },
-        { label: "Progress", path: `/c/${slug}/assessments`, icon: <IconProgress /> },
-        { label: "Session Ratings", path: `/c/${slug}/feedback`, icon: <IconStar /> },
+        { label: "Dashboard",       path: `/c/${slug}/dashboard`,  icon: <IconDashboard /> },
+        { label: "Players",         path: `/c/${slug}/players`,    icon: <IconPlayers /> },
+        { label: "Progress",        path: `/c/${slug}/assessments`,icon: <IconProgress /> },
+        { label: "Session Ratings", path: `/c/${slug}/feedback`,   icon: <IconStar /> },
         {
           label: "Messages",
           path: `/c/${slug}/messages`,
@@ -130,9 +168,26 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
           replyAlert: unreadReplies > 0,
         },
         { label: "Programming", path: `/c/${slug}/programming`, icon: <IconProgramming /> },
-        { label: "Settings", path: `/c/${slug}/settings`, icon: <IconSettings /> },
       ]
     : [];
+
+  const programmingItems: NavItem[] = slug
+    ? [
+        { label: "Programs", path: `/c/${slug}/programs`, icon: <IconPrograms /> },
+        { label: "Rules",    path: `/c/${slug}/rules`,    icon: <IconRules /> },
+      ]
+    : [];
+
+  const sharedItems: NavItem[] = slug
+    ? [{ label: "Settings", path: `/c/${slug}/settings`, icon: <IconSettings /> }]
+    : [];
+
+  const navItems: NavItem[] =
+    [
+      ...(NAV_MODE === "pulse" || NAV_MODE === "all" ? pulseItems : []),
+      ...(NAV_MODE === "programming" || NAV_MODE === "all" ? programmingItems : []),
+      ...sharedItems,
+    ];
 
   return (
     <aside
