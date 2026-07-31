@@ -1,0 +1,110 @@
+# Full Sync Run + Native Config Reconciliation
+
+**Cause is known.** The nightly chain is effectively manual — the Replit process only runs while the workspace is open, so the scheduler cannot fire on its own. No diagnosis needed. Run the sync, verify it landed, and resolve one open contradiction while the data is fresh.
+
+---
+
+## Constraints
+
+- No sync code changes. No schema changes. No new tables.
+- No PodPlay writes. Item 3 is `GET` only — do **not** modify any `lowTurnoutAutoCancel*` field.
+- Never echo secrets.
+
+---
+
+## Item 1 — Run the full chain
+
+**1a. Capture the "before" state** so the delta is measurable:
+
+```sql
+SELECT MAX(attended_at) AS latest_attendance,
+       MAX(booked_at)   AS latest_booking,
+       COUNT(*)         AS total_rows,
+       COUNT(*) FILTER (WHERE attended_at > now() - interval '7 days')  AS last_7d,
+       COUNT(*) FILTER (WHERE attended_at > now() - interval '30 days') AS last_30d
+FROM attendances;
+
+SELECT COUNT(*) AS players, MAX(last_visit_date) AS latest_visit FROM players;
+SELECT id, status, started_at, finished_at, stats FROM jobs ORDER BY started_at DESC NULLS LAST;
+```
+
+Note `stats.last_run_day` on the nightly job. If it already equals today's club-local date, the scheduler's own guard would skip a run — triggering manually bypasses it, but record the value so we know whether the guard is masking anything.
+
+**1b. Read the chain order** from the scheduler before running. Do not assume it — downstream jobs read what the sync writes, and running them out of order produces wrong scores silently rather than failing.
+
+**1c. Run each step in order, sequentially.** Wait for completion before starting the next. Expected shape (verify against 1b):
+
+1. Event / attendance sync
+2. Buddy pairs
+3. Churn scores
+4. Milestones
+5. Monthly recaps
+
+Notes:
+- The event sync has historically taken ~22 minutes, PodPlay rate-limit-bound. Expect slow. **Do not add concurrency.**
+- `attendances` upsert is `ignoreDuplicates: true` (documented write-once decision, `syncEventAttendance.js:230-234`), so re-running over already-synced events is safe.
+- If a step fails, stop and report. Do not continue — downstream output would be computed on incomplete data.
+
+---
+
+## Item 2 — Verify
+
+Re-run the 1a queries and report before/after in a table.
+
+Then reconcile against PodPlay on **5 recent events**: compare local attendance row counts to `GET /events/{eventId}/signups`, counting signups whose status is **not** in `CANCELED`, `INVALID`, `DRAFT`.
+
+Signups are `PENDING` before an event and `CONFIRMED` after, so filtering on either alone is wrong. **Do not use `signups._total`** — it includes stale entries and overstates enrollment on every event sampled so far (median gap 5, max 22).
+
+A small undercount on Open Play is expected. A large or systematic gap means the sync did not fully catch up.
+
+---
+
+## Item 3 — Reconcile the native-config contradiction
+
+Two prior reports disagree, and the difference changes what we conclude about PodPlay's native auto-cancel.
+
+- **Phase 0.6** reported the fields set on 95 of 270 *upcoming* events, and separately stated 95 of 270 *past* events also had them. The identical figures suggest one scan was recorded twice.
+- **Phase 1.0** found only **1** past event in the last 120 days with the fields set.
+
+Why it matters: if many past events were configured and the rule never fired, it is configured but **not working**. If almost none were, it simply hasn't had the opportunity yet. Those lead to opposite conclusions.
+
+Read-only scan. For **all** events in two windows — past 120 days, and all upcoming — record per event:
+
+- event id, name, start time, program type
+- `lowTurnoutAutoCancelAttendeeCount`
+- `lowTurnoutAutoCancelHoursBefore`
+- `isCanceled`
+
+Use the documented query params (`startTime`, `endTime`, `page`, `ipp`) rather than fetching everything and filtering client-side.
+
+Report:
+
+| | Past 120d | Upcoming |
+|---|---|---|
+| Total events | | |
+| With `AttendeeCount` set | | |
+| With `HoursBefore` set | | |
+| Distinct config combinations, with counts | | |
+
+Then answer directly:
+
+1. **How many past events actually had the config set?** State which prior report was correct.
+2. **What is the earliest past event with the config set?** That dates when the feature was switched on and bounds how long it has had to fire.
+3. **Of past configured events, how many were cancelled?** If any were configured and reached start time with fewer than the threshold *without* being cancelled, the native rule is configured but not firing — a materially different finding from "hasn't had the chance."
+
+Save to `/tmp/sync/native-config-scan.csv`.
+
+---
+
+## Report format
+
+```
+STATUS: CLOSED | PARTIAL | BLOCKED
+Sync: <before/after table, duration per step>
+Reconciliation: <5-event local vs PodPlay comparison>
+Native config: <past/upcoming table + answers to the three questions>
+```
+
+Close with one line: **is the native rule dormant-but-armed, or configured-and-failing?**
+
+Confirm: **no sync code modified; no schema changes; no PodPlay writes; no `lowTurnoutAutoCancel*` field touched.**
