@@ -2,13 +2,15 @@
  * eventFillSync — fetch per-event capacity and final signups from PodPlay
  * and persist to the event_fill table.
  *
- * fill_rate = signups._total / totalTeams
- *   - numerator:   signups._total (all registrants, full-population signal)
+ * fill_rate = activeSignups / totalTeams
+ *   - numerator:   active signup count from GET /events/{id}/signups
+ *                  (status NOT IN CANCELED, INVALID, DRAFT — keeps PENDING + CONFIRMED)
  *   - denominator: totalTeams (seat count — do NOT multiply by teamSize)
  *
- * RUNBOOK NOTE: attendances rows are a biased subset of tracked members only.
- * signups._total runs 2–6× our row count per event.  Fill rate must always
- * source both numerator and denominator from the PodPlay API.
+ * NOTE: signups._total from the event detail includes all statuses and
+ * overcounts by a median of 0 but max of ~4 per 25-event sample (Aug 2026).
+ * The active-count call adds one extra API request per event, which is
+ * acceptable for both nightly incremental (~15 events) and full backfills.
  *
  * Modes:
  *   "backfill"     — all past event_ids in attendances since RATING_START
@@ -93,6 +95,40 @@ async function fetchEvent(
     throw new Error(`GET /events/${eventId} → ${res.status}: ${await res.text()}`);
   }
   return res.json() as Promise<PodPlayEventDetail>;
+}
+
+/**
+ * Fetch the active signup count for one event.
+ *
+ * Calls GET /events/{id}/signups and counts registrants whose status is NOT
+ * CANCELED, INVALID, or DRAFT.  This is the correct numerator for fill_rate.
+ *
+ * signups._total (from the event detail) includes cancelled registrants and
+ * overcounts by a median of 0 but up to 4 per 25-event sample (Aug 2026).
+ *
+ * Paginates if needed (pageSize=200, pages until empty).
+ */
+async function fetchActiveSignupCount(
+  apiBase: string,
+  apiKey: string,
+  eventId: string,
+): Promise<number> {
+  const INACTIVE = new Set(["CANCELED", "INVALID", "DRAFT"]);
+  let active = 0;
+  let page   = 1;
+  while (true) {
+    const res = await fetch(
+      `${apiBase}/events/${eventId}/signups?pageSize=200&page=${page}`,
+      { headers: { "x-api-key": apiKey } },
+    );
+    if (!res.ok) break;
+    const body: any = await res.json();
+    const items: any[] = body?.items ?? [];
+    active += items.filter((s) => !INACTIVE.has(s.status)).length;
+    if (items.length < 200) break;
+    page++;
+  }
+  return active;
 }
 
 // ── Distinct past event_ids from attendances ───────────────────────────────────
@@ -244,7 +280,9 @@ export async function syncEventFill(
         continue;
       }
 
-      const finalSignups = ev.signups?._total ?? 0;
+      // Use active signup count (PENDING + CONFIRMED only).
+      // This adds one extra API call per event but gives the correct numerator.
+      const finalSignups = await fetchActiveSignupCount(apiBase, apiKey, eventId);
       const fillRate = finalSignups / totalTeams;
 
       // Classify to get archetype_id

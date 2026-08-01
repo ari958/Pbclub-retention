@@ -1,0 +1,3 @@
+- [Event-fill numerator fix](event-fill-numerator.md) — signups._total vs active-count error is p50=0, p90=1, max=4 (NOT median 5 as spec claimed); fix uses /events/{id}/signups endpoint
+- [Programming schema](programming-schema.md) — 3 new tables (programming_rules/decisions/notifications); migration SQL at artifacts/api-server/migrations/004_programming_tables.sql; user must run in Supabase SQL editor
+- [PodPlay startTimeTo bug](podplay-starttime-bug.md) — server-side startTimeTo param does not enforce UTC boundaries strictly; always apply client-side new Date(e.startTime) > now filter

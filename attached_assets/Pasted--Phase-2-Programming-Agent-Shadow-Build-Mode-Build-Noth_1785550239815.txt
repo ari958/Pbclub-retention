@@ -1,0 +1,202 @@
+# Phase 2 — Programming Agent, Shadow Build
+
+**Mode:** Build. Nothing in this task can cancel an event, send a message, or write to PodPlay.
+**Scope:** 5 items, sequential — each depends on the one before it.
+**Goal:** a working evaluator that decides what it *would* do, logs every decision, and shows it on screen. No execution path exists at the end of this task, by design.
+
+---
+
+## Context
+
+We're building a programming agent that decides when to change, promote, or cancel under-filled sessions. PodPlay's native auto-cancel (`lowTurnoutAutoCancelAttendeeCount: 4`, `lowTurnoutAutoCancelHoursBefore: 3`) is currently live on 181 upcoming events and is the only thing cancelling sessions today.
+
+**Leave it alone.** It works, and it's the baseline we're measuring against. Our system runs beside it in shadow, predicting what it would decide, touching nothing. Clearing native config is a cutover step for a later phase, not part of this build.
+
+Existing stack: Express + TypeScript API server, React + Vite dashboard, Supabase (`knblhxfwvebxntoshiqm`), PodPlay API v2. Follow the conventions in `RUNBOOK.md` — shared Supabase singleton in `.ts` files, no dashboard writes, RLS + grants on new tables, `updated_at` triggers, `tsc --noEmit` after every edit batch.
+
+---
+
+## Hard constraints — apply to every item
+
+**1. No PodPlay writes.** No `POST`, `PATCH`, `PUT`, or `DELETE` to any PodPlay endpoint. Specifically: do not touch `lowTurnoutAutoCancelAttendeeCount` or `lowTurnoutAutoCancelHoursBefore` on any event, and do not call `POST /events/{eventId}/cancellation` in any mode including `PREVIEW`.
+
+**2. No execution path.** Do not write code that cancels, patches, or sends anything — not even behind a disabled flag. The evaluator's output is a database row and nothing more. If an item seems to call for an executor, it doesn't; stop and report.
+
+**3. No messaging.** No Twilio, no email. The notification table is created but nothing writes to it.
+
+**4. Supabase writes are limited** to the new `programming_*` tables and the `event_fill` recompute in Item 1. Do not modify `players`, `attendances`, `messages`, `conversations`, or any other existing table's rows or schema.
+
+**5. Signup counting rule** — applies everywhere in this task:
+- Count signups whose `status` is **not** in `CANCELED`, `INVALID`, `DRAFT`
+- Signups are `PENDING` before an event and `CONFIRMED` after; filtering on either alone is wrong
+- **Never use `signups._total`** — it includes stale entries and overstates enrollment on every event sampled (median gap 5, max 22)
+- `guests` has been zero across all sampled events; ignore for now but note if that changes
+
+**6. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Work through items 1→5 in order. Do not skip ahead; each depends on its predecessor.
+
+**Stop and report if:**
+- Item 1's recompute changes fill rates so dramatically that downstream archetype medians look implausible (report the deltas, don't proceed on data you don't trust)
+- Any item would require a PodPlay write or an execution path
+- `tsc --noEmit` fails and the cause isn't obvious
+
+Report `STATUS` per item. A partially-complete item is `PARTIAL` with specifics, not `CLOSED`.
+
+---
+
+## Item 1 — Recompute `event_fill` on a correct numerator
+
+`event_fill` currently uses `signups._total` as its numerator. That figure includes cancelled and stale signups and is inflated on every event sampled. Every archetype median, fill rate, and program rating downstream inherits the error — and step 8b of the nightly chain writes more bad rows on every run.
+
+**1a. Read first.** Find where `event_fill` is populated (`syncEventFill` per the nightly chain, step 8a). Report:
+- the exact numerator and denominator currently used
+- the table's columns
+- current row count
+- how `computeProgramRatings` (step 8b) consumes it
+
+**1b. Quantify the error before changing anything.** For 25 past events spanning program types, compare `signups._total` against the correct count (per constraint 5). Report per-event and in aggregate: median delta, p90 delta, and the delta as a percentage of the correct count. This is the size of the error being carried.
+
+**1c. Fix the numerator** in the sync path. Denominator stays as-is (`totalTeams` is the capacity field). Add a short code comment recording why `_total` is wrong, so it isn't reintroduced.
+
+**1d. Backfill.** Recompute existing `event_fill` rows using the corrected logic. **Dry-run first**: write results to a scratch file and report before/after fill rates for a sample of 25 rows and the aggregate change per archetype. Apply only after reporting.
+
+**1e. Re-run archetype medians** and report the before/after table. The prior figures were: Social Open Play median 6 (n=339), Drill & Stay 2 (n=86), Coach-Guided Open Play 6 (n=23), Challenge Court 10.5 (n=36). If these move substantially, say so — everything downstream uses them.
+
+**STATUS:**
+
+---
+
+## Item 2 — Schema
+
+Three new tables. Follow existing conventions: RLS with `service_role_all_<table>` + `anon_read_<table>`, grants after creation, `updated_at` trigger where the table mutates.
+
+**`programming_rules`**
+- `id` uuid pk, `club_id` fk → clubs
+- `name` text, `enabled` boolean default false
+- `match_rules` jsonb — conditions (program type, level, day of week, time band, price tier, series membership)
+- `match_priority` int — classifier ordering, same pattern as the existing programs classifier
+- `checkpoints` jsonb — ordered array of `{ offset_hours, min_signups, action }` where action ∈ `SWAP` | `PROMOTE` | `CANCEL` | `ALERT`
+- `mode` text default `'shadow'` — `shadow` | `alert` | `auto`
+- timestamps
+
+Checkpoints as an array on the rule, not separate rows — they're read together and always edited together.
+
+**`programming_decisions`** — append-only
+- `id` uuid pk, `club_id` fk
+- `event_id` text, `checkpoint_index` int
+- **UNIQUE (event_id, checkpoint_index)** — non-negotiable idempotency guard; a restart mid-window must not re-evaluate
+- `evaluated_at` timestamptz
+- `rule_id` fk → programming_rules (nullable — record decisions even when no rule matched)
+- `signup_count` int, `threshold` int, `hours_before_start` numeric
+- `predicted_final_count` numeric, `prediction_basis` jsonb (archetype, comparison set size)
+- `decision` text — `NO_ACTION` | `SWAP` | `PROMOTE` | `CANCEL` | `ALERT`
+- `mode` text — mode at time of evaluation
+- `executed` boolean default false — always false in this phase
+- `actual_final_count` int nullable, `actual_outcome` text nullable — backfilled after the event, this is how shadow accuracy gets measured
+- `notes` text
+
+**`programming_notifications`**
+- `id` uuid pk, `decision_id` fk → programming_decisions
+- `player_id` fk → players, `channel` text, `status` text
+- **UNIQUE (decision_id, player_id, channel)**
+- timestamps
+
+Created but unused this phase.
+
+Report the migration SQL and confirm grants + RLS applied.
+
+**STATUS:**
+
+---
+
+## Item 3 — The evaluator (shadow only)
+
+The core logic. Reads rules, evaluates upcoming events, writes decisions. **Writes nothing else.**
+
+**3a. Rule matching.** Given an event, find the highest-priority matching rule via `match_rules`. Rules are data, not code — no hardcoded conditions. If no rule matches, still write a decision row with `rule_id = null` and `decision = 'NO_ACTION'`, so coverage gaps are visible.
+
+**3b. Checkpoint evaluation.** For each event, determine which checkpoints have been crossed. A checkpoint at `offset_hours: 12` is due when the event starts in ≤12 hours. Evaluate the *earliest un-evaluated crossed checkpoint*, not all of them — one decision per checkpoint, enforced by the unique constraint.
+
+**3c. Signup count.** Live from `GET /events/{eventId}/signups`, per constraint 5.
+
+**3d. Prediction.** Given archetype, slot, and current count at T-minus-N, predict final count from `event_fill` history (corrected in Item 1). Report the comparison set size in `prediction_basis`. **Where the comparison set is under 10 events, set `predicted_final_count` to null rather than producing a number with no support.**
+
+**3e. Decision.** Compare predicted final against the checkpoint threshold. Write the decision row. Stop there — no execution, no side effects.
+
+**3f. Scheduler entry point.** An endpoint or function that evaluates all upcoming events crossing a checkpoint. Do **not** wire it into the nightly chain or any timer yet; it should be manually invocable so we can run it deliberately during testing.
+
+**3g. Idempotency.** Re-running must not create duplicate rows. Verify by running twice and confirming the second run inserts zero.
+
+Verify `tsc --noEmit`.
+
+**STATUS:**
+
+---
+
+## Item 4 — Programs screen
+
+Renders `programming_decisions`. Replaces the placeholder from the nav-flag work.
+
+Two views:
+
+**Upcoming risk** (default) — events with a checkpoint approaching or crossed:
+- event name, program type, start time
+- current signups / threshold
+- hours until next checkpoint
+- predicted final count (or "insufficient history")
+- what the agent *would* do, clearly labeled as shadow
+- **and what PodPlay's native rule would do**, since it's still live and is the baseline we're measuring against — surface both side by side
+
+Sorted by nearest checkpoint.
+
+**Decision log** — historical decisions with actual outcome where backfilled. Filterable by decision type and program type.
+
+Keep it plain. This is an instrument panel, not a dashboard — a table with clear columns beats charts here. Read-only; no action buttons, since there are no actions.
+
+**STATUS:**
+
+---
+
+## Item 5 — Backtest
+
+The most useful item for tuning, and it removes the need to wait weeks for shadow data.
+
+Given a candidate rule, replay it against the last 120 days of history and report what it *would* have done.
+
+- Reconstruct per-event signup counts at each checkpoint offset from `attendances.booked_at`
+- Report per-event `booked_at` coverage; **exclude events under 90% and report how many were excluded**
+- Per event: would the rule have fired, at which checkpoint, and what was the actual final count
+- Aggregate: events triggered, true positives, false positives, FP rate — segmented by program type
+
+**Report `n` at every level, and state the uncertainty.** Median usable rows per event has historically been ~4, which quantizes fractions badly; if that's still true post-sync, percentages carry ±5–10 points and should be presented that way rather than to three decimals.
+
+Expose it as an endpoint the Rules screen can call, plus a rendered result view. A rule editor UI is **not** required this phase — rules can be inserted via SQL for now.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What changed: <files, tables, endpoints>
+Verification: <tsc, test runs, row counts>
+Findings:
+Blockers:
+```
+
+Close with:
+1. **The `event_fill` correction delta** — how wrong was it, and did archetype medians move?
+2. **Backtest at N=4 / T-3h** — PodPlay's live configuration, on corrected data. This is the number that decides whether native config gets cleared.
+3. **What would need to change to move from shadow to execution** — a list, not an implementation.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` field touched; no cancellation called in any mode; no messages sent; no execution path built.**
