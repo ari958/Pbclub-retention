@@ -1,0 +1,114 @@
+# Native Rule Status — Dormant or Failing?
+
+**Mode:** Read-only. No writes of any kind.
+**Scope:** 3 items. Fast — this is queries, not a build.
+**Why now:** 90 upcoming events carry `lowTurnoutAutoCancelAttendeeCount: 4` / `HoursBefore: 3`. Against historical booking data, N=4 at T-3h has a modeled false-positive rate of ~44%. If the rule is armed, it starts cancelling real sessions imminently. We need to know what it will do before it does it.
+
+---
+
+## Context
+
+The prior run concluded **dormant-but-armed** — that 91 past events had the config set, 90 ran to their start time without the rule firing, and therefore every one of them must have reached 4 signups before T-3h.
+
+That conclusion has an internal contradiction. The same report answered Q2 with **"earliest past event with config set: 2026-08-01."** August 1 is tomorrow. An event starting tomorrow has not run, so it cannot be evidence that the rule declined to fire on a session that reached threshold.
+
+Either the Q2 date is wrong, or the "past window" scan included events that haven't happened yet. Item 1 settles which. Item 2 is the test that actually answers the question regardless.
+
+---
+
+## Constraints
+
+- **No PodPlay writes.** `GET` only. Do not modify any `lowTurnoutAutoCancel*` field on any event. Clearing or retuning the config is a separate, gated decision that follows this report.
+- **No Supabase writes.** `SELECT` only. Scratch output to `/tmp/native-status/`.
+- No application code changes.
+- Never echo secrets.
+
+---
+
+## Item 1 — Do any configured events actually lie in the past?
+
+Scan all events with `lowTurnoutAutoCancelAttendeeCount` set, using the documented query params (`startTime`, `endTime`, `page`, `ipp`) — not client-side filtering of a full pull.
+
+Split strictly by `startTime` relative to **now**, not by whatever window a previous scan called "past."
+
+Report:
+
+| | Count | Earliest `startTime` | Latest `startTime` |
+|---|---|---|---|
+| Configured, `startTime` < now | | | |
+| Configured, `startTime` ≥ now | | | |
+
+Then state plainly:
+
+1. How many configured events have genuinely already occurred?
+2. If that number is **zero**, the rule has had no opportunity to fire and the prior "dormant-but-armed" conclusion is unsupported — say so directly.
+3. Reconcile the discrepancy: the prior run reported 91 configured events in a "past 120d" window while also reporting the earliest as 2026-08-01. Explain what the earlier scan actually counted.
+
+Save the full configured-event list to `/tmp/native-status/configured-events.csv` with id, name, start time, program type, both config fields, and `isCanceled`.
+
+---
+
+## Item 2 — The real test: was any configured session below threshold at its offset?
+
+This is the question. It does not depend on how Item 1 resolves.
+
+For every configured event whose `startTime` is in the past, reconstruct the signup count as of its own configured offset (T-3h or T-8h — use the value on that specific event, not a blanket 3h) from `attendances.booked_at`.
+
+Data is fresh as of the 2026-07-31 catch-up sync, so coverage should be better than prior runs. Report per-event `booked_at` coverage anyway and exclude events under 90% from the conclusion, noting how many were excluded.
+
+Per event, report:
+
+- event id, name, program type, start time
+- configured `AttendeeCount` and `HoursBefore`
+- reconstructed signup count at that offset
+- final signup count
+- `isCanceled`
+- **verdict:** `BELOW_AND_RAN` | `AT_OR_ABOVE_AND_RAN` | `CANCELLED`
+
+The verdict that matters is **`BELOW_AND_RAN`** — a session configured with a threshold, sitting below it at its trigger offset, that was not cancelled. Even one such event means the rule is **configured-and-failing**, and no amount of reasoning about typical fill overrides a single confirmed case.
+
+If zero configured events lie in the past, mark this item **BLOCKED** with that as the reason. Do not substitute an inference about whether fill was probably adequate.
+
+Save to `/tmp/native-status/offset-reconstruction.csv`.
+
+---
+
+## Item 3 — What is about to happen
+
+Forward-looking. This becomes the first real screen, so the shape of the output matters.
+
+For every configured event with `startTime` ≥ now, in the next 14 days:
+
+- event id, name, program type, start time
+- configured threshold and offset
+- **current** signup count from `GET /events/{eventId}/signups`, counting signups whose status is **not** in `CANCELED`, `INVALID`, `DRAFT` (signups are `PENDING` before an event and `CONFIRMED` after — filtering on either alone is wrong; do not use `signups._total`, which is inflated on every event sampled)
+- hours until the trigger offset is reached
+- historical median final count for that program type and time slot
+
+Then report:
+
+1. How many are **currently below threshold**?
+2. Of those, how many hit their trigger offset within the next 72 hours?
+3. Name them. These are the sessions at immediate risk.
+
+Sort by nearest trigger offset.
+
+Save to `/tmp/native-status/forward-risk.csv`.
+
+---
+
+## Report format
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+Findings:
+Blockers:
+Implications:
+```
+
+Apply the status honestly. If Item 2 cannot be run because no configured events have occurred, that is **BLOCKED**, not CLOSED with an inference.
+
+Close with a one-line verdict: **dormant-but-armed** (config correct, no opportunity yet), **configured-and-failing** (at least one `BELOW_AND_RAN`), or **untestable** (no past configured events) — plus the count of upcoming sessions at risk in the next 72 hours.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` field modified; no Supabase writes; no application code changed.**
