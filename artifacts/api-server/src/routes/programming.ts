@@ -205,8 +205,9 @@ router.get("/programming/upcoming-risk", async (req, res) => {
     const evRes = await fetch(url, { headers: { "x-api-key": apiKey } });
     if (!evRes.ok) { res.status(502).json({ error: `PodPlay API error: ${evRes.status}` }); return; }
     const evBody: any = await evRes.json();
+    // Client-side guard: PodPlay startTimeTo is not strictly UTC-enforced. Apply both bounds.
     const allEvents: any[] = (evBody?.items ?? []).filter(
-      (e: any) => e.startTime && new Date(e.startTime) > now,
+      (e: any) => e.startTime && new Date(e.startTime) > now && new Date(e.startTime) <= horizon,
     );
 
     // Load existing decisions for these events

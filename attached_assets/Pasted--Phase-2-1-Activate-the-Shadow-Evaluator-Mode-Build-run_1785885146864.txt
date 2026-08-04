@@ -1,0 +1,152 @@
+# Phase 2.1 — Activate the Shadow Evaluator
+
+**Mode:** Build/run. Still no execution path — nothing here can cancel an event, message anyone, or write to PodPlay.
+**Scope:** 4 items, sequential. Each blocks the next.
+**Goal:** migration applied, `event_fill` corrected and verified, one rule seeded that mirrors PodPlay's live config, and the evaluator producing real shadow decisions on screen.
+
+---
+
+## Context
+
+Phase 2 built the pieces: `programmingEvaluator.ts`, the `programming_*` migration, the corrected `fetchActiveSignupCount()` in `eventFillSync.ts`, the backfill endpoint, and the Programs screen. None of it has run — the migration hasn't been applied and the backfill hasn't executed.
+
+**Correction to carry forward:** Phase 2 Item 1b established the real `signups._total` overcount is mean 0.3 / p90 1 / max 4, not the "median gap 5, max 22" figure in the Phase 2 spec. That earlier number was comparing `_total` against *local attendance rows* (a member-subset undercount), not against PodPlay's active signup count. The numerator fix is still correct, but the error being corrected is small. Do not expect archetype medians to move much; if they move a lot, something else is wrong and that's a finding.
+
+PodPlay's native auto-cancel remains live on 181 upcoming events at `AttendeeCount: 4` / `HoursBefore: 3`. **Leave it completely alone.** It is the baseline we're measuring against.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE` to any PodPlay endpoint. Do not touch `lowTurnoutAutoCancel*` on any event. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** Do not build or wire code that cancels, patches, or sends — not behind a flag, not commented out. Evaluator output is a database row and nothing more.
+
+**3. No messaging.** No Twilio, no email. `programming_notifications` stays empty.
+
+**4. Supabase writes limited to** the `programming_*` tables and `event_fill`. Do not modify rows or schema in `players`, `attendances`, `messages`, `conversations`, or any other existing table.
+
+**5. Signup counting rule** — everywhere in this task:
+- Count signups whose `status` is **not** in `CANCELED`, `INVALID`, `DRAFT`
+- `PENDING` before the event, `CONFIRMED` after — filtering on either alone is wrong
+- Never use `signups._total` as a live count
+
+**6. Do not wire the evaluator into the nightly chain or any timer.** It stays manually invocable this phase.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Items run in order. Stop and report if:
+- The migration cannot be applied (report the SQL and what's needed)
+- The backfill dry-run shows archetype medians moving by more than ~1 signup — report before applying, do not proceed on data you don't trust
+- Any item would need a PodPlay write or an execution path
+
+---
+
+## Item 1 — Apply the migration
+
+`artifacts/api-server/migrations/004_programming_tables.sql` has not been run.
+
+There is no DDL path via the JS client, so if you cannot execute it directly, output the exact SQL as a single copy-paste block for the Supabase SQL editor and mark this item **BLOCKED pending manual run** rather than proceeding.
+
+Once applied, verify and report:
+- All three tables exist: `programming_rules`, `programming_decisions`, `programming_notifications`
+- RLS enabled, with `service_role_all_<table>` and `anon_read_<table>` policies on each
+- Grants applied (`GRANT SELECT ... TO anon`, `GRANT ALL ... TO service_role`)
+- **UNIQUE (event_id, checkpoint_index)** exists on `programming_decisions` — this is the idempotency guard, confirm it explicitly
+- **UNIQUE (decision_id, player_id, channel)** on `programming_notifications`
+- `updated_at` triggers where applicable
+
+**STATUS:**
+
+---
+
+## Item 2 — Backfill `event_fill` and verify
+
+**2a. Capture before-state.** Per archetype: row count, median final signups, median fill rate. This is the comparison baseline — save it before touching anything.
+
+**2b. Dry run.** `POST /api/programming/backfill-fill` with `dryRun: true` across all existing rows. Report:
+- rows processed, rows that would change, rows unchanged
+- distribution of the delta (p50, p90, max)
+- **before/after archetype table**: median final signups and median fill rate per archetype
+
+Prior archetype figures for reference: Social Open Play median 6 (n=339), Drill & Stay 2 (n=86), Coach-Guided Open Play 6 (n=23), Challenge Court 10.5 (n=36).
+
+**2c. Sanity check.** Given the measured error is mean 0.3, expect small movement. If any archetype median moves by more than ~1 signup, **stop and report** — that would indicate the correction is doing something other than removing cancelled signups.
+
+**2d. Apply.** Run with `dryRun: false`. Re-report the archetype table post-apply and confirm it matches the dry-run projection.
+
+**2e. Note the sync cost.** The corrected numerator adds one API call per event to fill sync. `sync_events` already runs ~11 minutes and is PodPlay rate-limit-bound. Measure and report the added time on a representative run. Do not optimize it now — just report the number so we know what it costs.
+
+**STATUS:**
+
+---
+
+## Item 3 — Seed a baseline rule
+
+One rule, deliberately mirroring PodPlay's live configuration so the shadow log is directly comparable to the baseline.
+
+```
+name:           "Off-Peak Open Play — native mirror"
+enabled:        true
+mode:           "shadow"
+match_priority: 100
+match_rules:    matches Off-Peak Open Play events
+checkpoints:    [ { offset_hours: 3, min_signups: 4, action: "CANCEL" } ]
+```
+
+Notes:
+- Build `match_rules` from how program classification already works in this codebase — read the existing classifier and follow its structure. Do not invent a new matching format.
+- Report exactly what `match_rules` you wrote and **how many upcoming events it matches**. If it matches zero or matches everything, the conditions are wrong — fix before proceeding.
+- Single checkpoint only. The point is comparability to native, not a good rule.
+- `mode` stays `shadow`.
+
+**STATUS:**
+
+---
+
+## Item 4 — Run the evaluator and verify
+
+**4a. First run.** Invoke the evaluator for PB Club. Report: events evaluated, decisions written, breakdown by decision type, and any errors.
+
+**4b. Idempotency.** Run it again immediately. **The second run must insert zero rows.** Report the count. If it inserts anything, the UNIQUE constraint or the crossed-checkpoint logic is wrong — that's a blocker, not a warning.
+
+**4c. Spot-check three decisions by hand.** For three events with written decisions, independently verify:
+- the signup count matches a fresh `GET /events/{eventId}/signups` (per constraint 5)
+- `hours_before_start` is correct against the event's actual start time
+- the rule matched is the one you'd expect
+- `predicted_final_count` is null where the comparison set is under 10 events, per the Phase 2 spec
+
+Show the arithmetic, don't just assert it matches.
+
+**4d. Screen.** Confirm the Programs page renders both tabs with real data. Report what the Upcoming Risk view shows — specifically whether the agent decision and the native PodPlay threshold appear side by side.
+
+**4e. Disagreements.** List every event where the agent's decision differs from what native would do at `N=4 / T-3h`. These are the interesting cases and the reason shadow mode exists. If there are none, say so — with an identical rule that's the expected outcome and confirms the mirror is faithful.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Did archetype medians move after the fill correction?** Before/after table.
+2. **How many upcoming events does the seeded rule match, and how many decisions were written?**
+3. **Any agent-vs-native disagreements**, listed.
+4. **Known gap:** the backtest endpoint still approximates count-at-offset using final count, which structurally produces a near-zero false-positive rate. Confirm it was not used to inform anything in this phase.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; no execution path built; evaluator not wired to any timer.**

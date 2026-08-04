@@ -105,9 +105,10 @@ async function fetchUpcomingEvents(
     throw new Error(`fetchUpcomingEvents: ${res.status} ${await res.text()}`);
   const body: any = await res.json();
   const items: UpcomingEvent[] = body?.items ?? [];
-  // Client-side guard: PodPlay startTimeTo is not strictly UTC-enforced
+  // Client-side guard: PodPlay startTimeTo is not strictly UTC-enforced.
+  // Apply both bounds explicitly: events must start after now AND within LOOKAHEAD_HOURS.
   return items.filter(
-    (e) => e.startTime && new Date(e.startTime) > now,
+    (e) => e.startTime && new Date(e.startTime) > now && new Date(e.startTime) <= horizon,
   );
 }
 
