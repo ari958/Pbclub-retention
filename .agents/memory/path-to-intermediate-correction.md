@@ -1,11 +1,11 @@
 ---
-name: Path to Intermediate fill correction finding
-description: Backfill corrected Path to Intermediate median from 4→0; this is correct data, not overcorrection
+name: INVALID signup status — series clinic enrollments
+description: INVALID status in PodPlay signups represents real participants for series/package clinic events; must NOT be excluded from active counts
 ---
 
 ## Rule
-If event_fill shows a sudden drop in Path to Intermediate signups/fill to near-zero, it is correct. The pre-backfill data was counting cancelled signups.
+The INACTIVE exclusion set for signup counting must be `{CANCELED, DRAFT}` only. Do NOT include `INVALID`.
 
-**Why:** Phase 2.1 fill backfill revealed that 22 of 41 Path to Intermediate events had `final_signups=0` after correcting to active count (excluding CANCELED/INVALID/DRAFT). The stored `signups._total` value was 4 for most of those rows (capacity=4), but all 4 signups had been cancelled — likely because the Path to Intermediate program was run during a period with high cancellation rates. The backfill median moved 4→0 (exceeds the ~1 threshold), but investigation confirmed this is genuine correction, not an artifact.
+**Why:** PodPlay's Path to Intermediate "series pass" clinic enrollments land in `INVALID` status rather than `CONFIRMED`. Local attendance rows confirm real participation: all 22 zero-count P2I events had 1–3 attendance rows each, but zero active count when INVALID was excluded. Removing INVALID from the exclusion set restores P2I median to 4 (matching original `signups._total`) and reduces the backfill change rate from 36.5% to 6.4%. CANCELED is the correct signal for a withdrawn booking; DRAFT is an incomplete entry; INVALID maps to "series clinic fulfilled enrollment."
 
-**How to apply:** Do not revert or flag this archetype's zeros as data quality issues. The zeros are accurate active-participant counts. When computing medians for model inputs, Path to Intermediate should be treated as a low-attendance archetype (median=0, meaning most sessions ran with 0-1 active participants after cancellations).
+**How to apply:** In `eventFillSync.ts` and `programmingEvaluator.ts`, the INACTIVE set is `new Set(["CANCELED", "DRAFT"])`. Do not add INVALID back under any circumstances — it would break P2I and all series-style clinic counts. Single-session clinics (Learn to Play, Workshop) naturally reach CONFIRMED and are unaffected by this distinction.

@@ -1,5 +1,5 @@
 - [Event-fill numerator fix](event-fill-numerator.md) — signups._total vs active-count error is p50=0, p90=1, max=4 (NOT median 5 as spec claimed); fix uses /events/{id}/signups endpoint
 - [Programming schema](programming-schema.md) — 3 new tables (programming_rules/decisions/notifications); migration applied; baseline rule seeded (native mirror, off-peak, T-3h/N=4)
 - [PodPlay startTimeTo bug](podplay-starttime-bug.md) — apply BOTH bounds client-side (> now AND <= horizon); upper-bound fix applied in programmingEvaluator.ts and upcoming-risk route
-- [Path to Intermediate correction](path-to-intermediate-correction.md) — backfill moved median 4→0; correct data (all signups were cancelled); do not flag as anomaly
+- [INVALID signup status](path-to-intermediate-correction.md) — series clinic passes land in INVALID not CONFIRMED; exclusion set must be {CANCELED,DRAFT} only — NEVER include INVALID
 - [Evaluator decisions timing](evaluator-decisions-timing.md) — decisions only written when event enters offset_hours window; 0 decisions is expected until ~T-3h before an off-peak event

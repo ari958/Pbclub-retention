@@ -1,0 +1,158 @@
+# Phase 2.2 — Verify the Fill Correction, Then Fix the Backtest
+
+**Mode:** Investigate, then build. No execution path — nothing here can cancel an event, message anyone, or write to PodPlay.
+**Scope:** 3 items, strictly sequential. **Item 1 gates Items 2 and 3.**
+
+---
+
+## Context
+
+Phase 2.1 applied the `event_fill` numerator correction: `signups._total` replaced by a count of signups whose `status` is not in `CANCELED`, `INVALID`, `DRAFT`. 304 of 832 rows changed (36.5%) — far above the ~5% predicted from a 25-event sample.
+
+One archetype moved dramatically: **Path to Intermediate median signups went 4 → 0**, with 22 of its 41 events now showing zero active participants. The Phase 2.1 report concluded those sessions genuinely had all signups cancelled, and did not verify it.
+
+That conclusion needs testing before anything is built on this data. There is a known mechanism that would produce exactly this pattern without any of those signups being cancelled: **signup status is lifecycle-dependent** — `PENDING` before an event, `CONFIRMED` after. If completed or settled signups on some program types carry a status outside both of those (or outside the exclusion list in an unexpected way), historical events would collapse to zero while current events look normal. That is precisely the observed shape.
+
+Two possibilities, opposite consequences:
+
+- **Correction is right** → Path to Intermediate is a failing program where half of sessions ran empty. Significant operator finding. Proceed.
+- **Filter is wrong** → `event_fill` is now corrupted in a new way, every archetype median is suspect, and the backfill must be re-run before anything uses it.
+
+A backtest built on bad fill data is just a faster way to reach wrong conclusions. Hence the gate.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** Do not build code that cancels, patches, or sends — not behind a flag, not commented out.
+
+**3. No messaging.** `programming_notifications` stays empty.
+
+**4. Supabase writes** limited to `event_fill` (only if Item 1 concludes a re-backfill is needed) and `programming_rules`. Do not modify rows or schema in `players`, `attendances`, `messages`, `conversations`, or any other existing table.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+**Item 1 must complete and be reported before Item 2 begins.**
+
+- If Item 1 concludes the filter is **wrong**: stop. Do not start Item 2. Report the finding, the corrected status list, and what a re-backfill would involve. Getting the foundation right is the whole job in that case.
+- If Item 1 confirms the correction is **right**: proceed to Items 2 and 3.
+- If Item 1 is **ambiguous**: stop and report. Do not proceed on a guess.
+
+---
+
+## Item 1 — Verify the Path to Intermediate collapse
+
+**1a. Identify the events.** List all `event_fill` rows for Path to Intermediate where the corrected count is 0. Report event IDs, names, start dates, and both the pre-correction and post-correction counts.
+
+**1b. Pull raw signup data.** For **at least 5** of those zero-count events, call:
+
+```
+GET /events/{eventId}/signups?includeCanceled=true
+```
+
+For each event report:
+- total signups returned
+- **the exact distribution of raw `status` values** — verbatim strings, not bucketed
+- the same for `type` and `mode`
+- whether any signup carries a status outside the set `{DRAFT, INVALID, PENDING, CONFIRMED, CANCELED, REQUIRES_AUTHENTICATION, PROCESSING}`
+
+Do not summarize into "all cancelled." Print the actual values.
+
+**1c. Compare against a healthy archetype.** Run the same query against 3 past events from an archetype that did **not** move — 60&60 Drill & Play or Learn to Play — and report the same status distributions. If completed sessions in a healthy archetype show a status that Path to Intermediate's zero-count events lack (or vice versa), that difference is the answer.
+
+**1d. Cross-check against local attendance.** For the same events, count rows in `attendances`. Local attendance is populated from the sync and represents people who actually signed up.
+
+**This is the decisive test.** If an event has attendance rows locally but zero active signups per the filter, real participation is being dropped and the filter is wrong. Report the comparison per event as a table.
+
+**1e. Verdict.** State one of:
+- **CORRECTION IS RIGHT** — those sessions genuinely had zero active participants. Include the evidence.
+- **FILTER IS WRONG** — specify which status values are being wrongly excluded, and what the corrected exclusion list should be.
+- **AMBIGUOUS** — state exactly what is unresolved.
+
+If FILTER IS WRONG or AMBIGUOUS: **stop here.** Do not proceed to Item 2.
+
+**STATUS:**
+
+---
+
+## Item 2 — Rebuild the backtest on reconstructed counts
+
+*Only if Item 1 concluded CORRECTION IS RIGHT.*
+
+The current backtest approximates signup-count-at-offset using each event's **final** count. That doesn't under-report — it inverts the result. Every event is scored as though it had full enrollment at the checkpoint, so nothing ever falls below threshold and the false-positive rate comes out near zero for any rule tested. The entire value of a backtest is measuring the gap between count-at-offset and final count.
+
+**2a. Reconstruct properly.** Use `attendances.booked_at` against event start time. This is the same reconstruction Phase 0.6 performed successfully — port that approach rather than inventing a new one.
+
+For each historical event and each checkpoint offset, count attendance rows where `booked_at <= event_start - offset_hours`.
+
+**2b. Handle missing data explicitly.** `booked_at` coverage is bimodal — many events at 100%, many near zero. Compute **per-event** coverage, not global. Exclude events under 90% and report how many were excluded and why. Do not silently treat a NULL `booked_at` as "booked early" or "booked late" — exclude the event.
+
+**2c. Report `n` and uncertainty honestly.** Median usable rows per event has historically been ~4, which quantizes fractions badly (a 3-row event can only produce 0, 0.33, 0.67, 1.0). If that is still true post-sync, percentages carry roughly ±5–10 points and must be presented that way — not to three decimals. Report the median usable rows per event alongside every percentage.
+
+**2d. Output per rule spec:**
+- events evaluated, events excluded for coverage (with the reason)
+- per checkpoint: triggered, true positives, false positives, FP rate
+- segmented by program type — Clinic vs Open Play is expected to differ sharply
+- a per-event detail list: name, date, count at offset, final count, would-fire, actual outcome
+
+**2e. Validate against a known case.** Run the seeded mirror rule (N=4, T-3h, Off-Peak Open Play) and compare the FP rate to the Phase 0.6 figure of ~44% at N=4/T-3h on clean data. They won't match exactly — different data window, corrected fill — but they should be in the same neighborhood. **If the new backtest returns a near-zero FP rate, the reconstruction is still broken.** Say so rather than reporting the number.
+
+**STATUS:**
+
+---
+
+## Item 3 — Threshold sweep
+
+*Only if Item 2 produced credible numbers.*
+
+Run the corrected backtest across a grid and report the full table:
+
+- offsets: 2h, 3h, 4h, 6h, 12h, 24h
+- thresholds N: 2 through 8
+- segmented by program type
+
+For each cell: events triggered, false positives, FP rate, true positives.
+
+Then answer directly:
+
+1. **At PodPlay's live config (N=4, T-3h) — what is the actual false-positive rate?** This is the number that decides whether native config gets cleared. It is currently armed on 181 upcoming events.
+2. **What threshold and offset minimize false positives while still catching genuinely dead sessions?** Per program type, not globally.
+3. **Do Clinics and Open Play need different rules?** Phase 0.6 found Clinics at p50=1.000 fill by T-2h versus Open Play at 0.500. Does that hold on corrected data?
+
+Save the full grid to `/tmp/phase22/threshold-sweep.csv`.
+
+No UI work this phase. The grid is a report, not a screen.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED | NOT STARTED (gated)
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **The Item 1 verdict**, in one line, with the evidence that decided it.
+2. **FP rate at N=4 / T-3h on corrected, properly-reconstructed data** — or an explicit statement that it could not be computed and why.
+3. **Recommended rules per program type**, with the numbers supporting each.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; no execution path built; evaluator not wired to any timer.**

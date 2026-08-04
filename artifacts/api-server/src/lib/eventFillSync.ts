@@ -4,7 +4,15 @@
  *
  * fill_rate = activeSignups / totalTeams
  *   - numerator:   active signup count from GET /events/{id}/signups
- *                  (status NOT IN CANCELED, INVALID, DRAFT — keeps PENDING + CONFIRMED)
+ *                  (status NOT IN CANCELED, DRAFT — keeps PENDING, CONFIRMED, and INVALID)
+ *
+ * NOTE: INVALID is retained because series/package clinic enrollments (e.g.
+ * Path to Intermediate multi-session passes) land in INVALID status instead of
+ * CONFIRMED on PodPlay. Excluding INVALID drops real participants for those
+ * programs. Local attendance rows confirm real participation for those events.
+ * CANCELED is the correct signal for a withdrawn booking; DRAFT is an
+ * incomplete/unpublished entry. Neither INVALID nor the participant statuses
+ * PENDING/CONFIRMED should be excluded.
  *   - denominator: totalTeams (seat count — do NOT multiply by teamSize)
  *
  * NOTE: signups._total from the event detail includes all statuses and
@@ -113,7 +121,7 @@ async function fetchActiveSignupCount(
   apiKey: string,
   eventId: string,
 ): Promise<number> {
-  const INACTIVE = new Set(["CANCELED", "INVALID", "DRAFT"]);
+  const INACTIVE = new Set(["CANCELED", "DRAFT"]); // INVALID kept: series clinic passes land here
   let active = 0;
   let page   = 1;
   while (true) {

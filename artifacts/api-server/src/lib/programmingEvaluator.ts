@@ -64,7 +64,11 @@ export interface EvaluatorStats {
   errors: number;
 }
 
-const INACTIVE_STATUSES = new Set(["CANCELED", "INVALID", "DRAFT"]);
+// INVALID is intentionally kept active: series/package clinic enrollments
+// (e.g. Path to Intermediate multi-session passes) land in INVALID status on
+// PodPlay instead of CONFIRMED. Excluding INVALID drops real participants.
+// Local attendance rows confirm real participation for those events (Phase 2.2).
+const INACTIVE_STATUSES = new Set(["CANCELED", "DRAFT"]);
 const LOOKAHEAD_HOURS = 96; // evaluate events starting within 96 hours
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
