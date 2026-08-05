@@ -453,9 +453,10 @@ router.get("/programming/backfill-fill/status", (_req, res) => {
 //      → local attendance systematically undercounts PodPlay for this type
 //      (identified as series-pass clinics; reported separately).
 //
-// NOTE: keywords and podplay_types matching requires the event name/type,
-// which is not stored in event_fill. Only archetype_ids filter is applied.
-// See task #9 for full rule-matching support.
+// All three match_rules filter types are supported when migration 005 has
+// been applied (adds event_name + podplay_type columns to event_fill).
+// Pre-migration: keywords and podplay_types filters are skipped with a
+// migration_required_note in the response; archetype_ids still applied.
 //
 // Body: {
 //   clubId: string,
@@ -498,23 +499,51 @@ router.post("/programming/backtest", async (req, res) => {
     const nowIso = new Date().toISOString();
 
     // ── 1. Load event_fill rows in window ──────────────────────────────────────
+    //
+    // Try to SELECT event_name + podplay_type (added in migration 005).
+    // Fall back to the pre-migration column set if those columns don't exist yet.
     let fillRows: any[] = [];
-    let fillPage = 0;
-    while (true) {
-      const { data, error } = await supabase
-        .from("event_fill")
-        .select("event_id, archetype_id, final_signups, total_teams, fill_rate, start_time")
-        .eq("club_id", clubId)
-        .eq("is_canceled", false)
-        .not("archetype_id", "is", null)
-        .gte("start_time", cutoff)
-        .lt("start_time",  nowIso)
-        .range(fillPage * 500, (fillPage + 1) * 500 - 1);
-      if (error) { res.status(500).json({ error: error.message }); return; }
-      if (!data?.length) break;
-      fillRows.push(...data);
-      if (data.length < 500) break;
-      fillPage++;
+    let metadataColumnsAvailable = true;
+
+    const runFillQuery = async (includeMetadata: boolean) => {
+      const cols = includeMetadata
+        ? "event_id, archetype_id, final_signups, total_teams, fill_rate, start_time, event_name, podplay_type"
+        : "event_id, archetype_id, final_signups, total_teams, fill_rate, start_time";
+      let page = 0;
+      const rows: any[] = [];
+      while (true) {
+        const { data, error } = await supabase
+          .from("event_fill")
+          .select(cols)
+          .eq("club_id", clubId)
+          .eq("is_canceled", false)
+          .not("archetype_id", "is", null)
+          .gte("start_time", cutoff)
+          .lt("start_time",  nowIso)
+          .range(page * 500, (page + 1) * 500 - 1);
+        if (error) throw error;
+        if (!data?.length) break;
+        rows.push(...data);
+        if (data.length < 500) break;
+        page++;
+      }
+      return rows;
+    };
+
+    try {
+      fillRows = await runFillQuery(true);
+    } catch (err: any) {
+      if (err?.message?.includes("does not exist")) {
+        // Migration 005 not yet applied — columns not available
+        metadataColumnsAvailable = false;
+        try {
+          fillRows = await runFillQuery(false);
+        } catch (err2: any) {
+          res.status(500).json({ error: err2.message }); return;
+        }
+      } else {
+        res.status(500).json({ error: err.message }); return;
+      }
     }
 
     // ── 2. Load archetype names ────────────────────────────────────────────────
@@ -631,8 +660,6 @@ router.post("/programming/backtest", async (req, res) => {
     // threshold applied on top of the first, not a real cancellation outcome.
 
     const checkpointResults: any[] = [];
-    const keywordsWarn = (rule.match_rules.keywords?.length ?? 0) > 0
-      || (rule.match_rules.podplay_types?.length ?? 0) > 0;
 
     for (const cp of rule.checkpoints) {
       let evaluated = 0, wouldFire = 0, tp = 0, fp = 0, fn = 0, tn = 0;
@@ -644,10 +671,17 @@ router.post("/programming/backtest", async (req, res) => {
       const usableRowCounts: number[] = [];
 
       for (const fill of fillRows) {
-        // Match — archetype_ids only; keywords/podplay_types require event
-        // name/type not stored in event_fill (task #9)
+        // Match against all three filter types.
+        // event_name and podplay_type require migration 005; when unavailable
+        // (metadataColumnsAvailable=false) those filters are skipped and a
+        // migration_required_note is included in the response.
         const mr = rule.match_rules;
         if (mr.archetype_ids?.length && !mr.archetype_ids.includes(fill.archetype_id)) continue;
+        if (metadataColumnsAvailable && mr.keywords?.length) {
+          const name = ((fill.event_name as string | null) ?? "").toLowerCase();
+          if (!mr.keywords.some((kw: string) => name.includes(kw.toLowerCase()))) continue;
+        }
+        if (metadataColumnsAvailable && mr.podplay_types?.length && !mr.podplay_types.includes(fill.podplay_type as string)) continue;
 
         const archName = archetypeNames.get(fill.archetype_id) ?? "Unknown";
 
@@ -842,10 +876,12 @@ router.post("/programming/backtest", async (req, res) => {
       reconstruction_note:
         "signup_count_at_offset reconstructed from attendances.booked_at (member-tracked subset only). " +
         "Archetypes with median local/PodPlay ratio < 0.70 are excluded from checkpoint results.",
-      ...(keywordsWarn ? {
-        keywords_note:
-          "WARNING: keywords and podplay_types filters were NOT applied — " +
-          "event names are not stored in event_fill. Only archetype_ids matching used. See task #9.",
+      ...(!metadataColumnsAvailable ? {
+        migration_required_note:
+          "Migration 005 (event_fill: event_name, podplay_type) has not been applied. " +
+          "keywords and podplay_types filters were skipped — only archetype_ids matching applied. " +
+          "Run artifacts/api-server/migrations/005_event_fill_columns.sql in the Supabase SQL editor, " +
+          "then run the backfill script (src/scripts/backfillEventFillMetadata.ts).",
       } : {}),
       ...(validationWarning ? { validation_warning: validationWarning } : {}),
       checkpoints: checkpointResults,

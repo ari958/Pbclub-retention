@@ -275,6 +275,8 @@ export async function syncEventFill(
           is_daily_peak:  isDailyPeak(ev.startTime),
           is_peak_season: isPeakSeason(ev.startTime),
           is_canceled:   true,
+          event_name:    ev.name ?? null,
+          podplay_type:  ev.customType ?? null,
           fetched_at:    fetchedAt,
         }, { onConflict: "event_id" });
         await sleep(sleepMs);
@@ -325,6 +327,8 @@ export async function syncEventFill(
           is_daily_peak:  dp,
           is_peak_season: ps,
           is_canceled:   false,
+          event_name:    ev.name ?? null,
+          podplay_type:  ev.customType ?? null,
           fetched_at:    fetchedAt,
         },
         { onConflict: "event_id" },
