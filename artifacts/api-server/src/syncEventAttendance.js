@@ -1,5 +1,6 @@
 import { createClient } from "@supabase/supabase-js";
 import { computePlayerTiming } from "./lib/playerTiming.js";
+import { ATTENDANCE_SIGNUP_STATUSES } from "./lib/signupStatus.js";
 
 let _supabase = null;
 function getSupabase() {
@@ -150,14 +151,17 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
 }
 
 // Signups with these statuses are written as attendance rows for tracked members.
-// ⚠  INVALID is intentionally absent here — it SHOULD be included to capture
-//    series-pass clinic participants (Path to Intermediate etc.) whose signups
-//    land in INVALID status after the session runs. Omitting it is why those
-//    events show 2-3 local attendance rows instead of the full 4 PodPlay
-//    signups (Phase 2.2 finding). This is a known gap; fixing it requires a
-//    separate decision on whether to re-sync historical clinic attendance.
-//    See signupStatus.ts and the INACTIVE_SIGNUP_STATUSES note there.
-const VALID_SIGNUP_STATUSES = new Set(["CONFIRMED", "CHECKED_IN"]);
+// CONFIRMED  = standard single-session post-event settlement
+// CHECKED_IN = member scanned at the door
+// INVALID    = series-pass clinic enrollment (Path to Intermediate, etc.) — PodPlay
+//              settles multi-session series bookings as INVALID after each session
+//              runs. These are real participants; excluding INVALID caused every
+//              P2I event to show 0–2 local rows vs 4 PodPlay signups (Phase 2.2).
+// Imported from signupStatus.ts — do not add a fourth literal here.
+// See ATTENDANCE_SIGNUP_STATUSES in signupStatus.ts for full rationale and the
+// distinction from INACTIVE_SIGNUP_STATUSES (fill-rate counting) which must
+// never include INVALID as an exclusion.
+const VALID_SIGNUP_STATUSES = ATTENDANCE_SIGNUP_STATUSES;
 
 // ─── Main sync ────────────────────────────────────────────────────────────────
 

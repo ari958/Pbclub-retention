@@ -616,6 +616,20 @@ router.post("/programming/backtest", async (req, res) => {
     }
 
     // ── 5. Per-checkpoint reconstruction and TP/FP classification ─────────────
+    //
+    // Ground truth (Phase 2.4):
+    //   - Already-cancelled events are EXCLUDED from scoring. Their final_signups
+    //     is truncated by the cancellation itself, so they cannot be scored as TP
+    //     or FP — that would assume the cancellation was correct, which is exactly
+    //     what the backtest is trying to determine.
+    //   - False positive: would-fire AND final_signups >= min_signups
+    //     (the rule would have cancelled a session that reached threshold)
+    //   - True positive:  would-fire AND final_signups <  min_signups
+    //     (the rule correctly identified a session that stayed under threshold)
+    //
+    // Replaces Phase 2.3 proxy (fill_rate < 0.5) which was an arbitrary second
+    // threshold applied on top of the first, not a real cancellation outcome.
+
     const checkpointResults: any[] = [];
     const keywordsWarn = (rule.match_rules.keywords?.length ?? 0) > 0
       || (rule.match_rules.podplay_types?.length ?? 0) > 0;
@@ -623,6 +637,7 @@ router.post("/programming/backtest", async (req, res) => {
     for (const cp of rule.checkpoints) {
       let evaluated = 0, wouldFire = 0, tp = 0, fp = 0;
       let skippedCoverage = 0, skippedUndercount = 0, skippedNoData = 0;
+      let skippedAlreadyCancelled = 0;
       const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
       const eventDetails: any[] = [];
       const usableRowCounts: number[] = [];
@@ -651,35 +666,50 @@ router.post("/programming/backtest", async (req, res) => {
         const startMs  = new Date(fill.start_time as string).getTime();
         const cutoffMs = startMs - cp.offset_hours * 3_600_000;
         const signupAtOffset = att.times.filter((t) => t <= cutoffMs).length;
-        usableRowCounts.push(att.total);
 
         const fires = signupAtOffset < cp.min_signups;
-        // Outcome proxy: final fill_rate < 0.5 → session was genuinely at risk.
-        // Ground truth would be the actual cancellation outcome — see task #10.
-        const actuallyAtRisk = fill.fill_rate !== null && (fill.fill_rate as number) < 0.5;
+
+        // Ground truth: final active signup count vs. threshold.
+        // Exclude events that were already cancelled — their truncated final count
+        // cannot be scored as TP or FP (is_canceled is already filtered in query
+        // above, so this is a belt-and-suspenders guard using final_signups null).
+        // A final_signups of null means we have no outcome data.
+        if (fill.final_signups === null || fill.final_signups === undefined) {
+          skippedAlreadyCancelled++;
+          continue;
+        }
+
+        usableRowCounts.push(att.total);
+
+        // FP: would fire AND final count reached threshold (rule would have
+        //     cancelled a session that ended up fine)
+        // TP: would fire AND final count stayed below threshold (correctly spotted
+        //     a genuinely under-enrolled session)
+        const finalCount    = fill.final_signups as number;
+        const truePositive  = fires && finalCount <  cp.min_signups;
+        const falsePositive = fires && finalCount >= cp.min_signups;
 
         if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
         const ab = byArchetype[archName];
         evaluated++; ab.evaluated++;
         if (fires) {
           wouldFire++; ab.wouldFire++;
-          if (actuallyAtRisk) { tp++; ab.tp++; }
-          else                { fp++; ab.fp++; }
+          if (truePositive)  { tp++; ab.tp++; }
+          if (falsePositive) { fp++; ab.fp++; }
         }
 
         if (includeEventDetails) {
           eventDetails.push({
-            event_id:          fill.event_id,
-            program_name:      att.programName ?? archName,
-            date:              (fill.start_time as string)?.slice(0, 10) ?? null,
-            archetype:         archName,
-            count_at_offset:   signupAtOffset,
-            final_signups:     fill.final_signups,
+            event_id:           fill.event_id,
+            program_name:       att.programName ?? archName,
+            date:               (fill.start_time as string)?.slice(0, 10) ?? null,
+            archetype:          archName,
+            count_at_offset:    signupAtOffset,
+            final_signups:      finalCount,
             booked_at_coverage: Math.round(coverage * 1000) / 1000,
-            would_fire:        fires,
-            outcome_at_risk:   actuallyAtRisk,
-            is_tp:             fires && actuallyAtRisk,
-            is_fp:             fires && !actuallyAtRisk,
+            would_fire:         fires,
+            is_tp:              truePositive,
+            is_fp:              falsePositive,
           });
         }
       }
@@ -703,6 +733,7 @@ router.post("/programming/backtest", async (req, res) => {
         skipped_low_coverage: skippedCoverage,
         skipped_undercount:   skippedUndercount,
         skipped_no_data:      skippedNoData,
+        skipped_already_cancelled: skippedAlreadyCancelled,
         fire_rate:   evaluated > 0 ? Math.round(wouldFire / evaluated * 1000) / 1000 : null,
         fp_rate:     wouldFire  > 0 ? Math.round(fp / wouldFire  * 1000) / 1000 : null,
         median_usable_rows: medUR,
@@ -716,6 +747,11 @@ router.post("/programming/backtest", async (req, res) => {
       days,
       total_events_in_window: fillRows.length,
       archetype_coverage:     archetypeCoverage,
+      outcome_definition:
+        "Ground truth (Phase 2.4): FP = would-fire AND final_signups >= min_signups; " +
+        "TP = would-fire AND final_signups < min_signups. " +
+        "Already-cancelled events excluded (final count truncated by cancellation cannot score either). " +
+        "Replaces Phase 2.3 fill_rate < 0.5 proxy.",
       reconstruction_note:
         "signup_count_at_offset reconstructed from attendances.booked_at (member-tracked subset only). " +
         "Archetypes with median local/PodPlay ratio < 0.70 are excluded from checkpoint results.",

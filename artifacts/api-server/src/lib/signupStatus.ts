@@ -38,3 +38,24 @@ export const INACTIVE_SIGNUP_STATUSES = new Set(["CANCELED", "DRAFT"]);
 /** Returns true if a signup status represents a real, countable participant. */
 export const isActiveSignup = (status: string): boolean =>
   !INACTIVE_SIGNUP_STATUSES.has(status);
+
+/**
+ * Statuses that produce an attendance row in the local `attendances` table.
+ *
+ * Note on INVALID: PodPlay settles series-pass clinic enrollments (e.g. Path
+ * to Intermediate) as INVALID after the session runs, not CONFIRMED.  These
+ * are real participants — see signupStatus.ts Phase 2.2 rationale.
+ *
+ * ⚠  This set is deliberately different from INACTIVE_SIGNUP_STATUSES:
+ *     INACTIVE_SIGNUP_STATUSES = statuses to *exclude* from fill counting
+ *     ATTENDANCE_SIGNUP_STATUSES = statuses to *include* when creating
+ *       attendance rows in the local database
+ *
+ * If you need to add or remove a status, update both sets with full
+ * reasoning — they are not complements of each other.
+ */
+export const ATTENDANCE_SIGNUP_STATUSES = new Set([
+  "CONFIRMED",   // standard single-session post-event status
+  "CHECKED_IN",  // member scanned in at door
+  "INVALID",     // series-pass clinic enrollment (Path to Intermediate, etc.)
+]);

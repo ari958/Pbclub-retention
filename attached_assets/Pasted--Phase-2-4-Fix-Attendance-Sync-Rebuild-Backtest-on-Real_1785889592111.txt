@@ -1,0 +1,156 @@
+# Phase 2.4 — Fix Attendance Sync, Rebuild Backtest on Real Ground Truth
+
+**Mode:** Build. No execution path — nothing here can cancel an event, message anyone, or write to PodPlay.
+**Scope:** 3 items, sequential. Item 1 must complete and re-sync before Item 2 runs.
+
+---
+
+## Context
+
+Phase 2.3 delivered a working reconstruction, but the resulting numbers are not yet trustworthy for two reasons — one a data defect, one a definitional one.
+
+**1. The attendance sync drops series-clinic participants.** `syncEventAttendance.js:152` uses `VALID_SIGNUP_STATUSES = {CONFIRMED, CHECKED_IN}`. Phase 2.2 established that `INVALID` marks **completed multi-session series-pass enrollments** — real participants. This is the same bug fixed in `eventFillSync.ts` and `programmingEvaluator.ts`, one layer deeper: it means `attendances` rows were never created for series-clinic participants at all. Spot-checks showed 2 local rows against 4 PodPlay signups.
+
+The backtest reconstructs enrollment-at-offset from `attendances.booked_at`, so this undercount feeds directly into every number it produces.
+
+**2. The "true positive" definition is a proxy, not an outcome.** The current backtest scores a fire as correct when `fill_rate < 0.5`. That measures the rule against a second arbitrary rule, not against reality. A session that reached 5 of 12 and ran fine is counted as correctly cancelled.
+
+Real ground truth is available and directly computable: **a false positive is a session the rule would have cancelled that reached the threshold by start time.** That's the Phase 0.6 definition and it needs no proxy.
+
+Both defects push the same direction — inflating apparent false positives — so the Phase 2.3 grids (56.6% Open Play, 90.2% Clinics at N=4/T-3h) are upper bounds of unknown tightness. The Clinic-vs-Open-Play *separation* is trustworthy (both segments carry the same bias, and 41pp is far outside both bands). The *absolute levels* are not, and must not inform a threshold change or go in front of stakeholders until this phase closes.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels, patches, or sends — not behind a flag, not commented out.
+
+**3. No messaging.** `programming_notifications` stays empty.
+
+**4. Supabase writes** limited to `attendances` (via the existing sync path in Item 1) and `event_fill` (if the re-sync changes inputs). Do not modify rows or schema in `players`, `messages`, `conversations`, or any other table.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Item 1 must complete, including the re-sync and its verification, before Item 2 begins. A backtest on unfixed attendance data reproduces the same problem with more decimal places.
+
+Stop and report if:
+- The re-sync changes row counts far beyond the expected scope (report before proceeding)
+- Item 2's validation (2d) fails
+- Any item would require a PodPlay write or an execution path
+
+---
+
+## Item 1 — Fix the attendance sync filter and re-sync
+
+**1a. Read first.** Open `syncEventAttendance.js` around line 152 and report how `VALID_SIGNUP_STATUSES` is used: which rows it gates, what happens to a signup that fails the check, and whether anything downstream assumes only `CONFIRMED`/`CHECKED_IN` rows exist.
+
+**1b. Assess the blast radius before changing anything.** Adding `INVALID` means new attendance rows for series-clinic participants. Check:
+- Does any code path treat an `attendances` row as proof of physical attendance rather than enrollment? If so, adding `INVALID` rows changes its meaning. Report anything affected — `churnScore.ts`, `milestoneCheck.ts`, `warmScore.ts`, `playerTiming.ts`, `last_visit_date` derivation.
+- **`players.last_visit_date` is derived from `MAX(attendances.attended_at)`.** New rows will move it for series-clinic players, which changes `engagement_state` and therefore Pulse's agent behavior. Report how many players are affected and by how much.
+
+If the blast radius extends beyond enrollment counting in a way that looks risky, **stop and report** rather than proceeding.
+
+**1c. Apply the fix.** Add `INVALID` to `VALID_SIGNUP_STATUSES`. Import the shared constant from `src/lib/signupStatus.ts` rather than adding a third literal — note that this is a *different* set from `INACTIVE_SIGNUP_STATUSES` (attendance creation vs. fill counting), so either export a second named constant or document clearly why they differ. Do not conflate them.
+
+Add a comment recording that `INVALID` means completed series-pass enrollment.
+
+**1d. Dry-run the re-sync.** Report how many new attendance rows would be created, broken down by program type and by month. Series clinics should account for essentially all of them. If Open Play gains a significant number of rows, something else is going on — report before applying.
+
+**1e. Apply.** Re-sync the last 120 days. The upsert is `ignoreDuplicates: true`, so existing rows are untouched and this is additive only.
+
+**1f. Verify.** For the 7 Path to Intermediate events from Phase 2.2 (`a61a71f5`, `6b46a85a`, `33d7532b`, `02a1c1a9`, `3a72882b`, `e6ef9670`, `9f9d752f`), report local attendance row count against live PodPlay active signup count. They should now match. Report any that don't.
+
+Then re-run the per-archetype local-vs-PodPlay ratio from Phase 2.3 Item 2c and report the before/after table.
+
+**1g. Report `last_visit_date` movement** — how many players changed, and how many changed `engagement_state` bucket as a result.
+
+**STATUS:**
+
+---
+
+## Item 2 — Rebuild the backtest on real cancellation outcomes
+
+**2a. Replace the outcome definition.** Remove the `fill_rate < 0.5` proxy entirely. Ground truth per event:
+
+- **Would-fire:** reconstructed enrollment at the checkpoint offset < N
+- **Actual outcome:** the event's final active signup count (from `event_fill`, corrected), and its `isCanceled` status
+- **False positive:** would-fire AND final count ≥ N — the rule would have killed a session that reached threshold
+- **True positive:** would-fire AND final count < N
+
+Events already cancelled in reality need explicit handling: their final count is truncated by the cancellation, so they can't be scored as either. **Exclude them and report the count separately.** Do not score them as true positives — that assumes the cancellation was correct, which is the thing under test.
+
+**2b. Keep the existing coverage gates.** Per-event `booked_at` coverage ≥ 90%; report exclusions. Per-archetype local-vs-PodPlay ratio check with a stated floor; report any archetype excluded and why. Both should behave better after Item 1.
+
+**2c. Report residual undercount.** Even after the fix, `attendances` may lag PodPlay for very recent bookings or unmatched signups — the last sync logged 97 unmatched. Quantify what remains: on a sample of past events, the ratio of local rows to PodPlay active count, and specifically how many bookings land inside the final 3 hours and would be invisible at a T-3h checkpoint.
+
+**This is the number that bounds the whole result.** State it prominently rather than in a footnote.
+
+**2d. Validate.** Re-run Social Open Play at N=4/T-3h.
+
+Expect the FP rate to come in **below** Phase 2.3's 56.6%, since both fixes removed sources of inflation. If it comes back higher, something is wrong — report rather than proceeding.
+
+Also confirm it is not near zero. Near-zero was the signature of the original broken approximation.
+
+**2e. Report `n` and uncertainty** as before: median usable rows per event alongside every percentage, presented with the resulting band rather than to three decimals.
+
+**STATUS:**
+
+---
+
+## Item 3 — Re-run the threshold sweep
+
+Same grid as Phase 2.3, on corrected data and real ground truth:
+
+- offsets: 2h, 3h, 4h, 6h, 12h, 24h
+- thresholds N: 2 through 8
+- segmented by Open Play vs Clinics
+
+Per cell: events evaluated, triggered, TP, FP, FP rate.
+
+Then answer:
+
+1. **FP rate at N=4/T-3h** — PodPlay's live config, now on real ground truth. Report Open Play and Clinics separately.
+2. **How much did the numbers move** from Phase 2.3 (Open Play 56.6%, Clinics 90.2%)? A large move means the prior grids were badly biased and should be marked superseded.
+3. **Does the Clinic/Open Play separation hold?** It was 41pp in Phase 2.3, far outside both bands. Confirm or revise.
+4. **Recommended threshold and offset per program type**, with the supporting numbers and honest uncertainty.
+5. **Is the FP rate now low enough to justify clearing native config**, or does the live baseline stay armed?
+
+Save to `/tmp/phase24/threshold-sweep.csv`. Mark the Phase 2.3 grid superseded in the report.
+
+No UI work.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Attendance rows added** by the sync fix, and whether the 7 P2I events now reconcile.
+2. **`last_visit_date` / `engagement_state` movement** — how many players, how many bucket changes.
+3. **FP rate at N=4/T-3h on real ground truth**, per program type, with uncertainty band.
+4. **Residual undercount** — the bound on the whole result.
+5. **Native config recommendation** — clear it, retune it, or leave it, with the number behind the call.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; no execution path built; evaluator not wired to any timer.**
