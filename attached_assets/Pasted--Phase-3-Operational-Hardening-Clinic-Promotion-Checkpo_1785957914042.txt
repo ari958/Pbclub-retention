@@ -1,0 +1,187 @@
+# Phase 3 — Operational Hardening + Clinic Promotion Checkpoint
+
+**Mode:** Build. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 5 items. Items 1–3 are operational fixes and must land first. Items 4–5 build the promotion checkpoint in shadow.
+
+---
+
+## Context
+
+The analysis phase is complete. Rules are decided by the operator:
+
+| Program type | Threshold | Offset | Rationale |
+|---|---|---|---|
+| **Open Play** | N=4 | T-2h | Members commute; 2h is fair warning. Also the point where enrollment is most predictive (r²=0.72 vs 0.62 at T-3h). |
+| **Clinics** | N=2 | T-2h | Deliberately conservative — a 3-person clinic still works. Cancels only genuinely dead sessions (~4/month of 19). |
+
+Both are stricter than what PodPlay currently runs live (N=4/T-3h on 11 events, including some clinics).
+
+**New requirement — clinic promotion checkpoint.** Clinics are ~100% enrolled by T-6h, with correlation already 0.87 at that point. A clinic sitting at 1 signup twelve hours out will almost certainly not fix itself, and cancelling at T-2h means eating the coach cost anyway. So clinics get an **earlier promotion checkpoint** in the T-24h to T-12h window — where there's still time to fill the session and where the outcome is already largely visible.
+
+This is the opposite of open play, where an early look tells you almost nothing.
+
+**Important:** promotion in this phase is **shadow only**. The system identifies at-risk clinics and builds a candidate audience. It does not send. Sending is irreversible in a way cancellation isn't — a bad cancellation affects the few people booked; a bad promotion text reaches fifty people who didn't ask for it.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels or patches — not behind a flag, not commented out.
+
+**3. No sending. At all.** No Twilio calls, no email calls, no writes to `messages`, no writes to `programming_notifications`. Item 5 produces a candidate list as data. It must not be wired to any send path.
+
+**4. Supabase writes** limited to: `jobs` (Item 1 schema change), `attendances` (Item 2 sync fix), `programming_rules`, and a new promotion candidates table (Item 5). Do not modify rows or schema in `players`, `messages`, `conversations`, or `event_fill`.
+
+**5. Never use `signups._total`** as a live count. Use the shared constants in `src/lib/signupStatus.ts`.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Items 1–3 before 4–5. A promotion system that silently stops running is worse than none — you'd assume clinics were being promoted when they weren't.
+
+Stop and report if any item would require a PodPlay write, a send, or an execution path.
+
+---
+
+## Item 1 — Job heartbeat and stale reclaim
+
+The Phase 2.4 sync crashed mid-run, left `jobs.status = 'running'`, and blocked re-triggering until the row was manually edited via SQL. This fails silently and will recur — critically once the scheduler runs unattended.
+
+Implement the fix proposed in Phase 2.5 §3a:
+
+**1a.** Add `last_heartbeat timestamptz` to `jobs`. If DDL can't be executed from code, output the SQL as a copy-paste block and mark BLOCKED pending manual run.
+
+**1b.** Update the heartbeat every ~30 seconds during long-running loops — at minimum in `syncEventAttendance.js`'s event loop and the `last_visit_date` update loop, both of which run for minutes.
+
+**1c.** Add `reclaimStaleJobs(thresholdMinutes = 5)` to `jobStore.ts`: any job with `status = 'running'` and `last_heartbeat` older than the threshold gets `status = 'error'`, `error = 'stale: no heartbeat'`. Call it at the top of `startJob()` and from the status endpoint, so checking status or retrying a trigger reclaims automatically.
+
+**1d.** Guard against a false reclaim on a job that is legitimately slow but alive — the heartbeat must update often enough that 5 minutes of silence genuinely means death. Report the longest gap between heartbeats in a real sync run.
+
+**1e.** Test: start a sync, kill the process mid-run, confirm the next status check reclaims it and a re-trigger succeeds without manual intervention.
+
+**STATUS:**
+
+---
+
+## Item 2 — Batch dedup and `club_id` on insert
+
+Two defects in `syncEventAttendance.js`, both identified in Phase 2.5 §4.
+
+**2a. Batch dedup.** Since the `INVALID` fix, a player holding both a `CONFIRMED` and an `INVALID` signup for the same event produces two rows with the same `(player_id, event_id)` in one batch. `ON CONFLICT DO NOTHING` handles conflicts against *existing* rows but not duplicates *within* the incoming batch, so the statement fails — 13 silent errors in the last full sync, 5 in the prior incremental.
+
+Deduplicate `pendingUpserts` by `(player_id, event_id)` before flush, preferring `CONFIRMED`/`CHECKED_IN` over `INVALID`.
+
+**2b. `club_id` on insert.** The Phase 2.5 backfill set `club_id` on all 7,884 existing rows, but the upsert row object still omits it, so new rows will accumulate as NULL again. Add it.
+
+**2c. Verify.** Run an incremental sync and confirm zero upsert errors and zero new NULL `club_id` rows. Report both counts.
+
+**STATUS:**
+
+---
+
+## Item 3 — Seed the decided rules
+
+Replace the Phase 2.1 mirror rule with the two operator-decided rules.
+
+**Open Play**
+```
+name:           "Open Play — cancel"
+enabled:        true
+mode:           "shadow"
+match_priority: 100
+match_rules:    Open Play program types
+checkpoints:    [ { offset_hours: 2, min_signups: 4, action: "CANCEL" } ]
+```
+
+**Clinics**
+```
+name:           "Clinics — cancel"
+enabled:        true
+mode:           "shadow"
+match_priority: 100
+match_rules:    Clinic program types
+checkpoints:    [ { offset_hours: 2, min_signups: 2, action: "CANCEL" } ]
+```
+
+Report the `match_rules` written for each and **how many upcoming events each matches**. If either matches zero or matches everything, the conditions are wrong — fix before proceeding.
+
+Retire or disable the old mirror rule; don't leave two rules competing for the same events.
+
+**STATUS:**
+
+---
+
+## Item 4 — Promotion checkpoint (detection only)
+
+Add a `PROMOTE` checkpoint to the Clinics rule at **T-18h** (inside the T-24h–T-12h window), firing when signups are below a promotion threshold.
+
+**4a. Pick the promotion threshold from data.** Cancellation fires at N=2. Promotion should fire earlier and wider — a clinic at 3 signups is worth filling even though it won't be cancelled. Run the backtest at T-18h across N=2–6 for clinics and report fire rate and precision, where "correct" means the session ended below its capacity and had room worth filling. **Recommend a threshold with the supporting numbers**; don't assume one.
+
+**4b. Extend the evaluator** to handle multiple checkpoints per rule with different actions. A `PROMOTE` decision writes a `programming_decisions` row with `decision = 'PROMOTE'` and takes no other action. Confirm the existing `(event_id, checkpoint_index)` unique constraint still gives correct idempotency with two checkpoints on one rule.
+
+**4c. Verify** that a clinic crossing T-18h below threshold writes a PROMOTE row, and crossing T-2h below N=2 later writes a separate CANCEL row. Two checkpoints, two rows, no duplicates.
+
+**STATUS:**
+
+---
+
+## Item 5 — Promotion audience (candidate list only, no sending)
+
+For each `PROMOTE` decision, build a ranked candidate list. **Data only. Nothing sends.**
+
+**5a. New table `promotion_candidates`:**
+- `id` uuid pk, `decision_id` fk → `programming_decisions`, `player_id` fk → `players`
+- `rank` int, `score` numeric, `reasons` jsonb — why this player was selected
+- `eligible` boolean, `ineligible_reason` text
+- **UNIQUE (decision_id, player_id)**
+- RLS + grants + timestamps per existing convention
+
+**5b. Filters, applied in order.** Report how many players each stage removes:
+
+1. **Level fit** — against the event's `admissionRating` (`minRating`/`maxRating`). Use `coach_assigned_level` where present, `level_confidence` otherwise. Never signup history alone — *enrollment ≠ readiness*.
+2. **Program affinity** — clinic familiarity tier and `warm_score`.
+3. **Slot fit** — `preferred_booking_dow` and `preferred_booking_hour`.
+4. **Reachability at this checkpoint** — at T-18h the reachable archetypes are `planner` and `early`. A `late` archetype (<0.5d lead) texted 18 hours out is a wasted send. Filter on `attendance_archetype`.
+5. **Already booked** — exclude anyone already signed up.
+6. **Consent** — SMS requires opt-in resolvable on the player row. Report how many candidates are SMS-reachable versus email-only.
+
+**5c. Do not target lapsing or dormant players.** A lapsing player's return is fragile; sending them to a half-empty clinic that may still be cancelled converts a lapsing player into a churned one. Fill at-risk sessions with `active` regulars. Mark lapsing/dormant candidates `eligible = false` with the reason recorded — the system should see engagement state and deliberately decline to use it.
+
+**5d. Buddy signal.** Cross-reference current signups against `buddy_pairs` and record in `reasons` when a candidate has a buddy already registered. Rank those higher — it's the strongest message you can send.
+
+**5e. Send budget awareness.** Report, per candidate, when they last received any message (from `messages`). Flag anyone contacted within the last 48 hours. **Do not implement suppression logic yet** — just surface the number so the shared-budget problem is visible before it becomes real.
+
+**5f. Report a worked example.** For one at-risk clinic, show the full funnel: total players → after each filter → final ranked list with reasons. This is what an operator would approve, so it needs to be legible.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Heartbeat verified?** Longest inter-heartbeat gap in a real run, and whether the kill test reclaimed cleanly.
+2. **Sync errors** — zero upsert errors and zero new NULL `club_id`?
+3. **Rules seeded** — how many upcoming events each matches.
+4. **Recommended promotion threshold** for clinics at T-18h, with numbers.
+5. **Worked promotion example** — the funnel for one clinic.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages` or `programming_notifications`; no execution path built; evaluator not wired to any timer.**
