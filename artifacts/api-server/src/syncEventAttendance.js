@@ -149,6 +149,14 @@ async function checkAndMarkWinback(playerId, attendedAt, log) {
   return true;
 }
 
+// Signups with these statuses are written as attendance rows for tracked members.
+// ⚠  INVALID is intentionally absent here — it SHOULD be included to capture
+//    series-pass clinic participants (Path to Intermediate etc.) whose signups
+//    land in INVALID status after the session runs. Omitting it is why those
+//    events show 2-3 local attendance rows instead of the full 4 PodPlay
+//    signups (Phase 2.2 finding). This is a known gap; fixing it requires a
+//    separate decision on whether to re-sync historical clinic attendance.
+//    See signupStatus.ts and the INACTIVE_SIGNUP_STATUSES note there.
 const VALID_SIGNUP_STATUSES = new Set(["CONFIRMED", "CHECKED_IN"]);
 
 // ─── Main sync ────────────────────────────────────────────────────────────────

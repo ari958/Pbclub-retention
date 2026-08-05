@@ -21,6 +21,7 @@
 import { supabase } from "./supabaseClient";
 import { loadArchetypes, classifyEvent } from "./classifyEvent";
 import { logger } from "./logger";
+import { INACTIVE_SIGNUP_STATUSES } from "./signupStatus";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -64,11 +65,6 @@ export interface EvaluatorStats {
   errors: number;
 }
 
-// INVALID is intentionally kept active: series/package clinic enrollments
-// (e.g. Path to Intermediate multi-session passes) land in INVALID status on
-// PodPlay instead of CONFIRMED. Excluding INVALID drops real participants.
-// Local attendance rows confirm real participation for those events (Phase 2.2).
-const INACTIVE_STATUSES = new Set(["CANCELED", "DRAFT"]);
 const LOOKAHEAD_HOURS = 96; // evaluate events starting within 96 hours
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -116,7 +112,7 @@ async function fetchUpcomingEvents(
   );
 }
 
-/** Fetch active signup count for one event (excludes CANCELED/INVALID/DRAFT). */
+/** Fetch active signup count for one event (excludes CANCELED/DRAFT; INVALID kept for series clinics). */
 export async function fetchActiveSignupCount(
   apiBase: string,
   apiKey: string,
@@ -132,7 +128,7 @@ export async function fetchActiveSignupCount(
     if (!res.ok) break;
     const body: any = await res.json();
     const items: any[] = body?.items ?? [];
-    active += items.filter((s) => !INACTIVE_STATUSES.has(s.status)).length;
+    active += items.filter((s) => !INACTIVE_SIGNUP_STATUSES.has(s.status)).length;
     if (items.length < 200) break;
     page++;
     await sleep(100);

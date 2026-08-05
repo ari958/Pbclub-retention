@@ -35,6 +35,7 @@ import {
   isPeakSeason,
 } from "./classifyEvent";
 import { logger } from "./logger";
+import { INACTIVE_SIGNUP_STATUSES } from "./signupStatus";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -109,7 +110,9 @@ async function fetchEvent(
  * Fetch the active signup count for one event.
  *
  * Calls GET /events/{id}/signups and counts registrants whose status is NOT
- * CANCELED, INVALID, or DRAFT.  This is the correct numerator for fill_rate.
+ * in INACTIVE_SIGNUP_STATUSES {CANCELED, DRAFT}. PENDING, CONFIRMED, and
+ * INVALID are all counted as active. See signupStatus.ts for the full
+ * rationale — in particular why INVALID must not be excluded.
  *
  * signups._total (from the event detail) includes cancelled registrants and
  * overcounts by a median of 0 but up to 4 per 25-event sample (Aug 2026).
@@ -121,7 +124,6 @@ async function fetchActiveSignupCount(
   apiKey: string,
   eventId: string,
 ): Promise<number> {
-  const INACTIVE = new Set(["CANCELED", "DRAFT"]); // INVALID kept: series clinic passes land here
   let active = 0;
   let page   = 1;
   while (true) {
@@ -132,7 +134,7 @@ async function fetchActiveSignupCount(
     if (!res.ok) break;
     const body: any = await res.json();
     const items: any[] = body?.items ?? [];
-    active += items.filter((s) => !INACTIVE.has(s.status)).length;
+    active += items.filter((s) => !INACTIVE_SIGNUP_STATUSES.has(s.status)).length;
     if (items.length < 200) break;
     page++;
   }
@@ -288,7 +290,8 @@ export async function syncEventFill(
         continue;
       }
 
-      // Use active signup count (PENDING + CONFIRMED only).
+      // Use active signup count (PENDING + CONFIRMED + INVALID).
+      // INVALID is retained for series-pass clinics — see signupStatus.ts.
       // This adds one extra API call per event but gives the correct numerator.
       const finalSignups = await fetchActiveSignupCount(apiBase, apiKey, eventId);
       const fillRate = finalSignups / totalTeams;

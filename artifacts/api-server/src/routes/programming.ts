@@ -301,7 +301,7 @@ router.get("/programming/upcoming-risk", async (req, res) => {
 // ── POST /api/programming/backfill-fill ───────────────────────────────────────
 //
 // Re-compute event_fill.final_signups / fill_rate for all existing rows using
-// active signup counts from PodPlay (excludes CANCELED/INVALID/DRAFT signups).
+// active signup counts from PodPlay (excludes CANCELED/DRAFT; INVALID kept for series clinics).
 // Body: { clubId: string, dryRun?: boolean }
 
 const BackfillBodySchema = z.object({
@@ -442,9 +442,20 @@ router.get("/programming/backfill-fill/status", (_req, res) => {
 
 // ── POST /api/programming/backtest ────────────────────────────────────────────
 //
-// Replay a candidate rule spec against historical event_fill rows.
-// Excludes events with <90% booked_at coverage in attendances.
-// Returns synchronously (may take 10–30s for 120d of data).
+// Replay a candidate rule spec against historical event_fill rows, using
+// attendances.booked_at to RECONSTRUCT the signup count at the checkpoint
+// offset rather than the final count (which inverts the signal: every event
+// looks fully enrolled by the end, so nothing fires and FP rate → 0).
+//
+// Exclusions applied:
+//   1. booked_at coverage < 90% for that event (not enough timestamp data).
+//   2. Archetype whose median local-attendance / PodPlay-signups ratio < 0.70
+//      → local attendance systematically undercounts PodPlay for this type
+//      (identified as series-pass clinics; reported separately).
+//
+// NOTE: keywords and podplay_types matching requires the event name/type,
+// which is not stored in event_fill. Only archetype_ids filter is applied.
+// See task #9 for full rule-matching support.
 //
 // Body: {
 //   clubId: string,
@@ -452,23 +463,25 @@ router.get("/programming/backfill-fill/status", (_req, res) => {
 //     match_rules: { archetype_ids?, keywords?, podplay_types? },
 //     checkpoints: [{ index, offset_hours, min_signups, action }]
 //   },
-//   days?: number   (default 120, max 365)
+//   days?: number              (default 120, max 365)
+//   includeEventDetails?: bool (default true; set false for sweep iterations)
 // }
 
 const BacktestBodySchema = z.object({
-  clubId: z.string().uuid(),
-  days:   z.number().int().min(7).max(365).optional(),
-  rule:   z.object({
+  clubId:              z.string().uuid(),
+  days:                z.number().int().min(7).max(365).optional(),
+  includeEventDetails: z.boolean().optional(),
+  rule: z.object({
     match_rules: z.object({
       archetype_ids: z.array(z.string()).optional(),
       keywords:      z.array(z.string()).optional(),
       podplay_types: z.array(z.string()).optional(),
     }),
     checkpoints: z.array(z.object({
-      index:         z.number().int(),
-      offset_hours:  z.number().int(),
-      min_signups:   z.number().int(),
-      action:        z.enum(["CANCEL", "ALERT"]),
+      index:        z.number().int(),
+      offset_hours: z.number().int(),
+      min_signups:  z.number().int(),
+      action:       z.enum(["CANCEL", "ALERT"]),
     })).min(1),
   }),
 });
@@ -478,33 +491,33 @@ router.post("/programming/backtest", async (req, res) => {
   if (!parsed.success) {
     res.status(400).json({ error: "Invalid body", details: parsed.error.issues }); return;
   }
-  const { clubId, days = 120, rule } = parsed.data;
+  const { clubId, days = 120, rule, includeEventDetails = true } = parsed.data;
 
   try {
-    const cutoff  = new Date(Date.now() - days * 86_400_000).toISOString();
-    const nowIso  = new Date().toISOString();
+    const cutoff = new Date(Date.now() - days * 86_400_000).toISOString();
+    const nowIso = new Date().toISOString();
 
-    // Load event_fill rows in window
+    // ── 1. Load event_fill rows in window ──────────────────────────────────────
     let fillRows: any[] = [];
-    let page = 0;
+    let fillPage = 0;
     while (true) {
       const { data, error } = await supabase
         .from("event_fill")
-        .select("event_id, archetype_id, final_signups, total_teams, fill_rate, start_time, is_canceled")
+        .select("event_id, archetype_id, final_signups, total_teams, fill_rate, start_time")
         .eq("club_id", clubId)
         .eq("is_canceled", false)
         .not("archetype_id", "is", null)
         .gte("start_time", cutoff)
         .lt("start_time",  nowIso)
-        .range(page * 500, (page + 1) * 500 - 1);
+        .range(fillPage * 500, (fillPage + 1) * 500 - 1);
       if (error) { res.status(500).json({ error: error.message }); return; }
       if (!data?.length) break;
       fillRows.push(...data);
       if (data.length < 500) break;
-      page++;
+      fillPage++;
     }
 
-    // Load archetype names for labeling
+    // ── 2. Load archetype names ────────────────────────────────────────────────
     const { data: archetypesData } = await supabase
       .from("programs")
       .select("id, canonical_name")
@@ -513,117 +526,207 @@ router.post("/programming/backtest", async (req, res) => {
       (archetypesData ?? []).map((a: any) => [a.id, a.canonical_name]),
     );
 
-    // For each event: check booked_at coverage, reconstruct signup count at offset,
-    // apply rule, compare to actual outcome.
+    if (fillRows.length === 0) {
+      res.json({ days, total_events_in_window: 0, archetype_coverage: {}, checkpoints: [] });
+      return;
+    }
+
+    // ── 3. Load attendances (booked_at + program_name) in chunks of 200 ───────
     //
-    // booked_at coverage = (rows with booked_at not null) / total rows for that event.
-    // We need coverage per event. Load via attendances aggregate.
+    // Supabase REST handles up to ~200 IDs in an IN clause reliably.
+    // We paginate attendance rows within each chunk.
+    type AttData = {
+      total: number;
+      withBookedAt: number;
+      times: number[];       // epoch-ms for each non-null booked_at
+      programName: string | null;
+    };
+    const attMap = new Map<string, AttData>();
 
-    const eventIds = fillRows.map((r) => r.event_id);
-    if (eventIds.length === 0) {
-      res.json({ days, total_events: 0, checkpoints: [], rows: [] }); return;
+    const allEventIds = [...new Set(fillRows.map((r: any) => r.event_id as string))];
+    const ID_CHUNK    = 200;
+    const ATT_PAGE    = 1000;
+
+    for (let ci = 0; ci < allEventIds.length; ci += ID_CHUNK) {
+      const chunk = allEventIds.slice(ci, ci + ID_CHUNK);
+      let ap = 0;
+      while (true) {
+        const { data: batch, error: bErr } = await supabase
+          .from("attendances")
+          .select("event_id, booked_at, program_name")
+          .in("event_id", chunk)
+          .range(ap * ATT_PAGE, (ap + 1) * ATT_PAGE - 1);
+        if (bErr || !batch?.length) break;
+        for (const row of batch) {
+          const eid = (row as any).event_id as string;
+          if (!attMap.has(eid)) attMap.set(eid, { total: 0, withBookedAt: 0, times: [], programName: null });
+          const c = attMap.get(eid)!;
+          c.total++;
+          if ((row as any).booked_at) {
+            c.withBookedAt++;
+            c.times.push(new Date((row as any).booked_at as string).getTime());
+          }
+          if (!c.programName && (row as any).program_name) c.programName = (row as any).program_name;
+        }
+        if (batch.length < ATT_PAGE) break;
+        ap++;
+      }
     }
 
-    // Load booked_at coverage for all events in batch
-    // Supabase doesn't support GROUP BY via REST; we load all rows (capped).
-    // For very large datasets, only sample the events.
-    const MAX_EVENTS_FOR_COVERAGE = 300;
-    const sampleEvents = fillRows.length > MAX_EVENTS_FOR_COVERAGE
-      ? fillRows.slice(0, MAX_EVENTS_FOR_COVERAGE)
-      : fillRows;
-    const sampleIds = sampleEvents.map((r) => r.event_id);
+    // ── 4. Per-archetype undercount detection ──────────────────────────────────
+    //
+    // Compares local attendance row count to event_fill.final_signups (the
+    // PodPlay active count). A ratio consistently below 0.70 signals that local
+    // attendance systematically undercounts PodPlay — observed for series-pass
+    // clinics (Path to Intermediate) where INVALID signups are not in the
+    // VALID_SIGNUP_STATUSES set used by syncEventAttendance (separate fix
+    // needed). Reconstructing from undercounted data understates enrollment and
+    // inflates the apparent fire rate, so those archetypes are excluded.
 
-    const { data: attendRows } = await supabase
-      .from("attendances")
-      .select("event_id, booked_at")
-      .in("event_id", sampleIds)
-      .not("event_id", "is", null);
-
-    // Compute per-event booked_at coverage
-    const coverageMap = new Map<string, { total: number; withBookedAt: number }>();
-    for (const row of attendRows ?? []) {
-      const eid = (row as any).event_id;
-      if (!coverageMap.has(eid)) coverageMap.set(eid, { total: 0, withBookedAt: 0 });
-      const c = coverageMap.get(eid)!;
-      c.total++;
-      if ((row as any).booked_at) c.withBookedAt++;
+    const archetypeRatioMap = new Map<string, { name: string; ratios: number[] }>();
+    for (const fill of fillRows) {
+      if (!fill.archetype_id || !fill.final_signups || fill.final_signups <= 0) continue;
+      const localCount = attMap.get(fill.event_id)?.total ?? 0;
+      const ratio = localCount / (fill.final_signups as number);
+      if (!archetypeRatioMap.has(fill.archetype_id)) {
+        archetypeRatioMap.set(fill.archetype_id, {
+          name: archetypeNames.get(fill.archetype_id) ?? fill.archetype_id.slice(0, 8),
+          ratios: [],
+        });
+      }
+      archetypeRatioMap.get(fill.archetype_id)!.ratios.push(ratio);
     }
 
-    // For each checkpoint, compute TP/FP
-    const results: any[] = [];
+    const UNDERCOUNT_THRESHOLD = 0.70;
+    const archetypeCoverage: Record<string, any> = {};
+    const excludedArchetypes  = new Set<string>();
+
+    for (const [aid, { name, ratios }] of archetypeRatioMap) {
+      const sorted = [...ratios].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+      if (median < UNDERCOUNT_THRESHOLD) excludedArchetypes.add(aid);
+      archetypeCoverage[name] = {
+        median_local_vs_podplay: Math.round(median * 1000) / 1000,
+        n_events: ratios.length,
+        excluded: median < UNDERCOUNT_THRESHOLD,
+        ...(median < UNDERCOUNT_THRESHOLD
+          ? { reason: "local attendance undercounts PodPlay signups — likely series-pass clinic or very low member penetration" }
+          : {}),
+      };
+    }
+
+    // ── 5. Per-checkpoint reconstruction and TP/FP classification ─────────────
+    const checkpointResults: any[] = [];
+    const keywordsWarn = (rule.match_rules.keywords?.length ?? 0) > 0
+      || (rule.match_rules.podplay_types?.length ?? 0) > 0;
 
     for (const cp of rule.checkpoints) {
-      let evaluated = 0, wouldFire = 0, tp = 0, fp = 0, skippedCoverage = 0;
+      let evaluated = 0, wouldFire = 0, tp = 0, fp = 0;
+      let skippedCoverage = 0, skippedUndercount = 0, skippedNoData = 0;
       const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
+      const eventDetails: any[] = [];
+      const usableRowCounts: number[] = [];
 
-      for (const fill of sampleEvents) {
+      for (const fill of fillRows) {
+        // Match — archetype_ids only; keywords/podplay_types require event
+        // name/type not stored in event_fill (task #9)
         const mr = rule.match_rules;
-        let matches = true;
-        if (mr.archetype_ids?.length && !mr.archetype_ids.includes(fill.archetype_id)) matches = false;
-        if (!matches) continue;
-        // keywords/podplay_types require event name/type — not in event_fill.
-        // For now, skip those filters in backtest (only archetype_ids supported).
+        if (mr.archetype_ids?.length && !mr.archetype_ids.includes(fill.archetype_id)) continue;
 
-        // Coverage check
-        const cov = coverageMap.get(fill.event_id);
-        const coverage = cov ? cov.withBookedAt / cov.total : 0;
-        if (!cov || cov.total === 0 || coverage < 0.9) {
-          skippedCoverage++;
-          continue;
-        }
+        const archName = archetypeNames.get(fill.archetype_id) ?? "Unknown";
 
-        // Reconstruct signup count at offset:
-        // Count attendances where booked_at <= (startTime - offset_hours)
-        // We don't have the granular data here — we'd need all booked_at values.
-        // Approximation: use attendance count with booked_at <= cutoff as a proxy.
-        // This is a structural limitation; flag it in the response.
+        // Undercount exclusion
+        if (excludedArchetypes.has(fill.archetype_id)) { skippedUndercount++; continue; }
 
-        // Outcome: actual fill_rate < 0.5 → session was "at risk" (proxy for cancel-worthy)
-        const actuallyAtRisk = fill.fill_rate !== null && fill.fill_rate < 0.5;
+        // booked_at coverage guard
+        const att = attMap.get(fill.event_id);
+        if (!att || att.total === 0)                          { skippedNoData++;    continue; }
+        const coverage = att.withBookedAt / att.total;
+        if (coverage < 0.9)                                   { skippedCoverage++; continue; }
 
-        // The actual "would fire" check needs reconstructed signup count at the offset.
-        // Without per-row booked_at loaded per event, we use the final count as an approximation.
-        // TODO: Phase 3 — load granular booked_at per event for proper reconstruction.
-        const signupAtOffset = fill.final_signups;
+        // Reconstruct signup count at checkpoint offset from booked_at timestamps.
+        // These are MEMBER-TRACKED bookings only; non-members are not in attendances.
+        // For archetypes where membership penetration ≈ 100% this is exact;
+        // for mixed-membership open play it is a lower bound.
+        const startMs  = new Date(fill.start_time as string).getTime();
+        const cutoffMs = startMs - cp.offset_hours * 3_600_000;
+        const signupAtOffset = att.times.filter((t) => t <= cutoffMs).length;
+        usableRowCounts.push(att.total);
+
         const fires = signupAtOffset < cp.min_signups;
+        // Outcome proxy: final fill_rate < 0.5 → session was genuinely at risk.
+        // Ground truth would be the actual cancellation outcome — see task #10.
+        const actuallyAtRisk = fill.fill_rate !== null && (fill.fill_rate as number) < 0.5;
 
-        const archName = archetypeNames.get(fill.archetype_id) ?? fill.archetype_id;
         if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
         const ab = byArchetype[archName];
-
-        evaluated++;
-        ab.evaluated++;
+        evaluated++; ab.evaluated++;
         if (fires) {
-          wouldFire++;
-          ab.wouldFire++;
+          wouldFire++; ab.wouldFire++;
           if (actuallyAtRisk) { tp++; ab.tp++; }
           else                { fp++; ab.fp++; }
         }
+
+        if (includeEventDetails) {
+          eventDetails.push({
+            event_id:          fill.event_id,
+            program_name:      att.programName ?? archName,
+            date:              (fill.start_time as string)?.slice(0, 10) ?? null,
+            archetype:         archName,
+            count_at_offset:   signupAtOffset,
+            final_signups:     fill.final_signups,
+            booked_at_coverage: Math.round(coverage * 1000) / 1000,
+            would_fire:        fires,
+            outcome_at_risk:   actuallyAtRisk,
+            is_tp:             fires && actuallyAtRisk,
+            is_fp:             fires && !actuallyAtRisk,
+          });
+        }
       }
 
-      results.push({
-        checkpoint_index:       cp.index,
-        offset_hours:           cp.offset_hours,
-        min_signups:            cp.min_signups,
-        action:                 cp.action,
+      // Quantization uncertainty: a 1-signup swing at median n rows/event
+      const sortedUR    = [...usableRowCounts].sort((a, b) => a - b);
+      const medUR       = sortedUR.length ? sortedUR[Math.floor(sortedUR.length / 2)] : null;
+      const uncertainty = medUR !== null && medUR > 0
+        ? `±${Math.round(100 / medUR)}pp (1-signup at median ${medUR} rows/event)`
+        : "unknown";
+
+      checkpointResults.push({
+        checkpoint_index:     cp.index,
+        offset_hours:         cp.offset_hours,
+        min_signups:          cp.min_signups,
+        action:               cp.action,
         evaluated,
-        would_fire:             wouldFire,
-        true_positives:         tp,
-        false_positives:        fp,
-        skipped_low_coverage:   skippedCoverage,
-        fire_rate:              evaluated > 0 ? Math.round(wouldFire / evaluated * 1000) / 1000 : null,
-        fp_rate:                wouldFire > 0 ? Math.round(fp / wouldFire * 1000) / 1000 : null,
-        by_archetype:           byArchetype,
-        note: "signup_count_at_offset is approximated using final_signups (granular booked_at reconstruction pending Phase 3)",
+        would_fire:           wouldFire,
+        true_positives:       tp,
+        false_positives:      fp,
+        skipped_low_coverage: skippedCoverage,
+        skipped_undercount:   skippedUndercount,
+        skipped_no_data:      skippedNoData,
+        fire_rate:   evaluated > 0 ? Math.round(wouldFire / evaluated * 1000) / 1000 : null,
+        fp_rate:     wouldFire  > 0 ? Math.round(fp / wouldFire  * 1000) / 1000 : null,
+        median_usable_rows: medUR,
+        uncertainty_band:   uncertainty,
+        by_archetype:       byArchetype,
+        ...(includeEventDetails ? { event_details: eventDetails } : {}),
       });
     }
 
     res.json({
       days,
       total_events_in_window: fillRows.length,
-      events_sampled:         sampleEvents.length,
-      checkpoints:            results,
+      archetype_coverage:     archetypeCoverage,
+      reconstruction_note:
+        "signup_count_at_offset reconstructed from attendances.booked_at (member-tracked subset only). " +
+        "Archetypes with median local/PodPlay ratio < 0.70 are excluded from checkpoint results.",
+      ...(keywordsWarn ? {
+        keywords_note:
+          "WARNING: keywords and podplay_types filters were NOT applied — " +
+          "event names are not stored in event_fill. Only archetype_ids matching used. See task #9.",
+      } : {}),
+      checkpoints: checkpointResults,
     });
+
   } catch (err: any) {
     logger.error({ err }, "[programming/backtest] error");
     res.status(500).json({ error: err.message });

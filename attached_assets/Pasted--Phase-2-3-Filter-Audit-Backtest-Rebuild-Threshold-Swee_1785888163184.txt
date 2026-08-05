@@ -1,0 +1,160 @@
+# Phase 2.3 — Filter Audit, Backtest Rebuild, Threshold Sweep
+
+**Mode:** Build. No execution path — nothing here can cancel an event, message anyone, or write to PodPlay.
+**Scope:** 4 items, sequential. Item 1 is small and gates the rest.
+
+---
+
+## Context
+
+Phase 2.2 found that the signup status exclusion set was wrong. `INVALID` is not garbage data — it is how PodPlay marks **completed multi-session series-pass enrollments**. Excluding it zeroed out every series clinic in `event_fill`.
+
+**Corrected exclusion set: `{CANCELED, DRAFT}`.** `INVALID`, `PENDING`, and `CONFIRMED` all represent real participants.
+
+The lifecycle, for reference:
+- Single-session events (Open Play, Learn to Play, Workshop): `PENDING` before → `CONFIRMED` after
+- Series-pass clinics (Path to Intermediate): `PENDING` before → `INVALID` after
+- `type: ORDER` on both — the fork is invisible from any other field
+
+That fix was applied to `eventFillSync.ts` and `programmingEvaluator.ts`, and the re-backfill restored Path to Intermediate to median 4 / fill 1.000, matching its original values. Change rate dropped from 36.5% to a plausible 6.4%.
+
+The wrong three-value list appeared in four prior prompts and propagated through the codebase, so Item 1 checks whether any other copies survive.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** Do not build code that cancels, patches, or sends — not behind a flag, not commented out.
+
+**3. No messaging.** `programming_notifications` stays empty.
+
+**4. Supabase writes** limited to `event_fill` (only if Item 1 finds a stale filter requiring another backfill) and `programming_rules`. Do not modify rows or schema in `players`, `attendances`, `messages`, `conversations`, or any other existing table.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Run items in order. Item 1 gates Item 2 — a backtest built on inconsistent filters produces authoritative-looking wrong numbers.
+
+Stop and report if:
+- Item 1 finds a stale filter that changed data, requiring another backfill (report before re-running)
+- Item 2's validation check (2e) fails
+- Any item would require a PodPlay write or an execution path
+
+---
+
+## Item 1 — Audit every copy of the status filter
+
+The exclusion set was corrected in two files. Others may hold their own copy.
+
+**1a. Find them all.** Grep the API server and dashboard for: `INVALID`, `CANCELED`, `CONFIRMED`, `PENDING`, `DRAFT`, `INACTIVE_STATUSES`, `_total`, and any signup-status filtering by another name. Report every location with file, line, and the exact set used.
+
+Check specifically:
+- the upcoming-risk route
+- the backtest endpoint
+- `Programs.tsx` and any dashboard code that counts signups
+- the sync layer (`syncEventAttendance.js`)
+- any other route that reads signups
+
+**1b. Report disagreements.** Any location whose set differs from `{CANCELED, DRAFT}` — including anything still using `signups._total` as a live count.
+
+**1c. Consolidate.** Export **one** shared constant from a single module and have every call site import it. A set literal repeated across files is what caused this. Include a comment recording why `INVALID` is retained.
+
+**1d. If a stale filter was materially changing stored data**, report the scope and what a re-backfill involves before running one.
+
+**1e. Verify** `tsc --noEmit` passes.
+
+**STATUS:**
+
+---
+
+## Item 2 — Rebuild the backtest on reconstructed counts
+
+The current backtest approximates signup-count-at-offset using each event's **final** count. That does not under-report — it inverts the result. Every event is scored as if fully enrolled at the checkpoint, so nothing ever falls below threshold and the false-positive rate comes out near zero for any rule. The entire value of a backtest is measuring the gap between count-at-offset and final count.
+
+**2a. Reconstruct from `attendances.booked_at`** against event start time. This is the reconstruction Phase 0.6 performed successfully — port that approach rather than inventing a new one. For each event and offset, count rows where `booked_at <= event_start - offset_hours`.
+
+**2b. Handle missing data explicitly.** `booked_at` coverage is bimodal — many events at 100%, many near zero. Compute **per-event** coverage. Exclude events under 90%, and report how many were excluded. Never treat a NULL `booked_at` as booked-early or booked-late; exclude the event.
+
+**2c. Series clinics need separate handling.** Phase 2.2 found local attendance undercounts series-pass clinics — spot-checks showed 2 local rows against 4 PodPlay signups, and the last sync logged 97 unmatched signups. Since reconstruction runs on `attendances`, this undercount propagates directly into the backtest.
+
+Report, for each program type, the ratio of local attendance rows to PodPlay active signup count on a sample of past events. **If series clinics undercount systematically, exclude them from the backtest and say so** rather than producing numbers that understate enrollment for one archetype. Open Play is the archetype that matters for the cancellation rule and it matched exactly in prior checks.
+
+**2d. Report `n` and uncertainty honestly.** Median usable rows per event has historically been ~4, which quantizes fractions badly — a 3-row event can only yield 0, 0.33, 0.67, 1.0. Report median usable rows alongside every percentage, and present percentages with the resulting ±5–10 point band rather than to three decimals.
+
+**2e. Validate against a known case.** Run the seeded mirror rule (N=4, T-3h, Off-Peak Open Play) and compare to the Phase 0.6 figure of ~44% FP at N=4/T-3h on clean data. Different window and corrected fill mean they won't match exactly, but they should be in the same neighborhood.
+
+**If the rebuilt backtest returns a near-zero FP rate, the reconstruction is still broken.** Report that rather than the number.
+
+**2f. Output per rule spec:** events evaluated, events excluded (with reasons), per-checkpoint triggered / TP / FP / FP rate, segmented by program type, plus a per-event detail list with name, date, count at offset, final count, would-fire, actual outcome.
+
+**STATUS:**
+
+---
+
+## Item 3 — Threshold sweep
+
+Only if Item 2 produced credible numbers.
+
+Run the corrected backtest across a grid:
+
+- offsets: 2h, 3h, 4h, 6h, 12h, 24h
+- thresholds N: 2 through 8
+- segmented by program type
+
+Per cell: events triggered, false positives, FP rate, true positives.
+
+Then answer directly:
+
+1. **At PodPlay's live config (N=4, T-3h) — what is the actual false-positive rate?** This decides whether native config gets cleared. It is currently armed on 181 upcoming events.
+2. **What threshold and offset minimize false positives while still catching genuinely dead sessions**, per program type?
+3. **Do Clinics and Open Play need different rules?** Phase 0.6 found Clinics at p50=1.000 fill by T-2h versus Open Play at 0.500 on the clean subset. Does that hold on corrected data?
+
+Save the grid to `/tmp/phase23/threshold-sweep.csv`. No UI work — this is a report.
+
+**STATUS:**
+
+---
+
+## Item 4 — Coverage gap
+
+Phase 2.1 noted some "3.75+ Off-Peak" events carry **no** native auto-cancel config while similar events do.
+
+Read-only. Across all upcoming events, report: how many have native config set, how many don't, and whether the unconfigured ones share a pattern — program type, series, creation path.
+
+This matters both ways. If the agent takes over, it needs to cover events native never protected. If native stays, these events are unprotected today and the operator may not know.
+
+**Do not modify any config.** Report only.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED | NOT STARTED (gated)
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Filter consistency** — is there now exactly one definition, imported everywhere?
+2. **FP rate at N=4 / T-3h** on corrected, properly-reconstructed data — or an explicit statement that it couldn't be computed and why.
+3. **Recommended rules per program type**, with supporting numbers.
+4. **Unprotected upcoming events** — count and pattern.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; no execution path built; evaluator not wired to any timer.**

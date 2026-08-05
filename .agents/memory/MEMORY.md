@@ -3,3 +3,4 @@
 - [PodPlay startTimeTo bug](podplay-starttime-bug.md) — apply BOTH bounds client-side (> now AND <= horizon); upper-bound fix applied in programmingEvaluator.ts and upcoming-risk route
 - [INVALID signup status](path-to-intermediate-correction.md) — series clinic passes land in INVALID not CONFIRMED; exclusion set must be {CANCELED,DRAFT} only — NEVER include INVALID
 - [Evaluator decisions timing](evaluator-decisions-timing.md) — decisions only written when event enters offset_hours window; 0 decisions is expected until ~T-3h before an off-peak event
+- [Backtest reconstruction](backtest-reconstruction.md) — booked_at reconstruction approach, 120-day FP numbers, segmentation: Open Play ~57% FP, Clinics ~90% FP at live N=4/T-3h

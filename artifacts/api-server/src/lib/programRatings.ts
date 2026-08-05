@@ -4,7 +4,8 @@
  * Fill rate source:  event_fill table (historical, final, full-population)
  *   fill_rate = final_signups / total_teams  (pre-computed by eventFillSync)
  *   Denominator: totalTeams (seat count — teamSize NOT used)
- *   Numerator:   PodPlay signups._total (all registrants, not our member subset)
+ *   Numerator:   event_fill.final_signups (PodPlay active count per INACTIVE_SIGNUP_STATUSES,
+ *                computed by eventFillSync; NOT signups._total which includes CANCELED/DRAFT)
  *
  * Velocity + new-player share: attendances table (TRACKED-MEMBER-ONLY SIGNAL)
  *   These metrics cover only the members we track — a biased fraction of
