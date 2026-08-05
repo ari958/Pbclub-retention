@@ -253,34 +253,44 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
     for (let i = 0; i < pendingUpserts.length; i += UPSERT_BATCH) {
       const rawBatch = pendingUpserts.slice(i, i + UPSERT_BATCH);
 
-      // Batch-level dedup: PostgreSQL's ON CONFLICT clause handles conflicts
-      // against EXISTING rows, but raises a hard duplicate-key error when two
-      // rows in the SAME INSERT share the same (player_id, event_id).  The
-      // per-event Map dedup (added in Phase 3 §2a) prevents within-event
-      // duplicates from CONFIRMED+INVALID multi-status signups, but cannot
-      // prevent across-event duplicates when the PodPlay API returns the same
-      // event_id on multiple pagination pages (observed with Grand Opening
-      // events that span many pages).  Keep the last-seen row per key —
-      // within-event dedup already ensured the per-event winner is correct.
-      const seen = new Map();
+      // ── Batch-level dedup pass 1: (player_id, event_id) ─────────────────────
+      // Prevents within-batch conflicts when PodPlay returns the same event_id
+      // on multiple pages (seenEventIds handles cross-page at the event level,
+      // but this is a final safety net). Keep last-seen row — per-event dedup
+      // already chose the highest-priority status for this player+event pair.
+      const seenByEvent = new Map();
       for (const row of rawBatch) {
-        seen.set(`${row.player_id}::${row.event_id}`, row);
+        seenByEvent.set(`${row.player_id}::${row.event_id}`, row);
+      }
+      // ── Batch-level dedup pass 2: (player_id, program_name, attended_at) ───
+      // The legacy constraint `attendances_unique_attendance` is defined on
+      // (player_id, program_name, attended_at) and is still present in the DB.
+      // Two different events (different event_id, same normalized program name,
+      // same calendar date) can independently contribute rows for the same
+      // player — e.g. two "All Levels with Challenge Court" sessions on the
+      // same day. seenByEvent won't catch this because the event_ids differ.
+      // This pass deduplicates on the constraint columns so the INSERT never
+      // violates it. The ON CONFLICT target below also matches this constraint.
+      const seen = new Map();
+      for (const row of seenByEvent.values()) {
+        seen.set(`${row.player_id}::${row.program_name}::${row.attended_at}`, row);
       }
       const batch = [...seen.values()];
       const dedupDropped = rawBatch.length - batch.length;
       if (dedupDropped > 0) {
-        log(`[sync/events] batch dedup: dropped ${dedupDropped} cross-event duplicate(s) before upsert`);
+        log(`[sync/events] batch dedup: dropped ${dedupDropped} duplicate(s) (pass1=${rawBatch.length - seenByEvent.size}, pass2=${seenByEvent.size - batch.length})`);
       }
 
       // ignoreDuplicates: true — attendance rows are write-once.
-      // If PodPlay later updates a signup's booked_at (e.g. reschedule), we
-      // intentionally keep the original value recorded at first-sync time.
-      // Changing this to false would silently overwrite booking timestamps and
-      // corrupt player-timing analytics. See RUNBOOK open item 15.
+      // ON CONFLICT targets attendances_unique_attendance (player_id,
+      // program_name, attended_at) which is still present in the DB.
+      // attendances_player_event_unique (player_id, event_id) is a separate
+      // constraint; the batch dedup above prevents within-batch violations of
+      // both. See RUNBOOK open items 15, 16.
       const { error } = await getSupabase()
         .from("attendances")
         .upsert(batch, {
-          onConflict: "player_id,event_id",
+          onConflict: "player_id,program_name,attended_at",
           ignoreDuplicates: true,
         });
       if (error) {

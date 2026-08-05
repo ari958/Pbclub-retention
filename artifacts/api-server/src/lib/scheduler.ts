@@ -11,6 +11,7 @@ import { runMilestoneBatch } from "./milestoneCheck";
 import { runMonthlyRecapBatch } from "./monthlyRecap";
 import { computeProgramRatings } from "./programRatings";
 import { syncEventFill } from "./eventFillSync";
+import { batchComputePlayerTiming } from "./playerTiming";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 
@@ -255,6 +256,21 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
       }
     } catch (err: any) {
       await appendJobLog(JOB_NIGHTLY, `Program ratings error (non-fatal): ${err.message}`);
+    }
+
+    // Step 9: Batch player timing computation (non-fatal)
+    // Computes attendance_archetype, avg_booking_lead_days, preferred_booking_dow
+    // for every player whose timing_computed_at is stale (>22 h) or missing.
+    try {
+      await appendJobLog(JOB_NIGHTLY, "Step 9: batch player timing computation");
+      const timingResult = await batchComputePlayerTiming(CLUB_ID);
+      await appendJobLog(
+        JOB_NIGHTLY,
+        `Step 9 complete — computed=${timingResult.computed} skipped_cached=${timingResult.skipped_cached} ` +
+        `errors=${timingResult.errors} dist=${JSON.stringify(timingResult.distribution)}`,
+      );
+    } catch (err: any) {
+      await appendJobLog(JOB_NIGHTLY, `Batch timing error (non-fatal): ${err.message}`);
     }
 
     // Mark nightly_sync done — persist last_run_day so a same-day restart skips re-fire

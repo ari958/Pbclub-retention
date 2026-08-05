@@ -1,0 +1,169 @@
+# Phase 3.2 — Repair the Targeting Inputs
+
+**Mode:** Diagnose first, then fix. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 5 items. Items 1–3 are diagnosis and repair of data inputs. Item 4 is a filter correction. Item 5 is a small sync defect.
+
+---
+
+## Context
+
+Phase 3.1 produced the first real promotion candidate funnel, and it revealed that the targeting machinery is built correctly on top of signals that have no values.
+
+From the funnel for "Advanced Beginner Coach Led 60 & 60" (3/4 signups):
+
+- **2,506 players → 1,141 eligible**, but the ranking is flat: rank 1 scores 40, rank 2 scores 30, ranks 3–15 all score 5 or 0. The report itself concluded the ranking is "essentially random below rank 2."
+- **`warm_score`** populated for **under 1%** of players
+- **`coach_assigned_level`** set for **2 of 2,506** players (0.08%); `skill_level` for zero
+- **`attendance_archetype`** is `default` for 1,233 players (49.2%) and NULL for 1,107 (44.2%). Only **43 players (1.7%)** have a real value (`planner`, `early`, `late`, `mid`)
+- **buddy signal** fired zero times on this session
+
+So level fit, program affinity, slot fit, and buddy logic — the four filters meant to make promotion targeted — are all effectively inert. What the system would send today is a blast to 345 SMS-reachable players about a clinic needing one signup. That is the opposite of the design intent.
+
+**No further promotion features should be built until these inputs work.** This phase fixes the inputs.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels or patches — not behind a flag, not commented out.
+
+**3. No sending. At all.** No Twilio, no email, no writes to `messages` or `programming_notifications`.
+
+**4. Supabase writes** limited to: `players` (only the computed columns named in Items 1–2: `attendance_archetype`, `avg_booking_lead_days`, `preferred_booking_hour`, `preferred_booking_dow`, `timing_computed_at`, `warm_score`, `warm_score_updated_at`) and `attendances` (Item 5 only). Do not modify `messages`, `conversations`, `event_fill`, or any other table.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Diagnose before fixing in every item. If a diagnosis shows the cause is different from what's described here, **report and stop** rather than applying the fix as written — the framing may be wrong.
+
+---
+
+## Item 1 — Why is `attendance_archetype` unset for 93% of players?
+
+**1a. Read `playerTiming.ts`.** Report: what computes `attendance_archetype`, what inputs it needs, what conditions cause it to write `default` versus a real value versus nothing at all, and where it's invoked from.
+
+**1b. Is `default` a computed outcome or an unset placeholder?** This determines everything downstream. If the function assigns `default` when it has insufficient data, that's a data-coverage problem. If `default` is a column default that was never overwritten, that's a job-never-ran problem. Distinguish them with evidence.
+
+**1c. Check the inputs.** Archetype derives from booking lead time (`attendances.booked_at` versus `attended_at`). Report:
+- how many players have enough attendance rows with non-NULL `booked_at` to compute a lead-time profile
+- what the minimum row count threshold is in the code, and whether it's reasonable
+- the distribution of per-player usable attendance rows
+
+If most players genuinely lack the data, that's the finding and no code fix will help — say so.
+
+**1d. Check whether the job runs.** Is timing computation part of the nightly chain? Report when `timing_computed_at` was last set across the player base, and the distribution of that timestamp. A cluster on one old date means it ran once and never again.
+
+**1e. Fix and recompute.** Based on 1a–1d, apply the appropriate fix and recompute for all eligible players. **Dry-run first**: report how many players would move from `default`/NULL to a real archetype, and the resulting distribution. Apply only after reporting.
+
+**1f. Report the after-state.** Full archetype distribution across all 2,506 players.
+
+**Do not "fix" this by treating `default` as a pass-through in the promotion filter.** `default` plus NULL is 93% of the club — letting them through isn't improving reach, it's removing the filter. The filter is fine; its input is broken.
+
+**STATUS:**
+
+---
+
+## Item 2 — Why is `warm_score` populated for under 1%?
+
+**2a. Read `warmScore.ts`.** Report what computes it, what inputs it needs, when it's invoked, and whether it's computed on demand (per agent call) or in a batch.
+
+**2b. Is this a batch-never-ran problem or an on-demand-only problem?** If `warm_score` is only computed when the Pulse agent runs for a specific player, then <1% coverage is expected behavior — it means only players the agent has touched have a score. That would be a design question, not a bug.
+
+Report `warm_score_updated_at` distribution to distinguish.
+
+**2c. If it's on-demand only**, the promotion candidate builder needs either a batch precompute or to compute scores for its candidate set at build time. Report which is more appropriate given the cost — the funnel evaluates ~1,400 players, and per-player computation involves multiple Supabase queries.
+
+**2d. Note the known caching caveat.** Runbook open item 6: the cache stores one score per player, but `computeWarmScore` takes `(player, program_type, program_name)` and applies program-specific signals. A cached player-level score is inaccurate when the program differs. For promotion — where the whole point is scoring players *against a specific clinic* — this matters. Report whether a program-specific score is needed here and what that costs.
+
+**2e. Recommend, don't build.** Report the options with their tradeoffs. Do not implement a batch warm-score job in this phase — it's a real piece of work and needs its own scoping.
+
+**STATUS:**
+
+---
+
+## Item 3 — Level data: 2 of 2,506
+
+`coach_assigned_level` is set for 2 players. `skill_level` is empty. The level-fit filter cannot function.
+
+**3a. Where would level data come from?** Report every possible source: coach entry via the dashboard, PodPlay `admissionRating` on events the player attended, `level_confidence` computed scores, DUPR ratings, event `tags`.
+
+**3b. What's actually available?** Report population counts for: `players.dupr_rating`, `level_confidence` rows, and how many players have attended events with a non-NULL `admissionRating` or a level tag.
+
+**3c. Is a usable proxy available?** If DUPR or `level_confidence` covers a meaningful share of players, the level filter could use a fallback chain — `coach_assigned_level` → `level_confidence` (above a certainty threshold) → DUPR → unknown. Report coverage at each tier.
+
+**Important:** *enrollment ≠ readiness* still governs. A fallback may inform a **promotion** filter (who might enjoy this clinic) but must never be treated as coach endorsement for progression. State that boundary explicitly in whatever you propose.
+
+**3d. Recommend, don't build.** Report the coverage numbers and the proposed fallback chain. Implementation is a later phase.
+
+**STATUS:**
+
+---
+
+## Item 4 — The engagement filter is using the wrong field
+
+The Phase 3.1 funnel removed **1,089 players (43%)** at the engagement stage, filtering on `churn_risk = 'high'`.
+
+That's not what was specified. The intent was to exclude **lapsing and dormant** players — an observed fact derived from `last_visit_date` — because sending a fragile returning player to a half-empty clinic that might still be cancelled converts a lapsing player into a churned one.
+
+`churn_risk` is a *predictive model output*, a much broader and different cut. The evidence it's wrong: Carolyn Krasinski was excluded as high-churn-risk while carrying `warm_score = 3` — an engaged player filtered out by a risk score.
+
+**4a. Read the current filter** in the promotion candidate builder and report exactly which fields it tests.
+
+**4b. Change it to filter on engagement state** — `active` (≤14d), `lapsing` (15–30d), `dormant` (31d+), derived from `last_visit_date`. Exclude `lapsing` and `dormant`; keep `active`. Follow the single-source-of-truth rule: use the server-side computation that already exists rather than recomputing it inline.
+
+**4c. Report the before/after funnel** on the same decision (`743053a0`): how many are removed at the engagement stage under each version, and how the eligible pool changes.
+
+**4d. Keep `churn_risk` visible, not filtering.** Record it in `reasons` so it's available for ranking or later review, but don't let it gate eligibility.
+
+**STATUS:**
+
+---
+
+## Item 5 — The 2 remaining sync upsert errors
+
+Two errors persist per 14-day sync, down from 5. Batch-level dedup reports zero drops, so they aren't duplicate `(player_id, event_id)` pairs within a batch. The error names constraint `attendances_unique_attendance`.
+
+**5a. Read the actual constraint definitions.** Query `pg_indexes` and `pg_constraint` for every unique constraint on `attendances`. Report each one's full definition.
+
+The likely cause: the runbook documents `attendances_player_event_unique` on `(player_id, event_id) WHERE event_id IS NOT NULL`, and says a legacy constraint on `(player_id, program_name, attended_at)` was **dropped** on 2026-05-07. If a constraint named `attendances_unique_attendance` still exists with different columns, the `onConflict` target in the upsert doesn't match the constraint actually being violated — which would produce exactly this behavior.
+
+**5b. Compare against the `onConflict` specification** in `syncEventAttendance.js`. Report whether they match.
+
+**5c. Fix based on the finding.** If a stale constraint exists, report it and what dropping it involves — **do not drop it in this phase.** If the `onConflict` target is wrong, fix that.
+
+**5d. Verify** with a fresh incremental sync: zero upsert errors, zero NULL `club_id`.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+Diagnosis:
+What changed:
+Verification:
+Blockers:
+```
+
+Close with:
+1. **Archetype** — before/after distribution, and whether the fix was code, data, or neither.
+2. **Warm score** — is <1% coverage expected behavior or a broken job? Recommended approach.
+3. **Level data** — coverage at each fallback tier, and whether a usable proxy exists.
+4. **Engagement filter** — before/after funnel counts on decision `743053a0`.
+5. **Is the promotion audience meaningfully targeted now**, or still effectively a blast? Answer honestly — if the ranking is still flat, say so.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages` or `programming_notifications`; no execution path built; evaluator not wired to any timer.**

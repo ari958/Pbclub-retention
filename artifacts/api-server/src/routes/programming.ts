@@ -32,6 +32,7 @@ import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
 import { runEvaluator, fetchActiveSignupCount } from "../lib/programmingEvaluator";
 import { loadArchetypes, classifyEvent, isDailyPeak, isPeakSeason } from "../lib/classifyEvent";
+import { batchComputePlayerTiming } from "../lib/playerTiming";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -893,6 +894,31 @@ router.post("/programming/backtest", async (req, res) => {
   }
 });
 
+// ── POST /api/programming/batch-timing ───────────────────────────────────────
+//
+// Compute attendance_archetype / avg_booking_lead_days / preferred_booking_dow
+// for every player in the club whose timing is stale or missing.
+//
+// Query params:
+//   dryRun=true   — simulate and return distribution; write nothing (default: false)
+//   forceRefresh  — bypass 22-hour cache guard (default: false)
+//
+// Also invoked nightly from the scheduler (Step 9).
+
+router.post("/programming/batch-timing", requireClub, async (req, res) => {
+  const clubId   = (req as ClubScopedRequest).clubId;
+  const dryRun   = req.query.dryRun !== "false";          // default: dry-run
+  const force    = req.query.forceRefresh === "true";
+
+  try {
+    const result = await batchComputePlayerTiming(clubId, { dryRun, forceRefresh: force });
+    res.json({ dry_run: dryRun, ...result });
+  } catch (err: any) {
+    logger.error({ err }, "[programming/batch-timing] error");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/programming/rules ────────────────────────────────────────────────
 
 router.get("/programming/rules", async (req, res) => {
@@ -1123,7 +1149,7 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       const { data: pg, error: pgErr } = await supabase
         .from("players")
         .select(
-          "id, external_id, name, sms_opt_in, opted_out, progression_status, churn_risk, " +
+          "id, external_id, name, sms_opt_in, opted_out, churn_risk, last_visit_date, " +
           "coach_assigned_level, skill_level, warm_score, attendance_archetype, " +
           "preferred_booking_dow, preferred_booking_hour, last_outbound_at"
         )
@@ -1222,16 +1248,26 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       }
       if (eligible) funnel.after_level_fit++;
 
-      // 2. Engagement state — mark ineligible but keep in list (§5c)
-      const prog = p.progression_status ?? "";
-      const churn = p.churn_risk ?? "";
-      if (eligible && (prog === "lapsing" || prog === "dormant" || prog === "churned" || churn === "high")) {
+      // 2. Engagement state — derived from last_visit_date (single source of truth).
+      //    Exclude lapsing (15–30 d) and dormant (31 d+); keep active (≤14 d) and
+      //    unknown (null last_visit_date — new/unsynced member, not definitively lapsing).
+      //    churn_risk is recorded in reasons for ranking visibility but does NOT gate.
+      const daysSinceVisit = p.last_visit_date
+        ? (Date.now() - new Date(p.last_visit_date).getTime()) / (1000 * 60 * 60 * 24)
+        : null;
+      const engagementState: string =
+        daysSinceVisit === null ? "unknown"
+        : daysSinceVisit <= 14  ? "active"
+        : daysSinceVisit <= 30  ? "lapsing"
+        :                         "dormant";
+      reasons.churn_risk = p.churn_risk ?? null;   // visible, not filtering
+      if (eligible && (engagementState === "lapsing" || engagementState === "dormant")) {
         eligible = false;
-        ineligibleReason = `engagement state: ${prog || churn}`;
+        ineligibleReason = `engagement state: ${engagementState} (last visit ${Math.round(daysSinceVisit!)} d ago)`;
         reasons.engagement_exclusion = ineligibleReason;
       } else if (eligible) {
         funnel.after_engagement_state++;
-        reasons.engagement_state = prog || "active";
+        reasons.engagement_state = engagementState;
       }
 
       // 3. Reachability — archetype must be 'planner' or 'early' for T-18h outreach

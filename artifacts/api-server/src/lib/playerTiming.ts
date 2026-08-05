@@ -230,6 +230,164 @@ export async function computePlayerTiming(
   return result;
 }
 
+// ─── FUNCTION: batchComputePlayerTiming ───────────────────────────────────────
+//
+// In-memory batch version of computePlayerTiming.  One DB read for all
+// attendances + one DB read for all players, then N small upserts.
+// Designed for the nightly chain and the /batch-timing endpoint.
+//
+// dryRun=true  → compute in-memory and return the distribution; write nothing.
+// dryRun=false → compute and write attendance_archetype / avg_booking_lead_days
+//                / preferred_booking_dow / timing_computed_at to players table.
+// forceRefresh → bypass the 22-hour cache guard.
+
+export interface BatchTimingResult {
+  computed:       number;
+  skipped_cached: number;
+  distribution:  Record<TimingArchetype, number>;
+  errors:         number;
+}
+
+export async function batchComputePlayerTiming(
+  clubId: string,
+  options: { dryRun?: boolean; forceRefresh?: boolean } = {},
+): Promise<BatchTimingResult> {
+  const { dryRun = false, forceRefresh = false } = options;
+  const now = new Date();
+  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  // ── 1. Bulk-fetch all relevant attendances for the club ───────────────────
+  const allRows: { player_id: string; attended_at: string; booked_at: string }[] = [];
+  let aOff = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("attendances")
+      .select("player_id, attended_at, booked_at")
+      .eq("club_id", clubId)
+      .not("booked_at", "is", null)
+      .gte("attended_at", ninetyDaysAgo)
+      .range(aOff, aOff + 999);
+    if (error || !data?.length) break;
+    allRows.push(...(data as any[]));
+    if (data.length < 1000) break;
+    aOff += 1000;
+  }
+
+  // Group by player_id
+  const byPlayer = new Map<string, { attended_at: string; booked_at: string }[]>();
+  for (const row of allRows) {
+    if (!row.player_id) continue;
+    if (!byPlayer.has(row.player_id)) byPlayer.set(row.player_id, []);
+    byPlayer.get(row.player_id)!.push(row);
+  }
+
+  // ── 2. Fetch all players (id + timing cache timestamp only) ───────────────
+  const players: { id: string; timing_computed_at: string | null }[] = [];
+  let pOff = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("players")
+      .select("id, timing_computed_at")
+      .eq("club_id", clubId)
+      .range(pOff, pOff + 999);
+    if (error || !data?.length) break;
+    players.push(...(data as any[]));
+    if (data.length < 1000) break;
+    pOff += 1000;
+  }
+
+  // ── 3. Compute timing for each player in memory ───────────────────────────
+  const result: BatchTimingResult = {
+    computed:       0,
+    skipped_cached: 0,
+    distribution:   { early: 0, mid: 0, late: 0, planner: 0, default: 0 },
+    errors:         0,
+  };
+
+  type Update = {
+    id:                    string;
+    attendance_archetype:  TimingArchetype;
+    avg_booking_lead_days: number;
+    preferred_booking_dow: number;
+    timing_computed_at:    string;
+  };
+  const updates: Update[] = [];
+  const nowIso = now.toISOString();
+
+  for (const player of players) {
+    if (!forceRefresh && player.timing_computed_at) {
+      const ageMs = now.getTime() - new Date(player.timing_computed_at).getTime();
+      if (ageMs < 22 * 60 * 60 * 1000) { // 22 h — buffer vs 24 h on-demand cache
+        result.skipped_cached++;
+        continue;
+      }
+    }
+
+    const rows = byPlayer.get(player.id) ?? [];
+    const valid = rows.filter(r => {
+      if (!r.booked_at || !r.attended_at) return false;
+      return new Date(r.booked_at) < new Date(`${r.attended_at}T23:59:59Z`);
+    });
+
+    let archetype: TimingArchetype;
+    let avgLead:   number;
+    let preferred_booking_dow: number;
+
+    if (valid.length < 3) {
+      const fallbackDows = rows
+        .filter(r => r.attended_at)
+        .map(r => etComponents(new Date(r.attended_at)).weekday);
+      preferred_booking_dow = fallbackDows.length > 0
+        ? mode(fallbackDows)
+        : DEFAULTS.preferred_booking_dow;
+      archetype = "default";
+      avgLead   = DEFAULTS.avg_booking_lead_days;
+    } else {
+      const leadDays = valid.map(r => {
+        const bookedMs   = new Date(r.booked_at).getTime();
+        const attendedMs = new Date(r.attended_at).getTime();
+        return (attendedMs - bookedMs) / (1000 * 60 * 60 * 24);
+      });
+      avgLead = Math.round(
+        (leadDays.reduce((s, v) => s + v, 0) / leadDays.length) * 10,
+      ) / 10;
+      preferred_booking_dow = mode(valid.map(r => etComponents(new Date(r.booked_at)).weekday));
+      archetype = archetypeFromLead(avgLead);
+    }
+
+    result.distribution[archetype]++;
+    result.computed++;
+    if (!dryRun) {
+      updates.push({ id: player.id, attendance_archetype: archetype,
+                     avg_booking_lead_days: avgLead, preferred_booking_dow, timing_computed_at: nowIso });
+    }
+  }
+
+  // ── 4. Batch-write (10-way concurrent updates) ────────────────────────────
+  if (!dryRun && updates.length > 0) {
+    const CONCURRENCY = 10;
+    for (let i = 0; i < updates.length; i += CONCURRENCY) {
+      const chunk = updates.slice(i, i + CONCURRENCY);
+      const settled = await Promise.all(
+        chunk.map(u =>
+          supabase.from("players").update({
+            attendance_archetype:  u.attendance_archetype,
+            avg_booking_lead_days: u.avg_booking_lead_days,
+            preferred_booking_dow: u.preferred_booking_dow,
+            timing_computed_at:    u.timing_computed_at,
+          }).eq("id", u.id),
+        ),
+      );
+      result.errors += settled.filter(r => r.error).length;
+    }
+  }
+
+  logger.info({ clubId, dryRun, ...result }, "[batchPlayerTiming] complete");
+  return result;
+}
+
 // ─── TCPA send-window constants (single definition point) ────────────────────
 // queuePoller imports isInsideSendWindow; sanitizeScheduledSendAt uses the
 // constants directly so it can distinguish before-open vs after-close for rolling.
