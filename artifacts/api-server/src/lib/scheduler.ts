@@ -2,7 +2,7 @@
 import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
-import { getJob, startJob, finishJob, appendJobLog, isCancelled } from "./jobStore";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, heartbeatJob } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
 import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
 import { computeBuddyPairs } from "./socialGraph";
@@ -105,7 +105,8 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
         CLUB_ID,
         (msg: string) => appendJobLog(JOB_EVENTS, msg),
         () => isCancelled(JOB_EVENTS),
-        INCREMENTAL_DAYS_EFFECTIVE
+        INCREMENTAL_DAYS_EFFECTIVE,
+        () => heartbeatJob(JOB_EVENTS)   // Phase 3 §1b — keeps last_heartbeat fresh
       );
       const cancelled = await isCancelled(JOB_EVENTS);
       await finishJob(JOB_EVENTS, cancelled ? "cancelled" : "done", syncStats);

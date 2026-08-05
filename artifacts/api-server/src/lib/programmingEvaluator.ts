@@ -29,7 +29,7 @@ export interface RuleCheckpoint {
   index: number;
   offset_hours: number;
   min_signups: number;
-  action: "CANCEL" | "ALERT";
+  action: "CANCEL" | "ALERT" | "PROMOTE";
 }
 
 export interface ProgrammingRule {
@@ -251,97 +251,110 @@ export async function runEvaluator(
     for (const rule of rules) {
       if (!matchRule(event, archetypeId, rule)) continue;
 
-      // Find checkpoints whose trigger window has opened (offset_hours >= hoursUntilStart)
+      // Find checkpoints whose trigger window has opened (offset_hours >= hoursUntilStart).
+      // Sort descending by index so we evaluate highest-priority (CANCEL) checkpoints first.
       const triggeredCheckpoints = rule.checkpoints
         .filter((cp) => cp.offset_hours >= hoursUntilStart)
-        .sort((a, b) => b.index - a.index); // highest index first
+        .sort((a, b) => b.index - a.index);
 
       if (triggeredCheckpoints.length === 0) continue;
 
-      // Only evaluate the highest-index triggered checkpoint per event×rule
-      const cp = triggeredCheckpoints[0];
-      const decisionKey = `${event.id}::${cp.index}`;
+      // Evaluate ALL triggered checkpoints that haven't been recorded yet.
+      // Phase 2 evaluated only the highest-index triggered checkpoint; Phase 3
+      // adds a PROMOTE checkpoint (lower index, earlier offset) alongside a
+      // CANCEL checkpoint (higher index, later offset) on the same rule.
+      // Each (event_id, checkpoint_index) pair is independently idempotent via
+      // the UNIQUE constraint — re-running the evaluator never creates duplicates.
+      //
+      // Signup count is fetched once per event×rule and shared across checkpoints
+      // to avoid redundant API calls.
+      let signupCount: number | null = null;
 
-      if (existingKeys.has(decisionKey)) {
-        stats.decisions_skipped_existing++;
-        continue;
-      }
+      for (const cp of triggeredCheckpoints) {
+        const decisionKey = `${event.id}::${cp.index}`;
 
-      stats.events_evaluated++;
-
-      // Fetch active signup count
-      let signupCount = 0;
-      try {
-        signupCount = await fetchActiveSignupCount(apiBase, apiKey, event.id);
-        await sleep(sleepMs);
-      } catch (err: any) {
-        stats.errors++;
-        logger.error({ eventId: event.id, err: err.message }, "[evaluator] signup fetch failed");
-        continue;
-      }
-
-      // Agent decision
-      const decision: "CANCEL" | "ALERT" | "NO_ACTION" =
-        signupCount < cp.min_signups ? cp.action : "NO_ACTION";
-
-      // Native PodPlay rule snapshot
-      const nativeThreshold = event.lowTurnoutAutoCancelAttendeeCount ?? null;
-      const nativeHoursBefore = event.lowTurnoutAutoCancelHoursBefore ?? null;
-      const nativeWouldCancel =
-        nativeThreshold !== null && nativeHoursBefore !== null
-          ? hoursUntilStart <= nativeHoursBefore && signupCount < nativeThreshold
-          : null;
-
-      log(
-        `[evaluator] event=${event.id.slice(0, 8)} cp=${cp.index} ` +
-          `signups=${signupCount}/${cp.min_signups} → ${decision}` +
-          (dryRun ? " [DRY-RUN]" : ""),
-      );
-
-      if (dryRun) {
-        stats.decisions_written++;
-        existingKeys.add(decisionKey);
-        continue;
-      }
-
-      // Write decision row
-      const row = {
-        club_id: clubId,
-        event_id: event.id,
-        checkpoint_index: cp.index,
-        rule_id: rule.id,
-        rule_name: rule.name,
-        event_name: event.name ?? null,
-        event_start_time: event.startTime,
-        archetype_id: archetypeId ?? null,
-        signup_count: signupCount,
-        total_teams: event.totalTeams ?? 0,
-        hours_before_start: Math.round(hoursUntilStart * 100) / 100,
-        checkpoint_offset_hours: cp.offset_hours,
-        checkpoint_min_signups: cp.min_signups,
-        decision,
-        mode: rule.mode,
-        executed: false,
-        native_threshold: nativeThreshold,
-        native_hours_before: nativeHoursBefore,
-        native_would_cancel: nativeWouldCancel,
-      };
-
-      const { error: insertErr } = await supabase
-        .from("programming_decisions")
-        .insert(row);
-
-      if (insertErr) {
-        if (insertErr.code === "23505") {
-          // Unique violation — already evaluated (race condition)
+        if (existingKeys.has(decisionKey)) {
           stats.decisions_skipped_existing++;
-        } else {
-          stats.errors++;
-          logger.error({ event: event.id, cp: cp.index, insertErr }, "[evaluator] insert failed");
+          continue;
         }
-      } else {
-        stats.decisions_written++;
-        existingKeys.add(decisionKey);
+
+        // Fetch active signup count on first need for this event×rule
+        if (signupCount === null) {
+          try {
+            signupCount = await fetchActiveSignupCount(apiBase, apiKey, event.id);
+            await sleep(sleepMs);
+          } catch (err: any) {
+            stats.errors++;
+            logger.error({ eventId: event.id, err: err.message }, "[evaluator] signup fetch failed");
+            break; // Skip remaining checkpoints for this event×rule — count unavailable
+          }
+        }
+
+        stats.events_evaluated++;
+
+        // Agent decision
+        const decision: "CANCEL" | "ALERT" | "PROMOTE" | "NO_ACTION" =
+          signupCount < cp.min_signups ? cp.action : "NO_ACTION";
+
+        // Native PodPlay rule snapshot (only meaningful for CANCEL checkpoints)
+        const nativeThreshold = event.lowTurnoutAutoCancelAttendeeCount ?? null;
+        const nativeHoursBefore = event.lowTurnoutAutoCancelHoursBefore ?? null;
+        const nativeWouldCancel =
+          nativeThreshold !== null && nativeHoursBefore !== null
+            ? hoursUntilStart <= nativeHoursBefore && signupCount < nativeThreshold
+            : null;
+
+        log(
+          `[evaluator] event=${event.id.slice(0, 8)} cp=${cp.index}(${cp.action}@T-${cp.offset_hours}h) ` +
+            `signups=${signupCount}/${cp.min_signups} → ${decision}` +
+            (dryRun ? " [DRY-RUN]" : ""),
+        );
+
+        if (dryRun) {
+          stats.decisions_written++;
+          existingKeys.add(decisionKey);
+          continue;
+        }
+
+        // Write decision row
+        const row = {
+          club_id: clubId,
+          event_id: event.id,
+          checkpoint_index: cp.index,
+          rule_id: rule.id,
+          rule_name: rule.name,
+          event_name: event.name ?? null,
+          event_start_time: event.startTime,
+          archetype_id: archetypeId ?? null,
+          signup_count: signupCount,
+          total_teams: event.totalTeams ?? 0,
+          hours_before_start: Math.round(hoursUntilStart * 100) / 100,
+          checkpoint_offset_hours: cp.offset_hours,
+          checkpoint_min_signups: cp.min_signups,
+          decision,
+          mode: rule.mode,
+          executed: false,
+          native_threshold: nativeThreshold,
+          native_hours_before: nativeHoursBefore,
+          native_would_cancel: nativeWouldCancel,
+        };
+
+        const { error: insertErr } = await supabase
+          .from("programming_decisions")
+          .insert(row);
+
+        if (insertErr) {
+          if (insertErr.code === "23505") {
+            // Unique violation — already evaluated (race condition)
+            stats.decisions_skipped_existing++;
+          } else {
+            stats.errors++;
+            logger.error({ event: event.id, cp: cp.index, insertErr }, "[evaluator] insert failed");
+          }
+        } else {
+          stats.decisions_written++;
+          existingKeys.add(decisionKey);
+        }
       }
     }
   }

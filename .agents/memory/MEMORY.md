@@ -4,4 +4,6 @@
 - [INVALID signup status](path-to-intermediate-correction.md) — series clinic passes land in INVALID not CONFIRMED; exclusion set must be {CANCELED,DRAFT} only — NEVER include INVALID
 - [Evaluator decisions timing](evaluator-decisions-timing.md) — decisions only written when event enters offset_hours window; 0 decisions is expected until ~T-3h before an off-peak event
 - [Backtest reconstruction](backtest-reconstruction.md) — Phase 2.5 full matrix: FN=0 always by construction; best Open Play cell = N=4/T-2h (24% fire, 55% prec); Clinics N=4/T-2h (53% fire, 90% prec — EXCESS_FIRE but accurate)
-- [Attendance sync constraint bug](attendance-sync-constraint.md) — intra-batch duplicate bug: multi-status signups (CONFIRMED+INVALID) → two (player_id,event_id) rows → ON CONFLICT DO NOTHING fails on same-key within-batch
+- [Attendance sync constraint bug](attendance-sync-constraint.md) — intra-batch duplicate bug: fixed Phase 3 §2a via per-event Map dedup in syncEventAttendance.js; club_id now populated §2b
+- [Phase 3 rules](phase3-rules.md) — Open Play id=01cea5a1 (N=4/T-2h); Clinics id=cc0d0add (N=4/T-18h PROMOTE + N=2/T-2h CANCEL); old mirror rule disabled
+- [Migration 006](phase3-rules.md) — pending manual run in Supabase SQL editor: adds last_heartbeat/jobs, PROMOTE to decisions CHECK, promotion_candidates table, event_fill metadata cols

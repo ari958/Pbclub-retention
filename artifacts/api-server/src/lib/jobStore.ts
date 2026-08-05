@@ -72,6 +72,10 @@ export async function getJob(
 }
 
 export async function startJob(id: string): Promise<void> {
+  // Reclaim any stale running jobs (crash recovery) before starting a new one.
+  // Silently succeeds if the last_heartbeat column doesn't exist yet (pre-migration 006).
+  await reclaimStaleJobs();
+
   const { error } = await supabase
     .from("jobs")
     .update({
@@ -85,6 +89,68 @@ export async function startJob(id: string): Promise<void> {
     .eq("id", id);
   if (error) {
     console.error(`[jobStore] startJob failed for ${id}:`, error.message);
+  }
+}
+
+/**
+ * Update last_heartbeat for a running job.
+ * Call every ~30 s during long-running loops so reclaimStaleJobs() can
+ * distinguish a live-but-slow job from a crashed one.
+ *
+ * Silent no-op if the last_heartbeat column hasn't been added yet (pre-migration 006).
+ */
+export async function heartbeatJob(id: string): Promise<void> {
+  try {
+    const { error } = await supabase
+      .from("jobs")
+      .update({ last_heartbeat: new Date().toISOString() })
+      .eq("id", id);
+    if (error && !error.message.includes("last_heartbeat")) {
+      console.warn(`[jobStore] heartbeatJob warning for ${id}:`, error.message);
+    }
+  } catch {
+    // Heartbeat is non-critical — never propagate errors
+  }
+}
+
+/**
+ * Move any job that has been stuck in 'running' with no heartbeat update
+ * for longer than thresholdMinutes to status='error'.
+ *
+ * Called automatically at the top of startJob() and exported so the status
+ * endpoints can call it on demand.
+ *
+ * Returns the number of jobs reclaimed. Returns 0 silently if the
+ * last_heartbeat column doesn't exist yet (pre-migration 006).
+ */
+export async function reclaimStaleJobs(thresholdMinutes = 5): Promise<number> {
+  try {
+    const cutoff = new Date(Date.now() - thresholdMinutes * 60_000).toISOString();
+    const { data, error } = await supabase
+      .from("jobs")
+      .update({
+        status: "error",
+        error: `stale: no heartbeat for >${thresholdMinutes}m — process likely crashed`,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("status", "running")
+      .lt("last_heartbeat", cutoff)
+      .select("id");
+
+    if (error) {
+      // Column not yet added → ignore; any other error → log
+      if (!error.message.includes("last_heartbeat")) {
+        console.warn("[jobStore] reclaimStaleJobs error:", error.message);
+      }
+      return 0;
+    }
+    const reclaimed = (data ?? []).length;
+    if (reclaimed > 0) {
+      console.log(`[jobStore] reclaimStaleJobs: reclaimed ${reclaimed} stale job(s)`);
+    }
+    return reclaimed;
+  } catch {
+    return 0;
   }
 }
 

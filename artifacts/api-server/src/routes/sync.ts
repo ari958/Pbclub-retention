@@ -4,7 +4,7 @@ import { z } from "zod";
 import { syncSinglePlayer } from "../syncPlayerAttendance.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
-import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel, heartbeatJob, reclaimStaleJobs } from "../lib/jobStore";
 import { runNightlyChain } from "../lib/scheduler";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { computeChurnScore, computeChurnScoreAndReturn, runChurnScoreBatch, JOB_CHURN } from "../lib/churnScore";
@@ -258,7 +258,9 @@ router.post("/sync/events", requireClub, async (req, res) => {
       const stats = await syncEventAttendance(
         clubId,
         (msg: string) => appendJobLog(JOB_SYNC_EVENTS, msg),
-        () => isCancelled(JOB_SYNC_EVENTS)
+        () => isCancelled(JOB_SYNC_EVENTS),
+        0,                                          // sinceDays — full sync for manual trigger
+        () => heartbeatJob(JOB_SYNC_EVENTS)         // Phase 3 §1b — keeps last_heartbeat fresh
       );
       const wasCancelled = await isCancelled(JOB_SYNC_EVENTS);
       await finishJob(JOB_SYNC_EVENTS, wasCancelled ? "cancelled" : "done", stats);
@@ -278,6 +280,7 @@ router.post("/sync/events", requireClub, async (req, res) => {
 });
 
 router.get("/sync/events/status", async (_req, res) => {
+  await reclaimStaleJobs(); // §1c — auto-reclaim on status poll
   const job = await getJob(JOB_SYNC_EVENTS, { withLogs: true });
   res.json({
     status: job.status,

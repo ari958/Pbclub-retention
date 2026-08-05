@@ -482,7 +482,7 @@ const BacktestBodySchema = z.object({
       index:        z.number().int(),
       offset_hours: z.number().int(),
       min_signups:  z.number().int(),
-      action:       z.enum(["CANCEL", "ALERT"]),
+      action:       z.enum(["CANCEL", "ALERT", "PROMOTE"]),
     })).min(1),
   }),
 });
@@ -893,4 +893,477 @@ router.post("/programming/backtest", async (req, res) => {
   }
 });
 
+// ── GET /api/programming/rules ────────────────────────────────────────────────
+
+router.get("/programming/rules", async (req, res) => {
+  const clubId = req.query.clubId as string;
+  if (!clubId) { res.status(400).json({ error: "clubId required" }); return; }
+  const { data, error } = await supabase
+    .from("programming_rules")
+    .select("*")
+    .eq("club_id", clubId)
+    .order("created_at", { ascending: true });
+  if (error) { res.status(500).json({ error: error.message }); return; }
+  res.json({ rules: data ?? [] });
+});
+
+// ── POST /api/programming/rules/seed-phase3 ───────────────────────────────────
+//
+// Idempotent — safe to re-run. Disables the old mirror rule and upserts the
+// two Phase 3 rules (Open Play N=4/T-2h and Clinics N=2/T-2h + N=4/T-18h).
+// Returns a count of upcoming events matching each rule's podplay_type.
+
+router.post("/programming/rules/seed-phase3", async (req, res) => {
+  const clubId = ((req.body as any)?.clubId ?? req.query.clubId) as string;
+  if (!clubId) { res.status(400).json({ error: "clubId required" }); return; }
+
+  try {
+    // 1. Disable the legacy mirror rule
+    await supabase
+      .from("programming_rules")
+      .update({ enabled: false })
+      .eq("club_id", clubId)
+      .eq("name", "Off-Peak Open Play — native mirror");
+
+    // 2. Phase 3 rule definitions
+    const ruleDefs = [
+      {
+        club_id:     clubId,
+        name:        "Open Play — cancel",
+        enabled:     true,
+        mode:        "shadow" as const,
+        match_rules: { podplay_types: ["Open Play"] },
+        checkpoints: [
+          { index: 0, offset_hours: 2, min_signups: 4, action: "CANCEL" },
+        ],
+      },
+      {
+        club_id:     clubId,
+        name:        "Clinics — cancel + promote",
+        enabled:     true,
+        mode:        "shadow" as const,
+        match_rules: { podplay_types: ["Clinics"] },
+        checkpoints: [
+          { index: 0, offset_hours: 18, min_signups: 4, action: "PROMOTE" }, // T-18h promote
+          { index: 1, offset_hours: 2,  min_signups: 2, action: "CANCEL"  }, // T-2h cancel
+        ],
+      },
+    ];
+
+    const results: any[] = [];
+    for (const def of ruleDefs) {
+      const { data: existing } = await supabase
+        .from("programming_rules")
+        .select("id")
+        .eq("club_id", clubId)
+        .eq("name", def.name)
+        .maybeSingle();
+
+      if (existing) {
+        const { data: updated } = await supabase
+          .from("programming_rules")
+          .update({ enabled: def.enabled, match_rules: def.match_rules, checkpoints: def.checkpoints, mode: def.mode })
+          .eq("id", (existing as any).id)
+          .select("id, name, enabled, match_rules, checkpoints")
+          .single();
+        results.push({ action: "updated", rule: updated });
+      } else {
+        const { data: inserted } = await supabase
+          .from("programming_rules")
+          .insert(def)
+          .select("id, name, enabled, match_rules, checkpoints")
+          .single();
+        results.push({ action: "inserted", rule: inserted });
+      }
+    }
+
+    // 3. Count upcoming events in the next 96 h by podplay_type
+    //    event_fill.podplay_type requires migration 006; fall back gracefully.
+    const now     = new Date().toISOString();
+    const horizon = new Date(Date.now() + 96 * 3_600_000).toISOString();
+    let upcomingCounts: Record<string, number> = {};
+    let upcomingNote = "";
+
+    try {
+      const { data: upcomingRows } = await supabase
+        .from("event_fill")
+        .select("podplay_type")
+        .eq("club_id", clubId)
+        .eq("is_canceled", false)
+        .gte("start_time", now)
+        .lte("start_time", horizon);
+
+      if (upcomingRows) {
+        for (const row of upcomingRows) {
+          const t = (row as any).podplay_type ?? "(null)";
+          upcomingCounts[t] = (upcomingCounts[t] ?? 0) + 1;
+        }
+        upcomingNote = "event_fill.podplay_type populated — counts are exact";
+      }
+    } catch {
+      upcomingNote = "event_fill.podplay_type not yet available (run migration 006 + backfillEventFillMetadata.ts). Cannot count by type; check /api/programming/upcoming-risk for live matching.";
+    }
+
+    res.json({
+      seeded: results,
+      upcoming_events_next_96h_by_type: upcomingCounts,
+      upcoming_note: upcomingNote,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /api/programming/promotion-candidates/:decisionId ─────────────────────
+//
+// Build (and store) the ranked promotion audience for a PROMOTE decision.
+// DATA ONLY — nothing here sends a message or writes to messages/notifications.
+//
+// Query params:
+//   rebuild=true  — re-score and overwrite existing promotion_candidates rows
+//                   (default: false — return existing rows if present)
+//
+// Filters applied in order (per spec §5b):
+//   1. Level fit      — coach_assigned_level or skill_level vs. event admissionRating
+//   2. Engagement     — exclude lapsing / dormant / churned (mark ineligible)
+//   3. Reachability   — attendance_archetype must be 'planner' or 'early' at T-18h
+//   4. Slot fit       — preferred_booking_dow / preferred_booking_hour vs. event
+//   5. Already booked — excluded (not included in candidates at all)
+//   6. Consent        — sms_opt_in / opted_out; both channels reported
+
+const LEVEL_NUMERIC: Record<string, number> = {
+  "Beginner":             1.5,
+  "Advanced Beginner":    2.5,
+  "Low Intermediate":     3.0,
+  "Intermediate":         3.5,
+  "Advanced Intermediate":3.75,
+  "Advanced":             4.5,
+};
+
+router.get("/programming/promotion-candidates/:decisionId", async (req, res) => {
+  const { decisionId } = req.params;
+  const rebuild = req.query.rebuild === "true";
+
+  try {
+    // ── 0. Load decision ──────────────────────────────────────────────────────
+    const { data: dec, error: decErr } = await supabase
+      .from("programming_decisions")
+      .select("*")
+      .eq("id", decisionId)
+      .maybeSingle();
+
+    if (decErr) { res.status(500).json({ error: decErr.message }); return; }
+    if (!dec)   { res.status(404).json({ error: "Decision not found" }); return; }
+    if ((dec as any).decision !== "PROMOTE") {
+      res.status(400).json({ error: `Decision is '${(dec as any).decision}', not PROMOTE` }); return;
+    }
+
+    // If not rebuilding, return existing rows
+    if (!rebuild) {
+      const { data: existing } = await supabase
+        .from("promotion_candidates")
+        .select("*")
+        .eq("decision_id", decisionId)
+        .order("rank");
+      if (existing && existing.length > 0) {
+        res.json({ cached: true, count: existing.length, candidates: existing }); return;
+      }
+    }
+
+    const clubId  = (dec as any).club_id as string;
+    const eventId = (dec as any).event_id as string;
+
+    // ── 1. Fetch club API config ──────────────────────────────────────────────
+    const { data: club } = await supabase
+      .from("clubs")
+      .select("platform_api_key, platform_subdomain")
+      .eq("id", clubId)
+      .maybeSingle();
+    if (!club?.platform_subdomain) {
+      res.status(500).json({ error: "Club not configured" }); return;
+    }
+    const apiBase = `https://${club.platform_subdomain}.podplay.app/apis/v2`;
+    const apiKey  = club.platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
+
+    // ── 2. Fetch event detail (admissionRating, capacity) from PodPlay ────────
+    let eventDetail: any = null;
+    try {
+      const er = await fetch(`${apiBase}/events/${eventId}`, { headers: { "x-api-key": apiKey } });
+      if (er.ok) eventDetail = await er.json();
+    } catch { /* best-effort */ }
+
+    const eventStartIso  = (dec as any).event_start_time as string;
+    const eventStartDate = new Date(eventStartIso);
+    const eventDow       = eventStartDate.getUTCDay(); // 0=Sun … 6=Sat (UTC ok for DOW match)
+    const eventHour      = eventStartDate.getUTCHours();
+    const admissionMin   = eventDetail?.admissionRating?.minRating ?? null;
+    const admissionMax   = eventDetail?.admissionRating?.maxRating ?? null;
+    const capacity       = (dec as any).total_teams as number ?? 0;
+
+    // ── 3. Fetch current signups (to exclude already-booked players) ──────────
+    const bookedExternalIds = new Set<string>();
+    try {
+      let sp = 1;
+      while (true) {
+        const sr = await fetch(`${apiBase}/events/${eventId}/signups?pageSize=200&page=${sp}`,
+          { headers: { "x-api-key": apiKey } });
+        if (!sr.ok) break;
+        const sb: any = await sr.json();
+        const items: any[] = sb?.items ?? [];
+        items.forEach((s: any) => { if (s.owner?.id) bookedExternalIds.add(s.owner.id); });
+        if (items.length < 200) break;
+        sp++;
+      }
+    } catch { /* best-effort — if we can't fetch signups, we can't exclude */ }
+
+    // ── 4. Load all active players + external_id map ──────────────────────────
+    const players: any[] = [];
+    let offset = 0;
+    while (true) {
+      const { data: pg, error: pgErr } = await supabase
+        .from("players")
+        .select(
+          "id, external_id, name, sms_opt_in, opted_out, progression_status, churn_risk, " +
+          "coach_assigned_level, skill_level, warm_score, attendance_archetype, " +
+          "preferred_booking_dow, preferred_booking_hour, last_outbound_at"
+        )
+        .eq("club_id", clubId)
+        .not("external_id", "is", null)
+        .range(offset, offset + 999);
+      if (pgErr || !pg?.length) break;
+      players.push(...pg);
+      if (pg.length < 1000) break;
+      offset += 1000;
+    }
+
+    // ── 5. Load current event signups from local attendances (for buddy lookup) 
+    const { data: eventSignups } = await supabase
+      .from("attendances")
+      .select("player_id")
+      .eq("event_id", eventId);
+    const signedUpPlayerIds = new Set((eventSignups ?? []).map((r: any) => r.player_id));
+
+    // ── 6. Load buddy pairs for already-signed-up players ─────────────────────
+    const signedUpArr = [...signedUpPlayerIds];
+    const buddyMap = new Map<string, string[]>(); // player_id → buddy player_ids
+    if (signedUpArr.length > 0) {
+      const CHUNK = 100;
+      for (let ci = 0; ci < signedUpArr.length; ci += CHUNK) {
+        const chunk = signedUpArr.slice(ci, ci + CHUNK);
+        const { data: pairs } = await supabase
+          .from("buddy_pairs")
+          .select("player_a, player_b")
+          .or(`player_a.in.(${chunk.join(",")}),player_b.in.(${chunk.join(",")})`);
+        for (const pair of (pairs ?? [])) {
+          const { player_a, player_b } = pair as any;
+          // Buddy is the OTHER player in the pair relative to the signed-up one
+          if (signedUpPlayerIds.has(player_a)) {
+            if (!buddyMap.has(player_b)) buddyMap.set(player_b, []);
+            buddyMap.get(player_b)!.push(player_a);
+          }
+          if (signedUpPlayerIds.has(player_b)) {
+            if (!buddyMap.has(player_a)) buddyMap.set(player_a, []);
+            buddyMap.get(player_a)!.push(player_b);
+          }
+        }
+      }
+    }
+
+    // ── 7. Last-48h send budget check ─────────────────────────────────────────
+    const cutoff48h = new Date(Date.now() - 48 * 3_600_000).toISOString();
+    const { data: recentMessages } = await supabase
+      .from("messages")
+      .select("player_id:conversations(player_id)")
+      .eq("direction", "outbound")
+      .gte("sent_at", cutoff48h)
+      .not("status", "eq", "failed");
+    const contactedRecently = new Set<string>(
+      (recentMessages ?? []).map((m: any) => m.player_id?.player_id).filter(Boolean)
+    );
+
+    // ── 8. Filter + score each player ─────────────────────────────────────────
+    const funnel = {
+      total_players: players.length,
+      after_already_booked: 0,
+      after_level_fit: 0,
+      after_engagement_state: 0,
+      after_archetype: 0,
+      eligible_final: 0,
+      sms_reachable: 0,
+      email_only: 0,
+      flagged_contacted_48h: 0,
+    };
+
+    const candidates: any[] = [];
+
+    for (const p of players) {
+      // 5. Already booked — skip entirely
+      if (p.external_id && bookedExternalIds.has(p.external_id)) continue;
+      if (signedUpPlayerIds.has(p.id)) continue;
+      funnel.after_already_booked++;
+
+      let eligible = true;
+      const reasons: Record<string, any> = {};
+      let score = 0;
+      let ineligibleReason: string | null = null;
+
+      // 1. Level fit
+      const playerLevel = p.coach_assigned_level ?? p.skill_level ?? null;
+      if (admissionMin !== null && admissionMax !== null && playerLevel) {
+        const playerNumeric = LEVEL_NUMERIC[playerLevel];
+        if (playerNumeric !== undefined && playerNumeric !== 0) {
+          if (playerNumeric < admissionMin || playerNumeric > admissionMax) {
+            eligible = false;
+            ineligibleReason = `level ${playerLevel} outside event range ${admissionMin}–${admissionMax}`;
+          } else {
+            reasons.level_fit = `${playerLevel} ∈ [${admissionMin}, ${admissionMax}]`;
+          }
+        }
+      }
+      if (eligible) funnel.after_level_fit++;
+
+      // 2. Engagement state — mark ineligible but keep in list (§5c)
+      const prog = p.progression_status ?? "";
+      const churn = p.churn_risk ?? "";
+      if (eligible && (prog === "lapsing" || prog === "dormant" || prog === "churned" || churn === "high")) {
+        eligible = false;
+        ineligibleReason = `engagement state: ${prog || churn}`;
+        reasons.engagement_exclusion = ineligibleReason;
+      } else if (eligible) {
+        funnel.after_engagement_state++;
+        reasons.engagement_state = prog || "active";
+      }
+
+      // 3. Reachability — archetype must be 'planner' or 'early' for T-18h outreach
+      const arch = (p.attendance_archetype ?? "").toLowerCase();
+      if (eligible && arch && arch !== "planner" && arch !== "early") {
+        eligible = false;
+        ineligibleReason = `attendance_archetype '${arch}' unlikely to book at T-18h`;
+        reasons.archetype_exclusion = ineligibleReason;
+      } else if (eligible) {
+        funnel.after_archetype++;
+      }
+
+      // 4. Slot fit scoring (does not gate eligibility)
+      if (p.preferred_booking_dow !== null && p.preferred_booking_dow === eventDow) {
+        score += 5;
+        reasons.slot_dow_match = `preferred DOW ${p.preferred_booking_dow} matches event`;
+      }
+      if (p.preferred_booking_hour !== null &&
+          Math.abs(p.preferred_booking_hour - eventHour) <= 2) {
+        score += 3;
+        reasons.slot_hour_match = `preferred hour ${p.preferred_booking_hour} ≈ event ${eventHour}`;
+      }
+
+      // 2. Program affinity scoring
+      if (p.warm_score !== null) {
+        score += Math.round(p.warm_score * 10);
+        reasons.warm_score = p.warm_score;
+      }
+
+      // 5d. Buddy signal
+      const buddies = buddyMap.get(p.id);
+      if (buddies && buddies.length > 0) {
+        score += 20;
+        reasons.buddy_already_signed_up = buddies.length;
+      }
+
+      // 6. Consent
+      const smsOk = p.sms_opt_in === true && p.opted_out !== true;
+      reasons.sms_reachable = smsOk;
+
+      // 5e. Send budget — flag only, do not suppress
+      const contactedRecent = contactedRecently.has(p.id);
+      if (contactedRecent) {
+        reasons.flagged_contacted_48h = true;
+        funnel.flagged_contacted_48h++;
+      }
+
+      if (eligible) {
+        funnel.eligible_final++;
+        if (smsOk) funnel.sms_reachable++;
+        else       funnel.email_only++;
+      }
+
+      candidates.push({
+        player_id: p.id,
+        player_name: p.name,
+        eligible,
+        ineligible_reason: ineligibleReason,
+        score,
+        reasons,
+        sms_opt_in: smsOk,
+      });
+    }
+
+    // ── 9. Sort eligible candidates by score desc; ineligible go after ────────
+    candidates.sort((a, b) => {
+      if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+      return b.score - a.score;
+    });
+
+    // Assign ranks (eligible only)
+    let rank = 1;
+    const toStore: any[] = [];
+    for (const c of candidates) {
+      if (c.eligible) {
+        c.rank = rank++;
+      } else {
+        c.rank = null;
+      }
+      if (c.eligible || c.ineligible_reason) {
+        toStore.push({
+          decision_id:       decisionId,
+          player_id:         c.player_id,
+          rank:              c.rank ?? 9999,
+          score:             c.score,
+          reasons:           c.reasons,
+          eligible:          c.eligible,
+          ineligible_reason: c.ineligible_reason ?? null,
+        });
+      }
+    }
+
+    // ── 10. Persist to promotion_candidates (best-effort; table may not exist yet) ──
+    let stored = false;
+    if (toStore.length > 0) {
+      try {
+        const BATCH = 100;
+        for (let i = 0; i < toStore.length; i += BATCH) {
+          await supabase
+            .from("promotion_candidates")
+            .upsert(toStore.slice(i, i + BATCH), {
+              onConflict: "decision_id,player_id",
+              ignoreDuplicates: false,
+            });
+        }
+        stored = true;
+      } catch {
+        // Table doesn't exist yet (pre-migration 006) — return results without storing
+      }
+    }
+
+    res.json({
+      decision_id: decisionId,
+      event_id:    eventId,
+      event_name:  (dec as any).event_name,
+      event_start: eventStartIso,
+      admission_rating: admissionMin !== null ? { min: admissionMin, max: admissionMax } : null,
+      capacity,
+      current_signups: (dec as any).signup_count,
+      booked_externally: bookedExternalIds.size,
+      stored_to_db: stored,
+      funnel,
+      eligible_count:   funnel.eligible_final,
+      candidates:       candidates.slice(0, 50), // cap response at top-50
+      total_candidates: candidates.length,
+    });
+
+  } catch (err: any) {
+    logger.error({ err }, "[programming/promotion-candidates] error");
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
+

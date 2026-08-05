@@ -165,7 +165,16 @@ const VALID_SIGNUP_STATUSES = ATTENDANCE_SIGNUP_STATUSES;
 
 // ─── Main sync ────────────────────────────────────────────────────────────────
 
-export async function syncEventAttendance(clubId, log = console.log, isCancelled = () => false, sinceDays = 0) {
+/**
+ * @param {string}   clubId
+ * @param {Function} [log]         - logging sink, default console.log
+ * @param {Function} [isCancelled] - async predicate; resolves true to stop early
+ * @param {number}   [sinceDays]   - incremental window in days (0 = full sync)
+ * @param {Function} [heartbeat]   - async no-arg fn; called every ~50 events and
+ *                                   ~100 players so the jobs table last_heartbeat
+ *                                   stays current (prevents stale-job reclaim).
+ */
+export async function syncEventAttendance(clubId, log = console.log, isCancelled = () => false, sinceDays = 0, heartbeat = async () => {}) {
   if (!clubId) throw new Error("syncEventAttendance requires clubId");
 
   const stats = {
@@ -231,6 +240,11 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
   }
   let page = 1;
   const pendingUpserts = [];
+  // Signup status priority for within-event dedup (Phase 3 §2a).
+  // A player who has CONFIRMED + INVALID for the same event must appear only
+  // once in the upsert batch. We keep the higher-priority status row.
+  const STATUS_PRIORITY = { CONFIRMED: 2, CHECKED_IN: 2, INVALID: 1 };
+  let eventsProcessedCount = 0;
 
   async function flushUpserts() {
     if (pendingUpserts.length === 0) return;
@@ -288,6 +302,11 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
 
       await sleep(SIGNUP_FETCH_DELAY_MS);
 
+      // Heartbeat every 50 events — keeps last_heartbeat fresh so
+      // reclaimStaleJobs() doesn't reclaim a legitimately running sync.
+      eventsProcessedCount++;
+      if (eventsProcessedCount % 50 === 0) { await heartbeat(); }
+
       let signups;
       try {
         signups = await fetchEventSignups(podplayBase, apiKey, event.id);
@@ -301,6 +320,24 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
 
       let matched = 0;
       let unmatched = 0;
+
+      // Per-event dedup map: key = player.id (event_id is constant within this loop).
+      // Prevents two rows with the same (player_id, event_id) entering the same
+      // upsert batch when a player has BOTH a CONFIRMED and an INVALID signup for
+      // the same event (Phase 3 §2a fix; root cause documented in
+      // .agents/memory/attendance-sync-constraint.md).
+      const eventDedup = new Map();
+
+      const attendedAt = event.startTime;
+      const rawSessionType = event.sessionType ?? null;
+      const SESSION_TYPE_WHITELIST = new Set(["clinic", "open_play", "drilling", "trial", "intro"]);
+      const session_type =
+        rawSessionType && SESSION_TYPE_WHITELIST.has(rawSessionType.toLowerCase())
+          ? rawSessionType.toLowerCase()
+          : null;
+      const programName  = normalizeProgramName(event.name, log);
+      const programType  = event.customType ?? event.type ?? null;
+      const levelTag     = extractSkillLevel(event.tags);
 
       for (const signup of signups) {
         const externalId = signup.owner?.id;
@@ -316,32 +353,37 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
         }
 
         matched++;
-        const attendedAt = event.startTime;
-
-        const rawSessionType = event.sessionType ?? null;
-        const SESSION_TYPE_WHITELIST = new Set(["clinic", "open_play", "drilling", "trial", "intro"]);
-        const session_type =
-          rawSessionType && SESSION_TYPE_WHITELIST.has(rawSessionType.toLowerCase())
-            ? rawSessionType.toLowerCase()
-            : null;
 
         const bookedAt = signup.summary?.invitation?.createdDate ?? null;
-
-        pendingUpserts.push({
-          player_id: player.id,
-          event_id: event.id,
-          program_name: normalizeProgramName(event.name, log),
-          attended_at: attendedAt,
-          program_type: event.customType ?? event.type ?? null,
-          level: extractSkillLevel(event.tags),
+        const row = {
+          player_id:    player.id,
+          event_id:     event.id,
+          club_id:      clubId,           // Phase 3 §2b — populate club_id on insert
+          program_name: programName,
+          attended_at:  attendedAt,
+          program_type: programType,
+          level:        levelTag,
           session_type,
-          booked_at: bookedAt,
-        });
+          booked_at:    bookedAt,
+        };
 
-        const existing = newAttendancesByPlayer.get(player.id);
-        if (!existing || attendedAt > existing) {
+        // Keep higher-priority status; CONFIRMED/CHECKED_IN beats INVALID
+        const newPriority = STATUS_PRIORITY[signupStatus] ?? 0;
+        const existing = eventDedup.get(player.id);
+        if (!existing || newPriority > existing.priority) {
+          eventDedup.set(player.id, { row, priority: newPriority });
+        }
+
+        // Track latest attendance per player (idempotent max — no dedup needed)
+        const existingVisit = newAttendancesByPlayer.get(player.id);
+        if (!existingVisit || attendedAt > existingVisit) {
           newAttendancesByPlayer.set(player.id, attendedAt);
         }
+      }
+
+      // Flush deduped rows into the pending batch
+      for (const { row } of eventDedup.values()) {
+        pendingUpserts.push(row);
       }
 
       stats.signupsMatched += matched;
@@ -368,9 +410,13 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
   // Step 3: Update last_visit_date + check win-backs
   log("[sync/events] Updating last_visit_date and checking win-backs…");
   let visitUpdates = 0;
+  let visitLoopCount = 0;
 
   for (const player of allPlayers) {
     if (await isCancelled()) break;
+    // Heartbeat every 100 players — this loop can take minutes on large clubs
+    visitLoopCount++;
+    if (visitLoopCount % 100 === 0) { await heartbeat(); }
 
     const { data: latest } = await getSupabase()
       .from("attendances")
