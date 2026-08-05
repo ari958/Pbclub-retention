@@ -635,11 +635,11 @@ router.post("/programming/backtest", async (req, res) => {
       || (rule.match_rules.podplay_types?.length ?? 0) > 0;
 
     for (const cp of rule.checkpoints) {
-      let evaluated = 0, wouldFire = 0, tp = 0, fp = 0;
+      let evaluated = 0, wouldFire = 0, tp = 0, fp = 0, fn = 0, tn = 0;
       let skippedCoverage = 0, skippedUndercount = 0, skippedNoData = 0;
       let skippedAlreadyCancelled = 0;
-      const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
-      const byProgramType: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
+      const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
+      const byProgramType: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
       const eventDetails: any[] = [];
       const usableRowCounts: number[] = [];
 
@@ -686,11 +686,22 @@ router.post("/programming/backtest", async (req, res) => {
         //     cancelled a session that ended up fine)
         // TP: would fire AND final count stayed below threshold (correctly spotted
         //     a genuinely under-enrolled session)
+        // FN: did NOT fire AND final count stayed below threshold (missed a dead session)
+        // TN: did NOT fire AND final count reached threshold (correctly left alone)
+        //
+        // Note: FN = 0 is mathematically guaranteed by the booked_at reconstruction.
+        // count_at_offset ≤ total_att_rows ≤ final_signups, so if the rule does NOT
+        // fire (count_at_offset ≥ N), final_signups ≥ N too — impossible to miss a
+        // truly dead session. Recall is therefore always 1.000 in this dataset.
+        // This is a property of the reconstruction, not a claim that no dead sessions
+        // exist in the real world.
         const finalCount    = fill.final_signups as number;
         const truePositive  = fires && finalCount <  cp.min_signups;
         const falsePositive = fires && finalCount >= cp.min_signups;
+        const falseNegative = !fires && finalCount <  cp.min_signups;
+        const trueNegative  = !fires && finalCount >= cp.min_signups;
 
-        if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
+        if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0, fn: 0, tn: 0 };
         const ab = byArchetype[archName];
 
         // Program-type segmentation (Clinics vs Open Play)
@@ -698,7 +709,7 @@ router.post("/programming/backtest", async (req, res) => {
         const progType = (lc.includes("clinic") || lc.includes("learn") || lc.includes("junior"))
           ? "Clinics"
           : "Open Play";
-        if (!byProgramType[progType]) byProgramType[progType] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
+        if (!byProgramType[progType]) byProgramType[progType] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0, fn: 0, tn: 0 };
         const pt = byProgramType[progType];
 
         evaluated++; ab.evaluated++; pt.evaluated++;
@@ -706,6 +717,9 @@ router.post("/programming/backtest", async (req, res) => {
           wouldFire++; ab.wouldFire++; pt.wouldFire++;
           if (truePositive)  { tp++; ab.tp++; pt.tp++; }
           if (falsePositive) { fp++; ab.fp++; pt.fp++; }
+        } else {
+          if (falseNegative) { fn++; ab.fn++; pt.fn++; }
+          if (trueNegative)  { tn++; ab.tn++; pt.tn++; }
         }
 
         if (includeEventDetails) {
@@ -721,6 +735,8 @@ router.post("/programming/backtest", async (req, res) => {
             would_fire:         fires,
             is_tp:              truePositive,
             is_fp:              falsePositive,
+            is_fn:              falseNegative,
+            is_tn:              trueNegative,
           });
         }
       }
@@ -732,31 +748,74 @@ router.post("/programming/backtest", async (req, res) => {
         ? `±${Math.round(100 / medUR)}pp (1-signup at median ${medUR} rows/event)`
         : "unknown";
 
+      // Compute aggregate rates
+      const fireRate  = evaluated > 0 ? wouldFire / evaluated : null;
+      const fpRate    = wouldFire  > 0 ? fp / wouldFire        : null;
+      const precision = wouldFire  > 0 ? tp / wouldFire        : null;
+      const recall    = (tp + fn)  > 0 ? tp / (tp + fn)        : null;
+
+      // Degenerate-cell flags (1c)
+      const flags: string[] = [];
+      if (wouldFire < 10)                        flags.push("LOW_SAMPLE: fired<10, results unreliable");
+      if (fireRate !== null && fireRate > 0.5)   flags.push("EXCESS_FIRE: cancels >50% of schedule");
+
+      const r = (v: number | null) => v !== null ? Math.round(v * 1000) / 1000 : null;
+
       checkpointResults.push({
         checkpoint_index:     cp.index,
         offset_hours:         cp.offset_hours,
         min_signups:          cp.min_signups,
         action:               cp.action,
         evaluated,
-        would_fire:           wouldFire,
+        fired:                wouldFire,    // alias for clarity (spec term)
         true_positives:       tp,
         false_positives:      fp,
+        false_negatives:      fn,
+        true_negatives:       tn,
         skipped_low_coverage: skippedCoverage,
         skipped_undercount:   skippedUndercount,
         skipped_no_data:      skippedNoData,
         skipped_already_cancelled: skippedAlreadyCancelled,
-        fire_rate:   evaluated > 0 ? Math.round(wouldFire / evaluated * 1000) / 1000 : null,
-        fp_rate:     wouldFire  > 0 ? Math.round(fp / wouldFire  * 1000) / 1000 : null,
+        fire_rate:  r(fireRate),
+        fp_rate:    r(fpRate),
+        precision:  r(precision),
+        recall:     r(recall),
+        flags:      flags.length ? flags : undefined,
         median_usable_rows: medUR,
         uncertainty_band:   uncertainty,
-        by_archetype:       byArchetype,
+        reconstruction_caveat:
+          fn === 0
+            ? "FN=0 is a mathematical property: count_at_offset ≤ final_signups by construction " +
+              "(booked_at timestamps are monotonically non-decreasing). Recall=1.0 does not imply " +
+              "the rule catches all dead sessions in reality — only that the reconstruction cannot " +
+              "represent a session that had enough members at offset time but fewer at end."
+            : undefined,
+        by_archetype: Object.fromEntries(
+          Object.entries(byArchetype).map(([name, s]) => [name, {
+            evaluated:       s.evaluated,
+            fired:           s.wouldFire,
+            tp:              s.tp,
+            fp:              s.fp,
+            fn:              s.fn,
+            tn:              s.tn,
+            fire_rate:  r(s.evaluated > 0 ? s.wouldFire / s.evaluated : null),
+            fp_rate:    r(s.wouldFire  > 0 ? s.fp / s.wouldFire        : null),
+            precision:  r(s.wouldFire  > 0 ? s.tp / s.wouldFire        : null),
+            recall:     r((s.tp + s.fn) > 0 ? s.tp / (s.tp + s.fn)    : null),
+          }]),
+        ),
         by_program_type: Object.entries(byProgramType).map(([label, s]) => ({
-          program_type:    label,
-          evaluated:       s.evaluated,
-          would_fire:      s.wouldFire,
-          true_positives:  s.tp,
-          false_positives: s.fp,
-          fp_rate:         s.wouldFire > 0 ? Math.round(s.fp / s.wouldFire * 1000) / 1000 : null,
+          program_type: label,
+          evaluated:    s.evaluated,
+          fired:        s.wouldFire,
+          tp:           s.tp,
+          fp:           s.fp,
+          fn:           s.fn,
+          tn:           s.tn,
+          fire_rate:  r(s.evaluated > 0 ? s.wouldFire / s.evaluated : null),
+          fp_rate:    r(s.wouldFire  > 0 ? s.fp / s.wouldFire        : null),
+          precision:  r(s.wouldFire  > 0 ? s.tp / s.wouldFire        : null),
+          recall:     r((s.tp + s.fn) > 0 ? s.tp / (s.tp + s.fn)    : null),
         })),
         ...(includeEventDetails ? { event_details: eventDetails } : {}),
       });

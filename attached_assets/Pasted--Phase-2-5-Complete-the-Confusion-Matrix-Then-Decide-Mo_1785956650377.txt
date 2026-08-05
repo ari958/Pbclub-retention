@@ -1,0 +1,135 @@
+# Phase 2.5 — Complete the Confusion Matrix, Then Decide
+
+**Mode:** Analysis + small fixes. No execution path — nothing here can cancel an event, message anyone, or write to PodPlay.
+**Scope:** 4 items. Item 1 is the core; 3 and 4 are small and independent.
+
+---
+
+## Context
+
+Phase 2.4 replaced the `fill_rate < 0.5` proxy with real ground truth and produced a major correction: **Clinics went from 90.2% FP to 12.2% FP at N=4/T-3h.** The proxy had them exactly backwards — a clinic at 3 of 4 capacity reads as `fill_rate = 0.75` ("healthy") under the proxy, but 3 < N=4 means the rule was correctly firing. Every Clinic conclusion prior to Phase 2.4 is superseded.
+
+Two problems remain before any threshold can be chosen.
+
+**1. The grid measures only one kind of error.** FP rate falls monotonically as N rises — N=8/T-2h shows 20.2% for Open Play; Clinics show 0.0% at N=5 and N=7. That pattern is what you get from a rule that fires on nearly everything: cancel every session and almost none reach threshold, so almost none are false positives. There is no false-negative column and no fire rate, so a cell that cancels 60% of the schedule is indistinguishable from one that cancels 10%. **A low FP rate is not a good rule.**
+
+**2. 23.6% of member bookings arrive inside the final 3 hours.** That is the dominant driver of FP inflation at T-3h and it is not fixable by moving N. It also says something structural: open play is a late-booking product, and T-3h may simply be the wrong checkpoint for it. Retuning N upward at T-3h treats the symptom.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels, patches, or sends — not behind a flag, not commented out.
+
+**3. No messaging.** `programming_notifications` stays empty.
+
+**4. Supabase writes** limited to `attendances` (Item 4 backfill only) and `programming_rules`. Do not modify rows or schema in `players`, `messages`, `conversations`, `event_fill`, or any other table.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer.
+
+**7. Never echo secrets.**
+
+---
+
+## Item 1 — Complete the confusion matrix
+
+The backtest currently reports would-fire, TP, FP, FP rate. Add the missing half.
+
+**1a. Per cell, report all of:**
+
+| Field | Definition |
+|---|---|
+| `evaluated` | events scored in this cell |
+| `fired` | reconstructed count at offset < N |
+| `fire_rate` | `fired / evaluated` — **what fraction of the schedule this rule cancels** |
+| `tp` | fired AND final < N |
+| `fp` | fired AND final ≥ N |
+| `fn` | did NOT fire AND final < N — a genuinely dead session the rule missed |
+| `tn` | did NOT fire AND final ≥ N |
+| `fp_rate` | `fp / fired` |
+| `recall` | `tp / (tp + fn)` — of all genuinely dead sessions, how many were caught |
+| `precision` | `tp / (tp + fp)` — same as `1 − fp_rate`, report both for legibility |
+
+**Report `evaluated` and `fired` as raw counts in every cell.** A 0.0% FP rate on 2 fires is not a finding, and the current grid cannot distinguish that from a real result.
+
+**1b. Flag degenerate cells explicitly.** Mark any cell where `fire_rate > 0.5` — cancelling more than half the schedule is not a viable rule regardless of its FP rate. Mark any cell where `fired < 10` as insufficient sample.
+
+**1c. Re-run both grids** (Open Play, Clinics) across offsets 2h/3h/4h/6h/12h/24h and N = 2–8 with the full matrix. Save to `/tmp/phase25/confusion-grid.csv`.
+
+**1d. Recommend per program type** using precision *and* recall together, not FP rate alone. State the tradeoff plainly: at the recommended cell, what fraction of the schedule gets cancelled, how many dead sessions are caught, and how many good sessions are killed. Express it in sessions per month at PB Club's actual volume, not just percentages — that is the form the operator decision takes.
+
+**1e. Compare against the live config.** N=4/T-3h on Open Play: fire rate, precision, recall, and what it means in sessions per month. Then state whether the recommended cell is meaningfully better or within the uncertainty band.
+
+**STATUS:**
+
+---
+
+## Item 2 — Is T-3h the wrong checkpoint for Open Play?
+
+23.6% of bookings arriving inside the final 3 hours is a structural finding, not a tuning parameter. Test whether the checkpoint itself is the problem.
+
+**2a. Late-booking curve by program type.** For Open Play and Clinics separately, report the fraction of final enrollment present at each offset (2h/3h/4h/6h/12h/24h), as p25/p50/p75 with `n`. Phase 0.6 found Clinics at p50 = 1.000 by T-2h versus Open Play at 0.500 — confirm or revise on corrected data.
+
+**2b. Where does the curve flatten?** Identify, per program type, the offset beyond which additional waiting adds little information — i.e. where the count at offset stops improving as a predictor of final count. Report the correlation between count-at-offset and final count per offset.
+
+**2c. Does a two-checkpoint rule beat a one-checkpoint rule?** Test: an early checkpoint that only *flags* (no cancel), plus a late checkpoint that cancels only if the count is still below threshold. Report the combined precision and recall against the best single checkpoint. This is the intervention-ladder shape from the brief, tested rather than assumed.
+
+**2d. State the practical floor.** What is the latest offset at which cancelling is still operationally viable — staff notice, member notice, court reallocation? This is an operator constraint, not a data question; flag it as needing input rather than assuming a number.
+
+**STATUS:**
+
+---
+
+## Item 3 — Two operational defects
+
+Both surfaced during Phase 2.4. Small, unrelated to the analysis.
+
+**3a. Stale job state after crash.** The sync crashed mid-run and left `jobs` in `running`, blocking re-trigger until the row was manually cleared. That fails silently and will recur — worse once the scheduler is unattended.
+
+Report how job status is set and cleared, whether any staleness guard exists, and propose a fix: a heartbeat timestamp with a staleness threshold that lets a stuck job be reclaimed automatically. **Propose only — do not implement this phase.**
+
+**3b. `attendances.club_id` is NULL.** The column exists and the sync does not populate it. The multi-tenant design treats `club_id` as the tenant boundary, and every query currently reaches it transitively through `players`.
+
+Report: how many rows are affected, which queries would break under multi-tenant, and what a backfill involves. If the backfill is a single safe UPDATE joining through `players.club_id`, run it and report the count. If it is anything more complicated, propose and stop.
+
+**STATUS:**
+
+---
+
+## Item 4 — Reconcile the one outstanding P2I event
+
+Event `33d7532b` (Mar 23) still shows 2 local rows against 4 PodPlay signups after the Phase 2.4 re-sync — attributed to a batch that hit one of 13 upsert errors.
+
+It falls outside the 120-day backtest window so it does not affect the grids, but 13 silent upsert errors in a sync run is worth understanding.
+
+Report what those errors were, whether they share a cause, and whether any other events are affected. If it is a simple retry, re-sync that single event and confirm 4/4. If the errors indicate something systematic, report and stop.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+
+1. **Recommended rule per program type** — offset, threshold, and the tradeoff in sessions per month: how many cancelled, how many dead sessions caught, how many good sessions killed.
+2. **Live config verdict** — is N=4/T-3h on Open Play better, worse, or indistinguishable from the recommendation? Clear, retune, or leave.
+3. **Is T-3h structurally wrong for Open Play**, and does a two-checkpoint rule beat a single one?
+4. **The two operational defects** — status and proposed fixes.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; no execution path built; evaluator not wired to any timer.**

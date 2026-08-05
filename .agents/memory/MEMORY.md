@@ -3,4 +3,5 @@
 - [PodPlay startTimeTo bug](podplay-starttime-bug.md) — apply BOTH bounds client-side (> now AND <= horizon); upper-bound fix applied in programmingEvaluator.ts and upcoming-risk route
 - [INVALID signup status](path-to-intermediate-correction.md) — series clinic passes land in INVALID not CONFIRMED; exclusion set must be {CANCELED,DRAFT} only — NEVER include INVALID
 - [Evaluator decisions timing](evaluator-decisions-timing.md) — decisions only written when event enters offset_hours window; 0 decisions is expected until ~T-3h before an off-peak event
-- [Backtest reconstruction](backtest-reconstruction.md) — booked_at reconstruction approach, 120-day FP numbers, segmentation: Open Play ~57% FP, Clinics ~90% FP at live N=4/T-3h
+- [Backtest reconstruction](backtest-reconstruction.md) — Phase 2.5 full matrix: FN=0 always by construction; best Open Play cell = N=4/T-2h (24% fire, 55% prec); Clinics N=4/T-2h (53% fire, 90% prec — EXCESS_FIRE but accurate)
+- [Attendance sync constraint bug](attendance-sync-constraint.md) — intra-batch duplicate bug: multi-status signups (CONFIRMED+INVALID) → two (player_id,event_id) rows → ON CONFLICT DO NOTHING fails on same-key within-batch
