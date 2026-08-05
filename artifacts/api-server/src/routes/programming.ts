@@ -53,7 +53,7 @@ function makeJob(): JobState {
   return { status: "idle", startedAt: null, finishedAt: null, stats: null, error: null, logs: [] };
 }
 
-const JOB_EVAL        = "programming_evaluate";
+const JOB_EVAL          = "programming_evaluate";
 const JOB_FILL_BACKFILL = "programming_fill_backfill";
 const jobs: Record<string, JobState> = {
   [JOB_EVAL]:          makeJob(),
@@ -463,8 +463,8 @@ router.get("/programming/backfill-fill/status", (_req, res) => {
 //     match_rules: { archetype_ids?, keywords?, podplay_types? },
 //     checkpoints: [{ index, offset_hours, min_signups, action }]
 //   },
-//   days?: number              (default 120, max 365)
-//   includeEventDetails?: bool (default true; set false for sweep iterations)
+//   days?:               number   (default 120, max 365)
+//   includeEventDetails?: bool    (default true; set false for sweep iterations)
 // }
 
 const BacktestBodySchema = z.object({
@@ -639,6 +639,7 @@ router.post("/programming/backtest", async (req, res) => {
       let skippedCoverage = 0, skippedUndercount = 0, skippedNoData = 0;
       let skippedAlreadyCancelled = 0;
       const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
+      const byProgramType: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number }> = {};
       const eventDetails: any[] = [];
       const usableRowCounts: number[] = [];
 
@@ -691,11 +692,20 @@ router.post("/programming/backtest", async (req, res) => {
 
         if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
         const ab = byArchetype[archName];
-        evaluated++; ab.evaluated++;
+
+        // Program-type segmentation (Clinics vs Open Play)
+        const lc = archName.toLowerCase();
+        const progType = (lc.includes("clinic") || lc.includes("learn") || lc.includes("junior"))
+          ? "Clinics"
+          : "Open Play";
+        if (!byProgramType[progType]) byProgramType[progType] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0 };
+        const pt = byProgramType[progType];
+
+        evaluated++; ab.evaluated++; pt.evaluated++;
         if (fires) {
-          wouldFire++; ab.wouldFire++;
-          if (truePositive)  { tp++; ab.tp++; }
-          if (falsePositive) { fp++; ab.fp++; }
+          wouldFire++; ab.wouldFire++; pt.wouldFire++;
+          if (truePositive)  { tp++; ab.tp++; pt.tp++; }
+          if (falsePositive) { fp++; ab.fp++; pt.fp++; }
         }
 
         if (includeEventDetails) {
@@ -704,6 +714,7 @@ router.post("/programming/backtest", async (req, res) => {
             program_name:       att.programName ?? archName,
             date:               (fill.start_time as string)?.slice(0, 10) ?? null,
             archetype:          archName,
+            program_type:       progType,
             count_at_offset:    signupAtOffset,
             final_signups:      finalCount,
             booked_at_coverage: Math.round(coverage * 1000) / 1000,
@@ -739,9 +750,26 @@ router.post("/programming/backtest", async (req, res) => {
         median_usable_rows: medUR,
         uncertainty_band:   uncertainty,
         by_archetype:       byArchetype,
+        by_program_type: Object.entries(byProgramType).map(([label, s]) => ({
+          program_type:    label,
+          evaluated:       s.evaluated,
+          would_fire:      s.wouldFire,
+          true_positives:  s.tp,
+          false_positives: s.fp,
+          fp_rate:         s.wouldFire > 0 ? Math.round(s.fp / s.wouldFire * 1000) / 1000 : null,
+        })),
         ...(includeEventDetails ? { event_details: eventDetails } : {}),
       });
     }
+
+    // ── 6. Validation hint ────────────────────────────────────────────────────
+    // The Phase 0.6 figure at N=4/T-3h on clean data was ~44% FP rate.
+    // A near-zero result on adequate sample means reconstruction is still broken.
+    const mirrorCp = checkpointResults.find((r) => r.offset_hours === 3 && r.min_signups === 4);
+    const validationWarning =
+      mirrorCp && mirrorCp.fp_rate !== null && mirrorCp.fp_rate < 0.05 && mirrorCp.evaluated > 5
+        ? "WARNING: FP rate near zero for N=4/T-3h — reconstruction may still be broken. Expected ~44% from Phase 0.6."
+        : null;
 
     res.json({
       days,
@@ -760,6 +788,7 @@ router.post("/programming/backtest", async (req, res) => {
           "WARNING: keywords and podplay_types filters were NOT applied — " +
           "event names are not stored in event_fill. Only archetype_ids matching used. See task #9.",
       } : {}),
+      ...(validationWarning ? { validation_warning: validationWarning } : {}),
       checkpoints: checkpointResults,
     });
 
