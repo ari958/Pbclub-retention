@@ -149,8 +149,10 @@ export async function computePlayerTiming(
     }
   }
 
-  // Fetch attendances with real booking timestamps
-  const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  // Fetch attendances with real booking timestamps.
+  // 180-day window captures members who play ~2×/month (typical club cadence).
+  // Phase 3.3: widened from 90d to 180d; minimum qualifying rows lowered to 2.
+  const ninetyDaysAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
   const { data: rows, error } = await supabase
     .from("attendances")
     .select("attended_at, booked_at")
@@ -172,7 +174,7 @@ export async function computePlayerTiming(
     return new Date(r.booked_at) < attended;
   });
 
-  if (valid.length < 3) {
+  if (valid.length < 2) {
     // Fallback: use attended_at to at least get preferred DOW; hour defaults to 18
     const fallbackDows = (rows ?? [])
       .filter((r: any) => r.attended_at)
@@ -254,7 +256,8 @@ export async function batchComputePlayerTiming(
 ): Promise<BatchTimingResult> {
   const { dryRun = false, forceRefresh = false } = options;
   const now = new Date();
-  const ninetyDaysAgo = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000)
+  // 180-day window: same as computePlayerTiming — captures monthly members (Phase 3.3).
+  const ninetyDaysAgo = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
 
@@ -335,7 +338,7 @@ export async function batchComputePlayerTiming(
     let avgLead:   number;
     let preferred_booking_dow: number;
 
-    if (valid.length < 3) {
+    if (valid.length < 2) {
       const fallbackDows = rows
         .filter(r => r.attended_at)
         .map(r => etComponents(new Date(r.attended_at)).weekday);

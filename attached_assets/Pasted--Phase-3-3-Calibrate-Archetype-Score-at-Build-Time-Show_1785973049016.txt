@@ -1,0 +1,166 @@
+# Phase 3.3 — Calibrate Archetype, Score at Build Time, Show the Queue
+
+**Mode:** Diagnose, then build. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 4 items. Item 1 diagnoses before changing anything. Item 4 is the first operator-facing screen.
+
+---
+
+## Context
+
+Phase 3.2 fixed the plumbing: sync errors are at zero, the legacy `attendances_unique_attendance` constraint was diagnosed and worked around, and the engagement filter now uses observed `last_visit_date` instead of the `churn_risk` model output.
+
+The current funnel for decision `743053a0` ("Advanced Beginner Coach Led 60 & 60", 3/4 signups):
+
+```
+2,506 players
+  → 2,503  after already-booked
+  → 2,503  after level fit (no gate — admissionRating null)
+  → 1,239  after engagement (lapsing 99 + dormant 1,150 excluded)
+  →    24  after archetype (early/planner only)
+       16  SMS-reachable
+```
+
+**The operator has decided this is the right shape.** Small and precise beats large and random — 16 well-chosen texts to fill one clinic spot is a good trade, and it protects the SMS channel in a way a 345-person blast would not.
+
+Two consequences follow, and they're what this phase addresses.
+
+**1. The archetype threshold may be miscalibrated rather than data-starved.** 2,321 of 2,506 players are `default`, and only 46 (1.8%) are `early` or `planner`. `computePlayerTiming` requires 3+ attendance rows with `booked_at < attended_at` inside a 90-day window. A member who plays twice a month cannot clear that bar even with perfect data. That may be a threshold problem, not a coverage problem.
+
+**2. Ranking matters far more at 16 than it did at 345.** With a large pool, flat scoring was tolerable — any eligible player was a reasonable target. At 16, who ranks first is most of the value. Warm scores currently exist for 13 players club-wide.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels or patches — not behind a flag, not commented out.
+
+**3. No sending. At all.** No Twilio, no email, no writes to `messages` or `programming_notifications`.
+
+**4. No send button on the queue screen** — not disabled, not hidden, not stubbed. Once it exists it is one flag away from live, and no real candidate list has been reviewed yet.
+
+**5. Supabase writes** limited to: `players` timing columns (Item 1), `promotion_candidates` (Item 2), and `programming_rules`. Do not modify `messages`, `conversations`, `event_fill`, or `attendances`.
+
+**6. Never use `signups._total`** as a live count.
+
+**7. Evaluator stays unwired** from the nightly chain and any timer.
+
+**8. Never echo secrets.**
+
+---
+
+## Item 1 — Is the archetype threshold miscalibrated?
+
+**Diagnose before changing anything.** If the data genuinely isn't there, no threshold change helps and 46 is the honest ceiling.
+
+**1a. Report the qualifying-row distribution.** Per player, how many attendance rows satisfy the archetype's current conditions (non-NULL `booked_at`, `booked_at < attended_at`, within 90 days)? Report the full distribution — p10/p25/p50/p75/p90 and the count at exactly 0, 1, 2, and 3+.
+
+**1b. Separate the two possible causes.** For players at `default`, how many are there because:
+- they have **no attendance rows at all** in the window (genuinely inactive — no fix possible), versus
+- they have attendance rows but **fewer than 3 with usable `booked_at`** (data coverage), versus
+- they have 1–2 qualifying rows (**threshold too strict** for their attendance frequency)
+
+These need different responses. Report the split.
+
+**1c. Test alternative parameters.** Recompute — **dry-run only** — under each of:
+- 90-day window, minimum 2 rows
+- 180-day window, minimum 3 rows
+- 180-day window, minimum 2 rows
+- all-time, minimum 3 rows
+
+For each: how many players get a real archetype, and what's the resulting distribution across `late`/`mid`/`early`/`planner`/`default`?
+
+**1d. Check stability.** A lead-time profile computed from 2 bookings is noisier than one from 10. For players who qualify under both the current and a looser setting, does their archetype **change**? Report the disagreement rate. If loosening reclassifies many players, the looser setting is buying reach at the cost of accuracy — say so plainly.
+
+**1e. Recommend, then apply.** Based on 1a–1d, recommend parameters with the reasoning, apply them, and report the resulting `early` + `planner` population. If the diagnosis shows the data genuinely isn't there, **recommend no change** and say the ceiling is real.
+
+**1f. Reconsider `default` as a hard exclusion.** Phase 3.2 changed NULL archetypes (which passed) into `default` (which is excluded). But "we don't know this player's booking pattern" is different from "this player books late." With an eligible pool of 46, excluding unknowns is a strong implicit choice.
+
+Report what the funnel looks like if `default` is treated as a **ranking penalty** rather than a hard gate — eligible but scored below known `early`/`planner` players. Do not implement; report the counts and recommend.
+
+**STATUS:**
+
+---
+
+## Item 2 — Warm score at candidate-build time
+
+Phase 3.2 correctly identified that `computeWarmScore` is program-type-sensitive, so a nightly batch writing a single player-level score to `players.warm_score` would be wrong for promotion. This also matches runbook open item 6.
+
+**2a. Compute at build time, against the target event's program type.** In the promotion candidate builder, call `computeWarmScore(playerId, clubId, programType)` for each candidate, using the program type of the specific clinic under evaluation.
+
+**2b. Scope it to the surviving set.** Compute **after** the engagement and archetype gates, not before — that's ~24 players rather than ~1,400. Report the measured build time before and after.
+
+**2c. Do not write to `players.warm_score`.** The score is event-class-specific. Store it on the `promotion_candidates` row for that decision, alongside the existing `score` and `reasons`. Note in `reasons` which program type it was computed against.
+
+**2d. Verify the ranking is no longer flat.** Re-run the funnel for decision `743053a0` and report the top candidates with their warm scores. If scores are still uniformly zero, report that and diagnose why — a warm score of 0 for every candidate means the inputs aren't there either, and that's a finding rather than a bug to paper over.
+
+**2e. Report the ranking spread** — min, max, and distribution of final scores across the eligible set. The question is whether rank 1 is meaningfully different from rank 10.
+
+**STATUS:**
+
+---
+
+## Item 3 — Buddy signal on a small pool
+
+Phase 3.1 reported buddy signal firing zero times. With 178 buddy pairs and a 24-person eligible pool, that may be correct — or the join may be wrong.
+
+**3a. Verify the mechanism** on a session that *does* have buddy overlap. Find any upcoming event where a current signup has a buddy pair with a non-booked active player, and confirm the signal fires and appears in `reasons`.
+
+**3b. If it can't fire on the current pool**, report why — small pool, few pairs, or a broken join. Distinguish these; a broken join looks identical to a genuinely empty result.
+
+**3c. Report the expected hit rate.** Across upcoming clinics, how often would a buddy signal be available at all? If it's rare, it's a bonus signal rather than a core ranking input, and the scoring weight should reflect that.
+
+**STATUS:**
+
+---
+
+## Item 4 — The operator queue screen
+
+The first operator-facing surface. Replaces the Programs placeholder or extends it.
+
+**4a. Queue view** — all open `PROMOTE` decisions, one row each:
+- clinic name, start time, hours until start
+- current signups / capacity
+- eligible candidate count, SMS-reachable count
+- decision timestamp
+
+**4b. Detail view** — click a decision, see:
+
+**The funnel, in full.** Every stage with survivors and the number removed. This is the most important element on the screen. A list of 16 names tells the operator nothing; `2,506 → 16` with every step visible tells them whether to trust it.
+
+**The ranked candidate list** — name, score, warm score, and the `reasons` payload rendered legibly (level source, slot fit, buddy signal, days since last contact, engagement state).
+
+**The excluded, with reasons** — collapsed by default, expandable. Group by exclusion reason with counts. The operator should be able to see that 1,150 players were held back as dormant and that this was deliberate.
+
+**4c. Plain and legible.** This is an instrument panel, not a dashboard. A clear table beats charts. The operator needs to answer one question: *would I actually send this?*
+
+**4d. No send button.** Per constraint 4. The screen exists to make the list reviewable, not actionable.
+
+**4e. Read-only.** No writes from the dashboard — follow the existing convention that all writes go through `/api/*` endpoints, and there are no writes needed here.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+Diagnosis:
+What changed:
+Verification:
+Blockers:
+```
+
+Close with:
+1. **Archetype** — is the threshold miscalibrated or is the data genuinely absent? New `early`+`planner` count if changed.
+2. **`default` as a gate** — recommended treatment, with the funnel counts under each option.
+3. **Ranking** — is it meaningfully differentiated now? Report the actual score spread.
+4. **The funnel as it stands** — final counts for decision `743053a0`.
+5. **Would you send this list?** An honest read: is this a list worth texting 16 people from, or does something still need fixing first?
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages` or `programming_notifications`; no send button built; no execution path built; evaluator not wired to any timer.**

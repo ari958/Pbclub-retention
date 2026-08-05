@@ -45,6 +45,10 @@ export interface WarmScoreOptions {
   programStartDate?: Date;
   programLevel?: string;
   forceRefresh?: boolean;
+  /** When true, do not write the computed score back to players.warm_score.
+   *  Use this in the promotion-candidate builder where the score is event-specific
+   *  and must not overwrite the player-level cache. */
+  skipCache?: boolean;
 }
 
 /**
@@ -67,7 +71,7 @@ export async function computeWarmScore(
   programName: string,
   options: WarmScoreOptions = {},
 ): Promise<number> {
-  const { programStartDate, programLevel, forceRefresh = false } = options;
+  const { programStartDate, programLevel, forceRefresh = false, skipCache = false } = options;
 
   // ── Fetch player row ──────────────────────────────────────────────────────
   const { data: player, error: playerError } = await supabase
@@ -97,7 +101,7 @@ export async function computeWarmScore(
     const hoursUntil = (programStartDate.getTime() - Date.now()) / (1000 * 60 * 60);
     if (hoursUntil >= 0 && hoursUntil <= 48) {
       logger.info({ playerId, hoursUntil }, "[warmScore] imminent program — forcing warm (10)");
-      await cacheScore(playerId, 10);
+      if (!skipCache) await cacheScore(playerId, 10);
       return 10;
     }
   }
@@ -126,7 +130,7 @@ export async function computeWarmScore(
   );
   if (hasNegative) {
     logger.info({ playerId }, "[warmScore] negative/stop — forcing cold (-10)");
-    await cacheScore(playerId, -10);
+    if (!skipCache) await cacheScore(playerId, -10);
     return -10;
   }
 
@@ -138,7 +142,7 @@ export async function computeWarmScore(
   // imported during initial setup.
   if (allAttendances.length === 0) {
     logger.info({ playerId }, "[warmScore] no attendance history — returning 0");
-    await cacheScore(playerId, 0);
+    if (!skipCache) await cacheScore(playerId, 0);
     return 0;
   }
   const firstAttendedAt = allAttendances
@@ -147,7 +151,7 @@ export async function computeWarmScore(
   const daysSinceFirstAttended = (Date.now() - firstAttendedAt) / (1000 * 60 * 60 * 24);
   if (daysSinceFirstAttended < 14) {
     logger.info({ playerId, daysSinceFirstAttended }, "[warmScore] new player (first attendance < 14d) — returning 0");
-    await cacheScore(playerId, 0);
+    if (!skipCache) await cacheScore(playerId, 0);
     return 0;
   }
 
@@ -197,10 +201,12 @@ export async function computeWarmScore(
   // ─── NEGATIVE SIGNALS ─────────────────────────────────────────────────────
 
   // -2  has never attended this program_type
+  // Only apply when programType is known — an empty/null programType means we
+  // can't confirm non-attendance, so do not penalize (knowledge gap ≠ absence).
   const hasAttendedType =
     programType &&
     allAttendances.some((a: any) => a.program_type && a.program_type === programType);
-  if (!hasAttendedType) score -= 2;
+  if (programType && !hasAttendedType) score -= 2;
 
   // -3  2+ ignored outbound messages
   const ignoredCount = outboundMsgs.filter((m: any) => m.ignored === true).length;
@@ -231,7 +237,7 @@ export async function computeWarmScore(
     "[warmScore] computed",
   );
 
-  await cacheScore(playerId, finalScore);
+  if (!skipCache) await cacheScore(playerId, finalScore);
   return finalScore;
 }
 

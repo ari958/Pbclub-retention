@@ -33,6 +33,7 @@ import { supabase } from "../lib/supabaseClient";
 import { runEvaluator, fetchActiveSignupCount } from "../lib/programmingEvaluator";
 import { loadArchetypes, classifyEvent, isDailyPeak, isPeakSeason } from "../lib/classifyEvent";
 import { batchComputePlayerTiming } from "../lib/playerTiming";
+import { computeWarmScore } from "../lib/warmScore";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -136,6 +137,48 @@ router.get("/programming/evaluate/status", (_req, res) => {
     error: j.error,
     recentLogs: j.logs.slice(-20),
   });
+});
+
+// ── GET /api/programming/queue ────────────────────────────────────────────────
+//
+// All open PROMOTE decisions for the club, enriched with candidate counts from
+// promotion_candidates. Used by the operator queue screen (Phase 3.3 Item 4).
+// Read-only.
+
+router.get("/programming/queue", async (req, res) => {
+  const clubId = req.query.clubId as string;
+  if (!clubId) { res.status(400).json({ error: "clubId required" }); return; }
+
+  const { data: decisions, error } = await supabase
+    .from("programming_decisions")
+    .select("id, event_id, event_name, event_start_time, signup_count, total_teams, evaluated_at, rule_name, checkpoint_offset_hours")
+    .eq("club_id", clubId)
+    .eq("decision", "PROMOTE")
+    .order("event_start_time", { ascending: true });
+
+  if (error) { res.status(500).json({ error: error.message }); return; }
+
+  // Enrich each decision with candidate counts
+  const enriched = await Promise.all(
+    (decisions ?? []).map(async (dec: any) => {
+      const { data: cands } = await supabase
+        .from("promotion_candidates")
+        .select("eligible, reasons")
+        .eq("decision_id", dec.id);
+      const eligible    = (cands ?? []).filter((c: any) => c.eligible);
+      const smsReach    = eligible.filter((c: any) => c.reasons?.sms_reachable === true);
+      const hoursUntil  = (new Date(dec.event_start_time).getTime() - Date.now()) / 3_600_000;
+      return {
+        ...dec,
+        hours_until_start:    Math.round(hoursUntil * 10) / 10,
+        eligible_count:       eligible.length,
+        sms_reachable_count:  smsReach.length,
+        has_candidates:       (cands ?? []).length > 0,
+      };
+    }),
+  );
+
+  res.json({ queue: enriched });
 });
 
 // ── GET /api/programming/decisions ────────────────────────────────────────────
@@ -1126,6 +1169,22 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
     const admissionMax   = eventDetail?.admissionRating?.maxRating ?? null;
     const capacity       = (dec as any).total_teams as number ?? 0;
 
+    // ── 2b. Fetch programType from event_fill for warm score computation ───────
+    // event_fill.podplay_type is available after migration 006 + backfill.
+    // Fall back to rule_name pattern if the column is null — this covers the
+    // pre-migration state and avoids misclassifying attendance history.
+    const { data: fillRow } = await supabase
+      .from("event_fill")
+      .select("podplay_type")
+      .eq("event_id", eventId)
+      .maybeSingle();
+    const ruleName = (dec as any).rule_name as string ?? "";
+    const programTypeFromRule =
+      ruleName.toLowerCase().includes("clinic")     ? "Clinics"   :
+      ruleName.toLowerCase().includes("open play")  ? "Open Play" : null;
+    const programType = (fillRow?.podplay_type ?? programTypeFromRule ?? null) as string | null;
+    const programName = (dec as any).event_name as string ?? "";
+
     // ── 3. Fetch current signups (to exclude already-booked players) ──────────
     const bookedExternalIds = new Set<string>();
     try {
@@ -1291,11 +1350,9 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
         reasons.slot_hour_match = `preferred hour ${p.preferred_booking_hour} ≈ event ${eventHour}`;
       }
 
-      // 2. Program affinity scoring
-      if (p.warm_score !== null) {
-        score += Math.round(p.warm_score * 10);
-        reasons.warm_score = p.warm_score;
-      }
+      // 2. Program affinity scoring — warm score computed post-loop for eligible
+      //    candidates only (Phase 3.3). The stale players.warm_score cache is not
+      //    used here; see the post-loop block below.
 
       // 5d. Buddy signal
       const buddies = buddyMap.get(p.id);
@@ -1330,6 +1387,30 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
         reasons,
         sms_opt_in: smsOk,
       });
+    }
+
+    // ── 8b. Compute warm scores for eligible candidates ───────────────────────
+    // Done AFTER the archetype gate so we only pay per-player DB costs for the
+    // surviving ~24 players. skipCache=true prevents writing back to
+    // players.warm_score — the score is event-class-specific and stored in
+    // reasons.warm_score_built instead.
+    {
+      const eligible = candidates.filter((c) => c.eligible);
+      await Promise.all(
+        eligible.map(async (c) => {
+          try {
+            const ws = await computeWarmScore(
+              c.player_id,
+              programType ?? "",
+              programName,
+              { skipCache: true, programStartDate: eventStartDate },
+            );
+            c.score += Math.round(ws * 10);
+            c.reasons.warm_score_built        = ws;
+            c.reasons.warm_score_program_type = programType ?? "unknown";
+          } catch { /* non-fatal — leave warm score absent */ }
+        }),
+      );
     }
 
     // ── 9. Sort eligible candidates by score desc; ineligible go after ────────

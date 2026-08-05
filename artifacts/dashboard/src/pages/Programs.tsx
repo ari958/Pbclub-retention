@@ -556,11 +556,433 @@ function EmptyState({ icon, title, subtitle }: { icon: string; title: string; su
 
 // ── Root page ─────────────────────────────────────────────────────────────────
 
-type Tab = "upcoming" | "log";
+// ── Promotion Queue view ──────────────────────────────────────────────────────
+
+function PromoteBadge() {
+  return (
+    <span style={{
+      fontFamily: C.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+      color: C.accent, background: `${C.accent}22`, padding: "2px 7px", borderRadius: 4,
+    }}>PROMOTE</span>
+  );
+}
+
+function FunnelBar({ label, total, count, prev }: { label: string; total: number; count: number; prev?: number }) {
+  const pct = total > 0 ? (count / total) * 100 : 0;
+  const removed = prev != null ? prev - count : 0;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+      <div style={{ width: 160, fontSize: 11, color: C.textSub, flexShrink: 0, textAlign: "right" }}>{label}</div>
+      <div style={{ flex: 1, maxWidth: 240, background: C.surface2, borderRadius: 3, height: 6, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, background: C.accent, height: "100%", borderRadius: 3 }} />
+      </div>
+      <div style={{ width: 44, fontFamily: C.mono, fontSize: 11, color: C.text, textAlign: "right", flexShrink: 0 }}>
+        {count.toLocaleString()}
+      </div>
+      {removed > 0 && (
+        <div style={{ width: 72, fontFamily: C.mono, fontSize: 10, color: C.red, flexShrink: 0 }}>
+          −{removed.toLocaleString()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ScoreBadge({ score }: { score: number }) {
+  const color = score >= 30 ? C.green : score >= 10 ? C.accent : C.textSub;
+  return (
+    <span style={{ fontFamily: C.mono, fontSize: 11, fontWeight: 600, color }}>
+      {score}
+    </span>
+  );
+}
+
+function WarmBadge({ ws }: { ws: number | undefined }) {
+  if (ws == null) return <span style={{ color: C.textDim, fontFamily: C.mono, fontSize: 11 }}>—</span>;
+  const color = ws >= 4 ? C.green : ws >= 1 ? C.blue : C.textDim;
+  return <span style={{ fontFamily: C.mono, fontSize: 11, color }}>{ws}</span>;
+}
+
+function ReasonPill({ label }: { label: string }) {
+  return (
+    <span style={{
+      display: "inline-block",
+      fontFamily: C.mono, fontSize: 9, letterSpacing: "0.04em",
+      color: C.textSub, background: C.surface2,
+      border: `1px solid ${C.border}`,
+      padding: "1px 5px", borderRadius: 3, marginRight: 3, marginBottom: 3,
+    }}>{label}</span>
+  );
+}
+
+function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; clubId: string; onBack: () => void }) {
+  const [data, setData]       = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]     = useState<string | null>(null);
+  const [showExcluded, setShowExcluded] = useState(false);
+
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API}/programming/promotion-candidates/${decisionId}?clubId=${clubId}&rebuild=false`)
+      .then(r => r.json())
+      .then(d => { setData(d); setLoading(false); })
+      .catch(e => { setError(e.message); setLoading(false); });
+  }, [decisionId, clubId]);
+
+  if (loading) return <div style={{ color: C.textDim, fontSize: 13, padding: "40px 0" }}>Building candidate list…</div>;
+  if (error)   return <div style={{ color: C.red, fontSize: 13, padding: "20px 0" }}>Error: {error}</div>;
+  if (!data)   return null;
+
+  const f = data.funnel ?? {};
+  const fTotal = f.total_players ?? 0;
+  const eligible: any[]   = (data.candidates ?? []).filter((c: any) => c.eligible);
+  const ineligible: any[] = (data.candidates ?? []).filter((c: any) => !c.eligible);
+
+  // Group ineligible by reason category
+  const exclusionGroups: Record<string, number> = {};
+  for (const c of ineligible) {
+    const r = c.ineligible_reason ?? "unknown";
+    const category =
+      r.startsWith("engagement") ? "engagement (lapsing/dormant)" :
+      r.startsWith("attendance_archetype") ? "archetype (mid/late/default)" :
+      r.startsWith("level") ? "level out of range" : r.slice(0, 50);
+    exclusionGroups[category] = (exclusionGroups[category] ?? 0) + 1;
+  }
+  const topExclusions = Object.entries(exclusionGroups).sort((a, b) => b[1] - a[1]);
+
+  return (
+    <div>
+      {/* Back */}
+      <button onClick={onBack} style={{
+        background: "none", border: "none", color: C.blue, fontSize: 12,
+        cursor: "pointer", padding: 0, marginBottom: 20, display: "flex", alignItems: "center", gap: 4,
+      }}>
+        ← Back to queue
+      </button>
+
+      {/* Event header */}
+      <div style={{ marginBottom: 24 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <PromoteBadge />
+          <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{data.event_name}</span>
+        </div>
+        <div style={{ display: "flex", gap: 16, fontSize: 12, color: C.textSub }}>
+          <span>{fmtTime(data.event_start)}</span>
+          <span style={{ fontFamily: C.mono }}>
+            {data.current_signups}/{data.capacity} booked
+          </span>
+          {data.admission_rating && (
+            <span style={{ fontFamily: C.mono }}>
+              level {data.admission_rating.min}–{data.admission_rating.max}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* ── The funnel ── */}
+      <div style={{
+        background: C.surface, border: `1px solid ${C.border}`,
+        borderRadius: 8, padding: "18px 20px", marginBottom: 24,
+      }}>
+        <div style={{
+          fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+          color: C.textDim, textTransform: "uppercase", marginBottom: 14,
+        }}>Funnel</div>
+        <FunnelBar label="all members"       total={fTotal} count={f.total_players ?? 0} />
+        <FunnelBar label="not already booked" total={fTotal} count={f.after_already_booked ?? 0} prev={f.total_players} />
+        <FunnelBar label="level fit"          total={fTotal} count={f.after_level_fit ?? 0} prev={f.after_already_booked} />
+        <FunnelBar label="engagement"         total={fTotal} count={f.after_engagement_state ?? 0} prev={f.after_level_fit} />
+        <FunnelBar label="archetype"          total={fTotal} count={f.after_archetype ?? 0} prev={f.after_engagement_state} />
+        <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10 }}>
+          <FunnelBar label="eligible"     total={fTotal} count={f.eligible_final ?? 0} />
+          <FunnelBar label="SMS-reachable" total={fTotal} count={f.sms_reachable ?? 0} />
+        </div>
+      </div>
+
+      {/* ── Ranked candidates ── */}
+      <div style={{
+        background: C.surface, border: `1px solid ${C.border}`,
+        borderRadius: 8, padding: "18px 20px", marginBottom: 24,
+      }}>
+        <div style={{
+          fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+          color: C.textDim, textTransform: "uppercase", marginBottom: 14,
+        }}>
+          {eligible.length} Eligible Candidates
+          {f.sms_reachable > 0 && (
+            <span style={{ color: C.textSub, fontWeight: 400 }}> · {f.sms_reachable} SMS-reachable</span>
+          )}
+        </div>
+        {eligible.length === 0 ? (
+          <div style={{ color: C.textDim, fontSize: 12 }}>No eligible candidates for this decision.</div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {["#", "Name", "Score", "Warm", "SMS", "Signals"].map((h, i) => (
+                    <th key={i} style={{
+                      padding: "5px 8px", textAlign: "left",
+                      fontFamily: C.mono, fontSize: 10, fontWeight: 500,
+                      letterSpacing: "0.06em", color: C.textDim, whiteSpace: "nowrap",
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {eligible.map((c: any, i: number) => {
+                  const r = c.reasons ?? {};
+                  const signals: string[] = [];
+                  if (r.slot_dow_match)   signals.push("DOW✓");
+                  if (r.slot_hour_match)  signals.push("hour✓");
+                  if (r.buddy_already_signed_up) signals.push(`buddy×${r.buddy_already_signed_up}`);
+                  if (r.flagged_contacted_48h) signals.push("48h⚠");
+                  const wsBuilt = r.warm_score_built ?? r.warm_score;
+                  return (
+                    <tr key={i} style={{
+                      borderBottom: `1px solid ${C.border}`,
+                      background: i % 2 === 0 ? "transparent" : C.surface2,
+                    }}>
+                      <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.textDim }}>{c.rank}</td>
+                      <td style={{ padding: "7px 8px", color: C.text, fontWeight: 500 }}>
+                        {c.player_name}
+                        {r.engagement_state === "active" && (
+                          <span style={{ marginLeft: 5, fontSize: 9, color: C.green, fontFamily: C.mono }}>active</span>
+                        )}
+                      </td>
+                      <td style={{ padding: "7px 8px" }}><ScoreBadge score={c.score} /></td>
+                      <td style={{ padding: "7px 8px" }}><WarmBadge ws={wsBuilt} /></td>
+                      <td style={{ padding: "7px 8px" }}>
+                        <span style={{ fontFamily: C.mono, fontSize: 11, color: c.sms_opt_in ? C.green : C.textDim }}>
+                          {c.sms_opt_in ? "yes" : "no"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        {signals.map((s, j) => <ReasonPill key={j} label={s} />)}
+                        {r.churn_risk && r.churn_risk !== "low" && (
+                          <ReasonPill label={`churn:${r.churn_risk}`} />
+                        )}
+                        {r.warm_score_program_type && (
+                          <ReasonPill label={`type:${r.warm_score_program_type}`} />
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* ── Excluded — collapsed by default ── */}
+      <div style={{
+        background: C.surface, border: `1px solid ${C.border}`,
+        borderRadius: 8, overflow: "hidden",
+      }}>
+        <button
+          onClick={() => setShowExcluded(v => !v)}
+          style={{
+            width: "100%", background: "none", border: "none",
+            padding: "14px 20px", cursor: "pointer",
+            display: "flex", justifyContent: "space-between", alignItems: "center",
+          }}
+        >
+          <span style={{ fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em", color: C.textDim, textTransform: "uppercase" }}>
+            {ineligible.length.toLocaleString()} Excluded
+          </span>
+          <span style={{ fontFamily: C.mono, fontSize: 11, color: C.textSub }}>{showExcluded ? "▲ hide" : "▼ show"}</span>
+        </button>
+        {showExcluded && (
+          <div style={{ padding: "0 20px 18px" }}>
+            <div style={{ fontSize: 11, color: C.textSub, marginBottom: 12 }}>
+              Grouped by exclusion reason. These players were seen but held back deliberately.
+            </div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                  {["Reason", "Count"].map((h, i) => (
+                    <th key={i} style={{
+                      padding: "5px 8px", textAlign: i === 0 ? "left" : "right",
+                      fontFamily: C.mono, fontSize: 10, fontWeight: 500,
+                      letterSpacing: "0.06em", color: C.textDim,
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {topExclusions.map(([reason, count], i) => (
+                  <tr key={i} style={{
+                    borderBottom: `1px solid ${C.border}`,
+                    background: i % 2 === 0 ? "transparent" : C.surface2,
+                  }}>
+                    <td style={{ padding: "7px 8px", color: C.textSub }}>{reason}</td>
+                    <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.text, textAlign: "right" }}>
+                      {count.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function PromotionQueueView({ clubId }: { clubId: string }) {
+  const [queue, setQueue]         = useState<any[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [error, setError]         = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const r = await fetch(`${API}/programming/queue?clubId=${clubId}`);
+      if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+      const d = await r.json();
+      setQueue(d.queue ?? []);
+    } catch (e: any) {
+      setError(e.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [clubId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  if (selectedId) {
+    return (
+      <QueueDetailView
+        decisionId={selectedId}
+        clubId={clubId}
+        onBack={() => setSelectedId(null)}
+      />
+    );
+  }
+
+  if (loading) return <div style={{ color: C.textDim, fontSize: 13, padding: "40px 0" }}>Loading queue…</div>;
+  if (error)   return <div style={{ color: C.red, fontSize: 13, padding: "20px 0" }}>Error: {error}</div>;
+
+  if (queue.length === 0) {
+    return (
+      <EmptyState
+        icon="list"
+        title="No PROMOTE decisions in queue"
+        subtitle="Run the evaluator from the Upcoming Risk tab. PROMOTE decisions appear here once a clinic falls below threshold."
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
+        <span style={{ fontSize: 11, color: C.textDim }}>
+          {queue.length} open promotion{queue.length !== 1 ? "s" : ""}
+        </span>
+        <button onClick={load} style={{
+          background: "none", border: `1px solid ${C.border}`,
+          color: C.textSub, fontSize: 11, padding: "4px 10px",
+          borderRadius: 6, cursor: "pointer",
+        }}>Refresh</button>
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              {["", "Clinic", "Starts", "Signups", "Eligible", "SMS-ready", "Decided"].map((h, i) => (
+                <th key={i} style={{
+                  padding: "6px 10px", textAlign: "left",
+                  fontFamily: C.mono, fontSize: 10, fontWeight: 500,
+                  letterSpacing: "0.06em", color: C.textDim, whiteSpace: "nowrap",
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {queue.map((row: any, i: number) => {
+              const h = row.hours_until_start ?? 0;
+              const urgency = h <= 0 ? C.red : h <= 12 ? C.orange : h <= 48 ? C.accent : C.textDim;
+              return (
+                <tr
+                  key={row.id}
+                  onClick={() => setSelectedId(row.id)}
+                  style={{
+                    borderBottom: `1px solid ${C.border}`,
+                    background: i % 2 === 0 ? "transparent" : C.surface2,
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={e => (e.currentTarget.style.background = `${C.accent}11`)}
+                  onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? "transparent" : C.surface2)}
+                >
+                  <td style={{ padding: "8px 4px 8px 10px" }}>
+                    <PromoteBadge />
+                  </td>
+                  <td style={{ padding: "8px 10px", maxWidth: 260 }}>
+                    <div style={{ color: C.text, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {row.event_name ?? row.event_id?.slice(0, 8)}
+                    </div>
+                    <div style={{ color: C.textDim, fontSize: 10, marginTop: 2, fontFamily: C.mono }}>
+                      {row.rule_name}
+                    </div>
+                  </td>
+                  <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                    <div style={{ color: C.textSub }}>{fmtTime(row.event_start_time)}</div>
+                    <div style={{ fontFamily: C.mono, fontSize: 10, color: urgency, marginTop: 2 }}>
+                      {h > 0 ? `in ${fmtHours(h)}` : `${Math.abs(Math.round(h))}h ago`}
+                    </div>
+                  </td>
+                  <td style={{ padding: "8px 10px", fontFamily: C.mono, textAlign: "center" }}>
+                    <span style={{ color: C.red, fontWeight: 600 }}>{row.signup_count}</span>
+                    <span style={{ color: C.textDim }}> / {row.total_teams}</span>
+                  </td>
+                  <td style={{ padding: "8px 10px", fontFamily: C.mono, textAlign: "center" }}>
+                    {row.has_candidates ? (
+                      <span style={{ color: row.eligible_count > 0 ? C.text : C.textDim, fontWeight: 600 }}>
+                        {row.eligible_count}
+                      </span>
+                    ) : (
+                      <span style={{ color: C.textDim }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "8px 10px", fontFamily: C.mono, textAlign: "center" }}>
+                    {row.has_candidates ? (
+                      <span style={{ color: row.sms_reachable_count > 0 ? C.green : C.textDim, fontWeight: 600 }}>
+                        {row.sms_reachable_count}
+                      </span>
+                    ) : (
+                      <span style={{ color: C.textDim }}>—</span>
+                    )}
+                  </td>
+                  <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                    <div style={{ color: C.textSub, fontFamily: C.mono, fontSize: 11 }}>
+                      {fmtTime(row.evaluated_at)}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 12, fontSize: 11, color: C.textDim, lineHeight: 1.6 }}>
+        Click a row to see the full funnel and ranked candidates.
+        Eligible / SMS-ready counts are from the most recent candidate build — click a row and rebuild if they look stale.
+      </div>
+    </div>
+  );
+}
+
+// ── Shared components ─────────────────────────────────────────────────────────
+
+type Tab = "queue" | "upcoming" | "log";
 
 export default function Programs() {
   const { slug } = useParams<{ slug: string }>();
-  const [tab, setTab] = useState<Tab>("upcoming");
+  const [tab, setTab] = useState<Tab>("queue");
   const [clubId, setClubId] = useState<string | null>(null);
   const [loadingClub, setLoadingClub] = useState(true);
 
@@ -623,7 +1045,7 @@ export default function Programs() {
           borderBottom: `1px solid ${C.border}`,
           marginBottom: 28,
         }}>
-          {(["upcoming", "log"] as Tab[]).map((t) => (
+          {(["queue", "upcoming", "log"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -640,7 +1062,7 @@ export default function Programs() {
                 transition: "color 0.15s",
               }}
             >
-              {t === "upcoming" ? "Upcoming Risk" : "Decision Log"}
+              {t === "queue" ? "Promotion Queue" : t === "upcoming" ? "Upcoming Risk" : "Decision Log"}
             </button>
           ))}
         </div>
@@ -653,6 +1075,8 @@ export default function Programs() {
             Could not resolve club ID. Set <code style={{ fontFamily: C.mono }}>VITE_DEFAULT_CLUB_ID</code> or navigate via{" "}
             <code style={{ fontFamily: C.mono }}>/c/:slug</code>.
           </div>
+        ) : tab === "queue" ? (
+          <PromotionQueueView clubId={clubId} />
         ) : tab === "upcoming" ? (
           <UpcomingRiskView clubId={clubId} />
         ) : (
