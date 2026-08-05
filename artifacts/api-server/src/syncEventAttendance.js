@@ -245,11 +245,33 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
   // once in the upsert batch. We keep the higher-priority status row.
   const STATUS_PRIORITY = { CONFIRMED: 2, CHECKED_IN: 2, INVALID: 1 };
   let eventsProcessedCount = 0;
+  // Persists across pages — used by the cross-page event dedup filter below.
+  const seenEventIds = new Set();
 
   async function flushUpserts() {
     if (pendingUpserts.length === 0) return;
     for (let i = 0; i < pendingUpserts.length; i += UPSERT_BATCH) {
-      const batch = pendingUpserts.slice(i, i + UPSERT_BATCH);
+      const rawBatch = pendingUpserts.slice(i, i + UPSERT_BATCH);
+
+      // Batch-level dedup: PostgreSQL's ON CONFLICT clause handles conflicts
+      // against EXISTING rows, but raises a hard duplicate-key error when two
+      // rows in the SAME INSERT share the same (player_id, event_id).  The
+      // per-event Map dedup (added in Phase 3 §2a) prevents within-event
+      // duplicates from CONFIRMED+INVALID multi-status signups, but cannot
+      // prevent across-event duplicates when the PodPlay API returns the same
+      // event_id on multiple pagination pages (observed with Grand Opening
+      // events that span many pages).  Keep the last-seen row per key —
+      // within-event dedup already ensured the per-event winner is correct.
+      const seen = new Map();
+      for (const row of rawBatch) {
+        seen.set(`${row.player_id}::${row.event_id}`, row);
+      }
+      const batch = [...seen.values()];
+      const dedupDropped = rawBatch.length - batch.length;
+      if (dedupDropped > 0) {
+        log(`[sync/events] batch dedup: dropped ${dedupDropped} cross-event duplicate(s) before upsert`);
+      }
+
       // ignoreDuplicates: true — attendance rows are write-once.
       // If PodPlay later updates a signup's booked_at (e.g. reschedule), we
       // intentionally keep the original value recorded at first-sync time.
@@ -286,9 +308,21 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
     const items = pageData.items ?? [];
     stats.eventsScanned += items.length;
 
-    const pastEvents = items.filter(
+    const pastEventsRaw = items.filter(
       (e) => !e.isCanceled && new Date(e.startTime) <= now
     );
+
+    // Cross-page dedup: PodPlay occasionally returns the same event_id on
+    // multiple pages (observed with high-volume events like Grand Opening
+    // sessions). Deduplicate by event.id so we don't fetch signups twice and
+    // don't accumulate duplicate rows in pendingUpserts.
+    // seenEventIds is declared above the while loop and persists across pages.
+    const pastEvents = pastEventsRaw.filter((e) => {
+      if (seenEventIds.has(e.id)) return false;
+      seenEventIds.add(e.id);
+      return true;
+    });
+
     stats.eventsPast += pastEvents.length;
     stats.eventsSkipped += items.length - pastEvents.length;
 

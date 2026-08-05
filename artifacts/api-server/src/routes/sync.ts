@@ -255,11 +255,12 @@ router.post("/sync/events", requireClub, async (req, res) => {
 
   (async () => {
     try {
+      const sinceDays = Number((req.body as any)?.sinceDays ?? 0);
       const stats = await syncEventAttendance(
         clubId,
         (msg: string) => appendJobLog(JOB_SYNC_EVENTS, msg),
         () => isCancelled(JOB_SYNC_EVENTS),
-        0,                                          // sinceDays — full sync for manual trigger
+        sinceDays,                                  // 0 = full sync; body.sinceDays for incremental
         () => heartbeatJob(JOB_SYNC_EVENTS)         // Phase 3 §1b — keeps last_heartbeat fresh
       );
       const wasCancelled = await isCancelled(JOB_SYNC_EVENTS);

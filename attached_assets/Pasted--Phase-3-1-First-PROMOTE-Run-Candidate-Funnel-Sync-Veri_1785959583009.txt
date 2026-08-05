@@ -1,0 +1,149 @@
+# Phase 3.1 — First PROMOTE Run, Candidate Funnel, Sync Verification
+
+**Mode:** Run and report. Mostly observation. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 4 items.
+
+---
+
+## Context
+
+Migration 006 is applied and verified:
+- `jobs.last_heartbeat` exists
+- `promotion_candidates` table exists
+- `programming_decisions.decision` CHECK includes `PROMOTE`
+
+Nothing will throw on a promotion decision insert.
+
+Two rules are seeded and enabled in shadow mode:
+- **Open Play — cancel:** N=4 / T-2h, matches 23 upcoming events
+- **Clinics — cancel + promote:** PROMOTE at N=4 / T-18h, CANCEL at N=2 / T-2h, matches 16 upcoming events
+
+This phase runs the evaluator for the first time with promotion active, inspects one real candidate list end to end, and closes out the Phase 3 Item 2 verification that was code-only.
+
+**The candidate funnel is the point of this phase.** Everything about promotion rests on whether that list looks like people you'd actually text.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels or patches — not behind a flag, not commented out.
+
+**3. No sending. At all.** No Twilio, no email, no writes to `messages` or `programming_notifications`. The candidate list is data to look at, nothing more.
+
+**4. Supabase writes** limited to: `programming_decisions` and `promotion_candidates` (written by the evaluator and candidate builder), and `attendances` (Item 3 sync). Do not modify `players`, `messages`, `conversations`, or `event_fill`.
+
+**5. Never use `signups._total`** as a live count.
+
+**6. Evaluator stays unwired** from the nightly chain and any timer. Manual invocation only.
+
+**7. Never echo secrets.**
+
+---
+
+## Item 1 — Run the evaluator
+
+**1a. Run it.** Report: events fetched, events evaluated, decisions written broken down by type (`PROMOTE` / `CANCEL` / `NO_ACTION`), and errors.
+
+**1b. Idempotency — properly this time.** Prior runs wrote zero decisions, so "second run inserted zero" proved nothing. Now that real rows exist, run it again and report `decisions_written` and `skipped_existing`. **`skipped_existing` must be greater than zero** and `decisions_written` must be zero. If either is off, the `(event_id, checkpoint_index)` guard isn't working as intended — that's a blocker.
+
+**1c. Two checkpoints, one event.** Confirm the Clinics rule can write both a PROMOTE row (checkpoint 0, T-18h) and a CANCEL row (checkpoint 1, T-2h) for the same event without collision. If no clinic has crossed T-2h yet, say so — this may need a later run.
+
+**1d. How many clinics fired PROMOTE?** Report as a fraction of clinics evaluated. If most upcoming clinics triggered, that's evidence the N=4 threshold is too wide — flag it plainly.
+
+**STATUS:**
+
+---
+
+## Item 2 — The candidate funnel
+
+The core of this phase.
+
+**2a. Pick one PROMOTE decision** — ideally a clinic with 1–2 signups, since that's the case promotion is meant for. Report the event name, start time, current signups, capacity, and level gating (`admissionRating`).
+
+**2b. Build the candidate list** via `GET /api/programming/promotion-candidates/{decision_id}?rebuild=true`.
+
+**2c. Report the full funnel, stage by stage, with counts at every step:**
+
+```
+Total players in club:                    N
+  after: already booked excluded          N  (−X)
+  after: level fit                        N  (−X)
+  after: engagement state                 N  (−X)
+  after: reachability / archetype         N  (−X)
+  ...through every filter...
+Final eligible:                           N
+```
+
+Every stage needs both the survivor count and the number removed. A list of 6 names tells us nothing; 400 → 6 tells us the filters are too tight.
+
+**2d. Show the top 15 ranked candidates** with: name, score, and the `reasons` payload — level source, warm score, slot fit, buddy signal, days since last message.
+
+**2e. Show 5 excluded players with their reasons**, including at least one lapsing/dormant exclusion. This verifies the system is deliberately declining to target fragile players rather than silently dropping them.
+
+**2f. Report channel reachability:** of the eligible candidates, how many are SMS-reachable (opted in, not opted out) versus email-only.
+
+**2g. Flag the two failure modes explicitly:**
+
+- **Archetype filter too aggressive?** At T-18h only `planner` and `early` archetypes are considered reachable. Report the archetype distribution across all players — if `late` dominates, T-18h promotion reaches a much smaller audience than intended, and that's a finding about the checkpoint, not the filter.
+- **Level filter too aggressive?** Report how many players were excluded for level fit and what fraction of those had no `coach_assigned_level` at all. Level data is sparse; if most exclusions are from missing data rather than genuine mismatch, the filter is rejecting people for not being assessed.
+
+**2h. Run the funnel on a second decision** — ideally a different clinic archetype — and report whether the shape holds or varies wildly.
+
+**STATUS:**
+
+---
+
+## Item 3 — Close out Phase 3 Item 2 verification
+
+The batch dedup fix and `club_id`-on-insert were code-only and never exercised by a real sync.
+
+**3a. Run an incremental sync** (a modest window is fine — this is about exercising the write path, not backfilling).
+
+**3b. Report:**
+- upsert errors: **must be zero.** Prior runs had 13 on full sync, 5 on incremental, all from duplicate `(player_id, event_id)` within a batch.
+- new rows with NULL `club_id`: **must be zero.**
+- rows written, events processed.
+
+**3c. Heartbeat.** Now that `last_heartbeat` exists, report the actual longest gap between heartbeat updates during the run — measured, not estimated from arithmetic. Confirm it's comfortably under the 5-minute stale threshold.
+
+**3d. Reclaim path.** Verify `reclaimStaleJobs()` runs at the top of `startJob()` and from the status endpoint, and that it correctly does nothing when no stale job exists. A live kill test is not required in production — code-path verification plus a report of what the reclaim would do is sufficient here.
+
+**STATUS:**
+
+---
+
+## Item 4 — Threshold read
+
+Based on what Items 1 and 2 produced, answer:
+
+1. **Is N=4 at T-18h the right promotion threshold**, or is it firing too broadly? The Phase 3 recommendation used "precision" defined as *the session ended under-enrolled* — which for a promote action is arguably backwards, since a session that self-fills didn't need outreach and isn't a failure. Reconsider in light of actual fire volume and candidate list sizes.
+2. **Would N=3 or N=2 produce a more useful set of promotions?** Report what fire rate each would give on the current upcoming schedule.
+3. **Is the candidate audience large enough to matter?** If a typical at-risk clinic yields only a handful of eligible players, promotion won't move enrollment regardless of threshold — and that's the more important finding.
+
+No code changes. This is a read on the numbers.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Decisions written**, by type, and whether idempotency verified properly (`skipped_existing > 0`).
+2. **The funnel**, in full, for one clinic.
+3. **Sync verification** — zero upsert errors, zero NULL `club_id`, measured heartbeat gap.
+4. **Threshold recommendation** — keep N=4, or move, with the numbers.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages` or `programming_notifications`; no execution path built; evaluator not wired to any timer.**
