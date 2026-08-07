@@ -8,3 +8,4 @@
 - [Phase 3 rules](phase3-rules.md) — Open Play id=01cea5a1 (N=4/T-2h); Clinics id=cc0d0add (N=4/T-18h PROMOTE + N=2/T-2h CANCEL); old mirror rule disabled
 - [Migration 006](phase3-rules.md) — pending manual run in Supabase SQL editor: adds last_heartbeat/jobs, PROMOTE to decisions CHECK, promotion_candidates table, event_fill metadata cols
 - [Archetype thresholds](archetype-thresholds.md) — 180d/min=2 applied (Phase 3.3); early+planner=124; warmScore programType via rule_name fallback (Clinics); buddy signal needs PodPlay→internal ID bridge for future events
+- [Contact ledger](contact-ledger.md) — Phase 3.4: contact_ledger table (007 migration, needs manual run); budget gate in promotion candidates builder; recency tiebreaker +0/+3/+8/+15; pool supports ~3-4 sends/clinic (not 24)

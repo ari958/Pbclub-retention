@@ -178,7 +178,31 @@ router.get("/programming/queue", async (req, res) => {
     }),
   );
 
-  res.json({ queue: enriched });
+  // ── Club-level 30-day channel stats ──────────────────────────────────────
+  // This is the number that tells the operator whether the channel is being
+  // over-used at a glance.  Empty ledger → 0s (expected before first send).
+  const since30d = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  let totalPromoContacts30d = 0;
+  let distinctPlayersContacted30d = 0;
+  try {
+    const { data: statsRows } = await supabase
+      .from("contact_ledger")
+      .select("player_id")
+      .eq("club_id", clubId)
+      .eq("purpose", "promotion")
+      .gte("sent_at", since30d);
+    totalPromoContacts30d        = (statsRows ?? []).length;
+    distinctPlayersContacted30d  = new Set((statsRows ?? []).map((r: any) => r.player_id)).size;
+  } catch { /* ledger may not exist yet */ }
+
+  res.json({
+    queue: enriched,
+    channel_stats: {
+      total_promo_contacts_30d:   totalPromoContacts30d,
+      distinct_players_contacted: distinctPlayersContacted30d,
+      window_days: 30,
+    },
+  });
 });
 
 // ── GET /api/programming/decisions ────────────────────────────────────────────
@@ -1254,7 +1278,45 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       }
     }
 
-    // ── 7. Last-48h send budget check ─────────────────────────────────────────
+    // ── 7. Contact-budget settings from rule (with fallback defaults) ─────────
+    // Cancellation notices are ALWAYS exempt from budget — they are transactional
+    // and must never be suppressed.  applies_to=['promotion'] only.
+    interface ContactBudget { cooldown_days: number; max_per_30_days: number; applies_to: string[]; }
+    const BUDGET_DEFAULTS: ContactBudget = { cooldown_days: 7, max_per_30_days: 2, applies_to: ["promotion"] };
+    let contactBudget: ContactBudget = BUDGET_DEFAULTS;
+    {
+      const { data: ruleRow } = await supabase
+        .from("programming_rules")
+        .select("contact_budget")
+        .eq("id", (dec as any).rule_id)
+        .maybeSingle();
+      if (ruleRow?.contact_budget) contactBudget = { ...BUDGET_DEFAULTS, ...(ruleRow.contact_budget as any) };
+    }
+
+    // ── 7b. Load 30-day promotional contact history from ledger ───────────────
+    // Query at the club level once, then index per-player in memory.
+    // Cancellations are stored in the ledger (purpose='cancellation') but are
+    // deliberately excluded here — they must never count against a player's
+    // promotional budget.
+    const ledgerCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+    const { data: ledgerRows } = await supabase
+      .from("contact_ledger")
+      .select("player_id, sent_at")
+      .eq("club_id", clubId)
+      .eq("purpose", "promotion")   // cancellations are EXEMPT — never budgeted
+      .gte("sent_at", ledgerCutoff);
+
+    interface ContactSummary { lastSentAt: Date | null; count30d: number; }
+    const contactMap = new Map<string, ContactSummary>();
+    for (const row of (ledgerRows ?? [])) {
+      const prev = contactMap.get((row as any).player_id) ?? { lastSentAt: null, count30d: 0 };
+      const sentAt = new Date((row as any).sent_at);
+      if (!prev.lastSentAt || sentAt > prev.lastSentAt) prev.lastSentAt = sentAt;
+      prev.count30d++;
+      contactMap.set((row as any).player_id, prev);
+    }
+
+    // ── 7c. Legacy 48h flag from messages (visibility only — not a gate) ───────
     const cutoff48h = new Date(Date.now() - 48 * 3_600_000).toISOString();
     const { data: recentMessages } = await supabase
       .from("messages")
@@ -1268,15 +1330,17 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
 
     // ── 8. Filter + score each player ─────────────────────────────────────────
     const funnel = {
-      total_players: players.length,
-      after_already_booked: 0,
-      after_level_fit: 0,
-      after_engagement_state: 0,
-      after_archetype: 0,
-      eligible_final: 0,
-      sms_reachable: 0,
-      email_only: 0,
+      total_players:         players.length,
+      after_already_booked:  0,
+      after_level_fit:       0,
+      after_engagement_state:0,
+      after_archetype:       0,
+      after_contact_budget:  0,   // new Phase 3.4 stage — budget gate
+      eligible_final:        0,
+      sms_reachable:         0,
+      email_only:            0,
       flagged_contacted_48h: 0,
+      contact_budget_settings: contactBudget,  // visible to operator in UI
     };
 
     const candidates: any[] = [];
@@ -1337,6 +1401,31 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
         reasons.archetype_exclusion = ineligibleReason;
       } else if (eligible) {
         funnel.after_archetype++;
+      }
+
+      // 3b. Contact budget gate
+      // IMPORTANT: cancellation notices are ALWAYS exempt from budget logic.
+      // This gate only applies when purpose='promotion' is in contactBudget.applies_to.
+      // The budget is enforced by querying contact_ledger (not messages) — the
+      // ledger is the single source of truth for promotional contact frequency.
+      if (eligible) {
+        const cooldownMs  = contactBudget.cooldown_days * 86_400_000;
+        const cooldownCutoff = new Date(Date.now() - cooldownMs);
+        const cs = contactMap.get(p.id);
+        if (cs?.lastSentAt && cs.lastSentAt > cooldownCutoff) {
+          eligible = false;
+          const daysAgo = Math.round((Date.now() - cs.lastSentAt.getTime()) / 86_400_000);
+          ineligibleReason = `contact_cooldown: last promoted ${daysAgo}d ago (cooldown=${contactBudget.cooldown_days}d)`;
+          reasons.contact_exclusion = ineligibleReason;
+        } else if (cs && cs.count30d >= contactBudget.max_per_30_days) {
+          eligible = false;
+          ineligibleReason = `contact_30d_cap: ${cs.count30d} promotions in last 30d (max=${contactBudget.max_per_30_days})`;
+          reasons.contact_exclusion = ineligibleReason;
+        } else {
+          funnel.after_contact_budget++;
+          reasons.last_contact_date  = cs?.lastSentAt?.toISOString() ?? null;
+          reasons.contact_count_30d  = cs?.count30d ?? 0;
+        }
       }
 
       // 4. Slot fit scoring (does not gate eligibility)
@@ -1411,6 +1500,44 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
           } catch { /* non-fatal — leave warm score absent */ }
         }),
       );
+    }
+
+    // ── 8c. Recency adjustment — rotation tiebreaker for eligible candidates ──
+    // Cancellations are EXEMPT and never counted here.  contactMap contains
+    // promotional contacts only (purpose='promotion', loaded in step 7b).
+    //
+    // Weight rationale: warm score contributes ×10 (≈ −30 to +40 range), slot
+    // fit +8 max, buddy +20.  Recency max +15 makes it a meaningful tiebreaker
+    // between adjacent-score players without pushing a warm=0 candidate above
+    // a warm=4 one.  The operator can see base_score vs. recency_adjustment to
+    // judge when rotation changed the order.
+    //
+    // Breakpoints (in days since last promotional contact via the ledger):
+    //   never contacted   → +15  (strongest rotation bonus)
+    //   > 30 d            → +8   (moderate; safe to re-contact)
+    //   15 – 30 d         → +3   (slight preference over recently-contacted)
+    //   < 15 d (but outside cooldown window) → 0
+    //   within cooldown   → excluded above; never reaches here
+    {
+      for (const c of candidates.filter((cc) => cc.eligible)) {
+        const cs = contactMap.get(c.player_id);
+        c.reasons.base_score = c.score;  // snapshot before recency
+
+        let recencyAdj = 0;
+        let recencyBasis = "never_contacted";
+        if (!cs?.lastSentAt) {
+          recencyAdj = 15;
+        } else {
+          const daysSince = (Date.now() - cs.lastSentAt.getTime()) / 86_400_000;
+          recencyBasis = `${Math.round(daysSince)}d_since_contact`;
+          if (daysSince > 30)      recencyAdj = 8;
+          else if (daysSince > 14) recencyAdj = 3;
+          else                     recencyAdj = 0;
+        }
+        c.reasons.recency_adjustment = recencyAdj;
+        c.reasons.recency_basis      = recencyBasis;
+        c.score += recencyAdj;
+      }
     }
 
     // ── 9. Sort eligible candidates by score desc; ineligible go after ────────

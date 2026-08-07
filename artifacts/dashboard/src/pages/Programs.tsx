@@ -567,7 +567,17 @@ function PromoteBadge() {
   );
 }
 
-function FunnelBar({ label, total, count, prev }: { label: string; total: number; count: number; prev?: number }) {
+function fmtDaysAgo(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (d === 0) return "today";
+  if (d === 1) return "1d ago";
+  return `${d}d ago`;
+}
+
+function FunnelBar({ label, total, count, prev, tooltipNote }: {
+  label: string; total: number; count: number; prev?: number; tooltipNote?: string;
+}) {
   const pct = total > 0 ? (count / total) * 100 : 0;
   const removed = prev != null ? prev - count : 0;
   return (
@@ -582,6 +592,11 @@ function FunnelBar({ label, total, count, prev }: { label: string; total: number
       {removed > 0 && (
         <div style={{ width: 72, fontFamily: C.mono, fontSize: 10, color: C.red, flexShrink: 0 }}>
           −{removed.toLocaleString()}
+        </div>
+      )}
+      {tooltipNote && (
+        <div style={{ fontSize: 9, fontFamily: C.mono, color: C.textDim, flexShrink: 0 }}>
+          {tooltipNote}
         </div>
       )}
     </div>
@@ -643,9 +658,11 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
   for (const c of ineligible) {
     const r = c.ineligible_reason ?? "unknown";
     const category =
-      r.startsWith("engagement") ? "engagement (lapsing/dormant)" :
+      r.startsWith("contact_cooldown")     ? "contact budget: cooldown window" :
+      r.startsWith("contact_30d_cap")      ? "contact budget: 30-day cap reached" :
+      r.startsWith("engagement")           ? "engagement (lapsing/dormant)" :
       r.startsWith("attendance_archetype") ? "archetype (mid/late/default)" :
-      r.startsWith("level") ? "level out of range" : r.slice(0, 50);
+      r.startsWith("level")               ? "level out of range" : r.slice(0, 50);
     exclusionGroups[category] = (exclusionGroups[category] ?? 0) + 1;
   }
   const topExclusions = Object.entries(exclusionGroups).sort((a, b) => b[1] - a[1]);
@@ -693,8 +710,10 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
         <FunnelBar label="level fit"          total={fTotal} count={f.after_level_fit ?? 0} prev={f.after_already_booked} />
         <FunnelBar label="engagement"         total={fTotal} count={f.after_engagement_state ?? 0} prev={f.after_level_fit} />
         <FunnelBar label="archetype"          total={fTotal} count={f.after_archetype ?? 0} prev={f.after_engagement_state} />
+        <FunnelBar label="contact budget"     total={fTotal} count={f.after_contact_budget ?? 0} prev={f.after_archetype}
+          tooltipNote={`cooldown=${f.contact_budget_settings?.cooldown_days ?? 7}d · max ${f.contact_budget_settings?.max_per_30_days ?? 2}/30d`} />
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10 }}>
-          <FunnelBar label="eligible"     total={fTotal} count={f.eligible_final ?? 0} />
+          <FunnelBar label="eligible"      total={fTotal} count={f.eligible_final ?? 0} />
           <FunnelBar label="SMS-reachable" total={fTotal} count={f.sms_reachable ?? 0} />
         </div>
       </div>
@@ -720,7 +739,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                  {["#", "Name", "Score", "Warm", "SMS", "Signals"].map((h, i) => (
+                  {["#", "Name", "Score", "Base", "Recency", "Warm", "Last Contact", "SMS", "Signals"].map((h, i) => (
                     <th key={i} style={{
                       padding: "5px 8px", textAlign: "left",
                       fontFamily: C.mono, fontSize: 10, fontWeight: 500,
@@ -751,7 +770,21 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                         )}
                       </td>
                       <td style={{ padding: "7px 8px" }}><ScoreBadge score={c.score} /></td>
+                      <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.textSub }}>
+                        {r.base_score ?? "—"}
+                      </td>
+                      <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11 }}>
+                        {r.recency_adjustment != null
+                          ? <span style={{ color: r.recency_adjustment > 0 ? C.green : C.textDim }}>
+                              {r.recency_adjustment > 0 ? `+${r.recency_adjustment}` : "0"}
+                            </span>
+                          : <span style={{ color: C.textDim }}>—</span>
+                        }
+                      </td>
                       <td style={{ padding: "7px 8px" }}><WarmBadge ws={wsBuilt} /></td>
+                      <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.textSub, whiteSpace: "nowrap" }}>
+                        {fmtDaysAgo(r.last_contact_date)}
+                      </td>
                       <td style={{ padding: "7px 8px" }}>
                         <span style={{ fontFamily: C.mono, fontSize: 11, color: c.sms_opt_in ? C.green : C.textDim }}>
                           {c.sms_opt_in ? "yes" : "no"}
@@ -832,10 +865,11 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
 }
 
 function PromotionQueueView({ clubId }: { clubId: string }) {
-  const [queue, setQueue]         = useState<any[]>([]);
-  const [loading, setLoading]     = useState(true);
-  const [error, setError]         = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [queue, setQueue]               = useState<any[]>([]);
+  const [channelStats, setChannelStats] = useState<any>(null);
+  const [loading, setLoading]           = useState(true);
+  const [error, setError]               = useState<string | null>(null);
+  const [selectedId, setSelectedId]     = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -845,6 +879,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       const d = await r.json();
       setQueue(d.queue ?? []);
+      setChannelStats(d.channel_stats ?? null);
     } catch (e: any) {
       setError(e.message);
     } finally {
@@ -879,6 +914,41 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
 
   return (
     <div>
+      {/* ── Club-level channel health ─────────────────────────────────────── */}
+      {channelStats && (
+        <div style={{
+          display: "flex", gap: 24, padding: "12px 18px",
+          background: C.surface, border: `1px solid ${C.border}`,
+          borderRadius: 8, marginBottom: 20, flexWrap: "wrap",
+        }}>
+          <div>
+            <div style={{ fontFamily: C.mono, fontSize: 9, letterSpacing: "0.06em", color: C.textDim, textTransform: "uppercase", marginBottom: 3 }}>
+              Promotional sends (30d)
+            </div>
+            <div style={{ fontFamily: C.mono, fontSize: 22, fontWeight: 700, color: channelStats.total_promo_contacts_30d > 50 ? C.red : C.text }}>
+              {channelStats.total_promo_contacts_30d.toLocaleString()}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontFamily: C.mono, fontSize: 9, letterSpacing: "0.06em", color: C.textDim, textTransform: "uppercase", marginBottom: 3 }}>
+              Distinct players contacted
+            </div>
+            <div style={{ fontFamily: C.mono, fontSize: 22, fontWeight: 700, color: C.text }}>
+              {channelStats.distinct_players_contacted.toLocaleString()}
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center" }}>
+            <span style={{ fontSize: 11, color: C.textDim, fontFamily: C.mono }}>
+              {channelStats.total_promo_contacts_30d === 0
+                ? "Channel unused — ledger is empty"
+                : channelStats.total_promo_contacts_30d <= 20
+                  ? "Channel utilisation looks healthy"
+                  : "Monitor for over-use"}
+            </span>
+          </div>
+        </div>
+      )}
+
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 20 }}>
         <span style={{ fontSize: 11, color: C.textDim }}>
           {queue.length} open promotion{queue.length !== 1 ? "s" : ""}
