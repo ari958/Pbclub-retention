@@ -5,7 +5,8 @@
 - [Evaluator decisions timing](evaluator-decisions-timing.md) — decisions only written when event enters offset_hours window; 0 decisions is expected until ~T-3h before an off-peak event
 - [Backtest reconstruction](backtest-reconstruction.md) — Phase 2.5 full matrix: FN=0 always by construction; best Open Play cell = N=4/T-2h (24% fire, 55% prec); Clinics N=4/T-2h (53% fire, 90% prec — EXCESS_FIRE but accurate)
 - [Attendance sync constraint bug](attendance-sync-constraint.md) — intra-batch duplicate bug: fixed Phase 3 §2a via per-event Map dedup in syncEventAttendance.js; club_id now populated §2b
-- [Phase 3 rules](phase3-rules.md) — Open Play id=01cea5a1 (N=4/T-2h); Clinics id=cc0d0add (N=4/T-18h PROMOTE + N=2/T-2h CANCEL); old mirror rule disabled
+- [Phase 3 rules](phase3-rules.md) — Open Play id=01cea5a1 (N=7/T-6h PROMOTE + N=4/T-2h CANCEL, Phase 3.5 backtested); Clinics id=cc0d0add (N=4/T-18h PROMOTE + N=2/T-2h CANCEL); mirror disabled
+- [Phase 3.5 findings](phase35-findings.md) — buddy signal fix (attendances→external_id); open play backtest N=7/T-6h (75% prec, ±17pp); send cap 25/40; buddy_pairs has no club_id column
 - [Migration 006](phase3-rules.md) — pending manual run in Supabase SQL editor: adds last_heartbeat/jobs, PROMOTE to decisions CHECK, promotion_candidates table, event_fill metadata cols
 - [Archetype thresholds](archetype-thresholds.md) — 180d/min=2 applied (Phase 3.3); early+planner=124; warmScore programType via rule_name fallback (Clinics); buddy signal needs PodPlay→internal ID bridge for future events
 - [Contact ledger](contact-ledger.md) — Phase 3.4: contact_ledger table (007 migration, needs manual run); budget gate in promotion candidates builder; recency tiebreaker +0/+3/+8/+15; pool supports ~3-4 sends/clinic (not 24)

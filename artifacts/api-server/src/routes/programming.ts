@@ -547,10 +547,11 @@ const BacktestBodySchema = z.object({
       podplay_types: z.array(z.string()).optional(),
     }),
     checkpoints: z.array(z.object({
-      index:        z.number().int(),
-      offset_hours: z.number().int(),
-      min_signups:  z.number().int(),
-      action:       z.enum(["CANCEL", "ALERT", "PROMOTE"]),
+      index:                z.number().int(),
+      offset_hours:         z.number().int(),
+      min_signups:          z.number().int(),
+      action:               z.enum(["CANCEL", "ALERT", "PROMOTE"]),
+      fill_ratio_threshold: z.number().min(0).max(1).optional(), // e.g. 0.40 = 40% of total_teams
     })).min(1),
   }),
 });
@@ -733,8 +734,10 @@ router.post("/programming/backtest", async (req, res) => {
       let evaluated = 0, wouldFire = 0, tp = 0, fp = 0, fn = 0, tn = 0;
       let skippedCoverage = 0, skippedUndercount = 0, skippedNoData = 0;
       let skippedAlreadyCancelled = 0;
-      const byArchetype: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
+      const byArchetype:   Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
       const byProgramType: Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
+      // Item 2c — capacity bands: small (≤6 teams), medium (7–12), large (13+)
+      const byCapacity:    Record<string, { evaluated: number; wouldFire: number; tp: number; fp: number; fn: number; tn: number }> = {};
       const eventDetails: any[] = [];
       const usableRowCounts: number[] = [];
 
@@ -769,14 +772,27 @@ router.post("/programming/backtest", async (req, res) => {
         const startMs  = new Date(fill.start_time as string).getTime();
         const cutoffMs = startMs - cp.offset_hours * 3_600_000;
         const signupAtOffset = att.times.filter((t) => t <= cutoffMs).length;
+        const totalTeams = (fill.total_teams as number | null) ?? null;
 
-        const fires = signupAtOffset < cp.min_signups;
+        // Fire condition — supports both absolute count and fill-ratio triggers.
+        // fill_ratio_threshold: fraction of total_teams (e.g. 0.40 = 40% fill).
+        // Falls back to min_signups when ratio is not set or total_teams unknown.
+        const isRatioTrigger = cp.fill_ratio_threshold !== undefined &&
+          cp.fill_ratio_threshold !== null && totalTeams !== null;
+        const fires = isRatioTrigger
+          ? (signupAtOffset / totalTeams!) < cp.fill_ratio_threshold!
+          : signupAtOffset < cp.min_signups;
 
-        // Ground truth: final active signup count vs. threshold.
-        // Exclude events that were already cancelled — their truncated final count
-        // cannot be scored as TP or FP (is_canceled is already filtered in query
-        // above, so this is a belt-and-suspenders guard using final_signups null).
-        // A final_signups of null means we have no outcome data.
+        // Ground truth: did the session end under-enrolled?
+        // For CANCEL checkpoints: under-enrolled = final < threshold (cancellation warranted).
+        // For PROMOTE checkpoints: same — under-enrolled = final < threshold (outreach warranted).
+        //   TP = fired AND ended under-enrolled  (correctly triggered)
+        //   FP = fired AND session filled anyway  (wasted send, not harmful)
+        //   FN = did not fire AND ended under-enrolled  (missed opportunity)
+        //   TN = did not fire AND session filled  (correctly left alone)
+        // FN = 0 is only mathematically guaranteed for CANCEL under the booked_at
+        // reconstruction (count_at_offset ≤ final_signups). For PROMOTE this is NOT
+        // guaranteed: a session with enough signups at T-6h can still end under-enrolled.
         if (fill.final_signups === null || fill.final_signups === undefined) {
           skippedAlreadyCancelled++;
           continue;
@@ -784,24 +800,15 @@ router.post("/programming/backtest", async (req, res) => {
 
         usableRowCounts.push(att.total);
 
-        // FP: would fire AND final count reached threshold (rule would have
-        //     cancelled a session that ended up fine)
-        // TP: would fire AND final count stayed below threshold (correctly spotted
-        //     a genuinely under-enrolled session)
-        // FN: did NOT fire AND final count stayed below threshold (missed a dead session)
-        // TN: did NOT fire AND final count reached threshold (correctly left alone)
-        //
-        // Note: FN = 0 is mathematically guaranteed by the booked_at reconstruction.
-        // count_at_offset ≤ total_att_rows ≤ final_signups, so if the rule does NOT
-        // fire (count_at_offset ≥ N), final_signups ≥ N too — impossible to miss a
-        // truly dead session. Recall is therefore always 1.000 in this dataset.
-        // This is a property of the reconstruction, not a claim that no dead sessions
-        // exist in the real world.
-        const finalCount    = fill.final_signups as number;
-        const truePositive  = fires && finalCount <  cp.min_signups;
-        const falsePositive = fires && finalCount >= cp.min_signups;
-        const falseNegative = !fires && finalCount <  cp.min_signups;
-        const trueNegative  = !fires && finalCount >= cp.min_signups;
+        const finalCount = fill.final_signups as number;
+        const groundTruthUnderenrolled = isRatioTrigger && totalTeams !== null
+          ? finalCount / totalTeams < cp.fill_ratio_threshold!
+          : finalCount < cp.min_signups;
+
+        const truePositive  =  fires &&  groundTruthUnderenrolled;
+        const falsePositive =  fires && !groundTruthUnderenrolled;
+        const falseNegative = !fires &&  groundTruthUnderenrolled;
+        const trueNegative  = !fires && !groundTruthUnderenrolled;
 
         if (!byArchetype[archName]) byArchetype[archName] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0, fn: 0, tn: 0 };
         const ab = byArchetype[archName];
@@ -814,31 +821,43 @@ router.post("/programming/backtest", async (req, res) => {
         if (!byProgramType[progType]) byProgramType[progType] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0, fn: 0, tn: 0 };
         const pt = byProgramType[progType];
 
-        evaluated++; ab.evaluated++; pt.evaluated++;
+        // Item 2c — capacity bands (total_teams from event_fill, requires migration 006)
+        const capBand = !totalTeams ? "unknown"
+          : totalTeams <= 6  ? "small (≤6)"
+          : totalTeams <= 12 ? "medium (7–12)"
+          :                    "large (13+)";
+        if (!byCapacity[capBand]) byCapacity[capBand] = { evaluated: 0, wouldFire: 0, tp: 0, fp: 0, fn: 0, tn: 0 };
+        const cb = byCapacity[capBand];
+
+        evaluated++; ab.evaluated++; pt.evaluated++; cb.evaluated++;
         if (fires) {
-          wouldFire++; ab.wouldFire++; pt.wouldFire++;
-          if (truePositive)  { tp++; ab.tp++; pt.tp++; }
-          if (falsePositive) { fp++; ab.fp++; pt.fp++; }
+          wouldFire++; ab.wouldFire++; pt.wouldFire++; cb.wouldFire++;
+          if (truePositive)  { tp++; ab.tp++; pt.tp++; cb.tp++; }
+          if (falsePositive) { fp++; ab.fp++; pt.fp++; cb.fp++; }
         } else {
-          if (falseNegative) { fn++; ab.fn++; pt.fn++; }
-          if (trueNegative)  { tn++; ab.tn++; pt.tn++; }
+          if (falseNegative) { fn++; ab.fn++; pt.fn++; cb.fn++; }
+          if (trueNegative)  { tn++; ab.tn++; pt.tn++; cb.tn++; }
         }
 
         if (includeEventDetails) {
           eventDetails.push({
-            event_id:           fill.event_id,
-            program_name:       att.programName ?? archName,
-            date:               (fill.start_time as string)?.slice(0, 10) ?? null,
-            archetype:          archName,
-            program_type:       progType,
-            count_at_offset:    signupAtOffset,
-            final_signups:      finalCount,
-            booked_at_coverage: Math.round(coverage * 1000) / 1000,
-            would_fire:         fires,
-            is_tp:              truePositive,
-            is_fp:              falsePositive,
-            is_fn:              falseNegative,
-            is_tn:              trueNegative,
+            event_id:             fill.event_id,
+            program_name:         att.programName ?? archName,
+            date:                 (fill.start_time as string)?.slice(0, 10) ?? null,
+            archetype:            archName,
+            program_type:         progType,
+            capacity_band:        capBand,
+            total_teams:          totalTeams,
+            count_at_offset:      signupAtOffset,
+            final_signups:        finalCount,
+            fill_ratio_at_offset: totalTeams ? Math.round((signupAtOffset / totalTeams) * 1000) / 1000 : null,
+            fill_ratio_final:     totalTeams ? Math.round((finalCount      / totalTeams) * 1000) / 1000 : null,
+            booked_at_coverage:   Math.round(coverage * 1000) / 1000,
+            would_fire:           fires,
+            is_tp:                truePositive,
+            is_fp:                falsePositive,
+            is_fn:                falseNegative,
+            is_tn:                trueNegative,
           });
         }
       }
@@ -886,12 +905,16 @@ router.post("/programming/backtest", async (req, res) => {
         median_usable_rows: medUR,
         uncertainty_band:   uncertainty,
         reconstruction_caveat:
-          fn === 0
-            ? "FN=0 is a mathematical property: count_at_offset ≤ final_signups by construction " +
-              "(booked_at timestamps are monotonically non-decreasing). Recall=1.0 does not imply " +
-              "the rule catches all dead sessions in reality — only that the reconstruction cannot " +
-              "represent a session that had enough members at offset time but fewer at end."
-            : undefined,
+          fn === 0 && cp.action !== "PROMOTE"
+            ? "FN=0 is a mathematical property of booked_at reconstruction for CANCEL checkpoints: " +
+              "count_at_offset ≤ final_signups by construction (timestamps are monotonically non-decreasing). " +
+              "Recall=1.0 does not imply the rule catches all dead sessions in reality. " +
+              "For PROMOTE checkpoints, FN > 0 is possible: a session with enough signups at the offset " +
+              "can still end under-enrolled — the reconstruction does not guarantee FN=0 there."
+            : fn === 0 && cp.action === "PROMOTE"
+              ? "FN=0 for this PROMOTE checkpoint — sessions with signupAtOffset >= threshold all ended above threshold too. " +
+                "Plausible at generous thresholds; verify against a tighter one."
+              : undefined,
         by_archetype: Object.fromEntries(
           Object.entries(byArchetype).map(([name, s]) => [name, {
             evaluated:       s.evaluated,
@@ -919,6 +942,21 @@ router.post("/programming/backtest", async (req, res) => {
           precision:  r(s.wouldFire  > 0 ? s.tp / s.wouldFire        : null),
           recall:     r((s.tp + s.fn) > 0 ? s.tp / (s.tp + s.fn)    : null),
         })),
+        // Item 2c — capacity segmentation (small ≤6, medium 7–12, large 13+)
+        by_capacity: Object.entries(byCapacity).map(([band, s]) => ({
+          capacity_band: band,
+          evaluated:     s.evaluated,
+          fired:         s.wouldFire,
+          tp:            s.tp,
+          fp:            s.fp,
+          fn:            s.fn,
+          tn:            s.tn,
+          fire_rate:  r(s.evaluated > 0 ? s.wouldFire / s.evaluated : null),
+          fp_rate:    r(s.wouldFire  > 0 ? s.fp / s.wouldFire        : null),
+          precision:  r(s.wouldFire  > 0 ? s.tp / s.wouldFire        : null),
+          recall:     r((s.tp + s.fn) > 0 ? s.tp / (s.tp + s.fn)    : null),
+        })),
+        ...(cp.fill_ratio_threshold !== undefined ? { fill_ratio_threshold: cp.fill_ratio_threshold } : {}),
         ...(includeEventDetails ? { event_details: eventDetails } : {}),
       });
     }
@@ -937,10 +975,14 @@ router.post("/programming/backtest", async (req, res) => {
       total_events_in_window: fillRows.length,
       archetype_coverage:     archetypeCoverage,
       outcome_definition:
-        "Ground truth (Phase 2.4): FP = would-fire AND final_signups >= min_signups; " +
-        "TP = would-fire AND final_signups < min_signups. " +
-        "Already-cancelled events excluded (final count truncated by cancellation cannot score either). " +
-        "Replaces Phase 2.3 fill_rate < 0.5 proxy.",
+        "For CANCEL checkpoints — TP: fired AND session stayed under-enrolled (correct cancellation); " +
+        "FP: fired AND session filled anyway (would have cancelled a fine session); " +
+        "FN: did not fire AND session stayed under-enrolled (missed a dead session); " +
+        "TN: did not fire AND session filled (correctly left alone). " +
+        "For PROMOTE checkpoints — framing inverts: TP = outreach warranted AND triggered correctly; " +
+        "FP = wasted send (session filled on its own); FN = missed under-enrolled session; TN = correctly left alone. " +
+        "A high FP rate for PROMOTE means sessions that triggered outreach filled anyway — not harmful, but wasteful. " +
+        "Already-cancelled events excluded (truncated final count cannot score either way).",
       reconstruction_note:
         "signup_count_at_offset reconstructed from attendances.booked_at (member-tracked subset only). " +
         "Archetypes with median local/PodPlay ratio < 0.70 are excluded from checkpoint results.",
@@ -1268,12 +1310,25 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       offset += 1000;
     }
 
-    // ── 5. Load current event signups from local attendances (for buddy lookup) 
-    const { data: eventSignups } = await supabase
-      .from("attendances")
-      .select("player_id")
-      .eq("event_id", eventId);
-    const signedUpPlayerIds = new Set((eventSignups ?? []).map((r: any) => r.player_id));
+    // ── 5. Convert live PodPlay signups → internal player IDs (buddy signal fix) ─
+    // Phase 3.5 fix: previously queried attendances filtered by event_id, which is
+    // always empty for upcoming events (attendances only contains past events).
+    // bookedExternalIds is already fetched live from PodPlay (step 3) — resolve
+    // those external IDs to internal UUIDs via players.external_id so buddy pairs
+    // can fire against the real current registrants.
+    const signedUpPlayerIds = new Set<string>();
+    if (bookedExternalIds.size > 0) {
+      const extIdArr = [...bookedExternalIds];
+      const EXT_CHUNK = 200;
+      for (let ci = 0; ci < extIdArr.length; ci += EXT_CHUNK) {
+        const { data: idRows } = await supabase
+          .from("players")
+          .select("id")
+          .eq("club_id", clubId)
+          .in("external_id", extIdArr.slice(ci, ci + EXT_CHUNK));
+        for (const row of (idRows ?? [])) signedUpPlayerIds.add((row as any).id);
+      }
+    }
 
     // ── 6. Load buddy pairs for already-signed-up players ─────────────────────
     const signedUpArr = [...signedUpPlayerIds];
@@ -1304,8 +1359,13 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
     // ── 7. Contact-budget settings from rule (with fallback defaults) ─────────
     // Cancellation notices are ALWAYS exempt from budget — they are transactional
     // and must never be suppressed.  applies_to=['promotion'] only.
-    interface ContactBudget { cooldown_days: number; max_per_30_days: number; applies_to: string[]; }
-    const BUDGET_DEFAULTS: ContactBudget = { cooldown_days: 7, max_per_30_days: 2, applies_to: ["promotion"] };
+    interface ContactBudget { cooldown_days: number; max_per_30_days: number; max_sends_per_decision?: number; applies_to: string[]; }
+    // max_sends_per_decision: rank cutoff, not a filter. All candidates keep their
+    // score and rank; those beyond the cap are marked below the send line so the
+    // operator can see the full list and where the cutoff falls.
+    // Defaults: 25 for clinics, 40 for open play (opening positions — not derived).
+    // Capacity permits ~97/session; that is not a reason to send 97.
+    const BUDGET_DEFAULTS: ContactBudget = { cooldown_days: 7, max_per_30_days: 2, max_sends_per_decision: 25, applies_to: ["promotion"] };
     let contactBudget: ContactBudget = BUDGET_DEFAULTS;
     {
       const { data: ruleRow } = await supabase
@@ -1352,6 +1412,7 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
     );
 
     // ── 8. Filter + score each player ─────────────────────────────────────────
+    const sendLineCap = contactBudget.max_sends_per_decision ?? 25;
     const funnel = {
       total_players:          players.length,
       after_already_booked:   0,
@@ -1364,6 +1425,11 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       email_only:             0,
       flagged_contacted_48h:  0,
       contact_budget_settings: contactBudget,
+      // Send-line: rank cutoff applied after scoring. Candidates above line are
+      // those the operator would actually send to. Candidates below keep their
+      // score and rank — they are visible but not within the active cap.
+      send_line_cap:          sendLineCap,
+      above_send_line:        0,
     };
 
     const candidates: any[] = [];
@@ -1603,14 +1669,21 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       return b.score - a.score;
     });
 
-    // Assign ranks (eligible only)
+    // Assign ranks (eligible only) and apply send-line cutoff.
+    // max_sends_per_decision is a rank cap, not a filter — candidates beyond the
+    // cutoff stay in the list with scores and ranks intact. The operator sees the
+    // full sorted list and where the line falls.
     let rank = 1;
     const toStore: any[] = [];
     for (const c of candidates) {
       if (c.eligible) {
         c.rank = rank++;
+        c.above_send_line = c.rank <= sendLineCap;
+        c.reasons.above_send_line = c.above_send_line;
+        if (c.above_send_line) funnel.above_send_line++;
       } else {
         c.rank = null;
+        c.above_send_line = false;
       }
       if (c.eligible || c.ineligible_reason) {
         toStore.push({
@@ -1621,6 +1694,7 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
           reasons:           c.reasons,
           eligible:          c.eligible,
           ineligible_reason: c.ineligible_reason ?? null,
+          above_send_line:   c.above_send_line ?? false,
         });
       }
     }
@@ -1656,8 +1730,9 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       stored_to_db: stored,
       funnel,
       eligible_count:   funnel.eligible_final,
-      candidates:       candidates.slice(0, 50), // cap response at top-50
+      candidates:       candidates.slice(0, 200), // show enough to always include send-line boundary
       total_candidates: candidates.length,
+      send_line_cap:    sendLineCap,
     });
 
   } catch (err: any) {

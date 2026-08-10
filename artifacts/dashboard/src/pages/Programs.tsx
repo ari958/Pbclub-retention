@@ -746,9 +746,15 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
           fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
           color: C.textDim, textTransform: "uppercase", marginBottom: 14,
         }}>
-          {eligible.length} Eligible Candidates
+          {f.above_send_line != null && f.above_send_line > 0
+            ? <>{f.above_send_line} above send line<span style={{ fontWeight: 400, color: C.textDim }}> / {eligible.length} eligible</span></>
+            : <>{eligible.length} Eligible Candidates</>
+          }
           {f.sms_reachable > 0 && (
             <span style={{ color: C.textSub, fontWeight: 400 }}> · {f.sms_reachable} SMS-reachable</span>
+          )}
+          {f.send_line_cap != null && (
+            <span style={{ color: C.textDim, fontWeight: 400 }}> · cap {f.send_line_cap}</span>
           )}
         </div>
         {eligible.length === 0 ? (
@@ -787,10 +793,28 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                     seg === "recent_dormant" ? "dormant" :
                     seg === "active"         ? "active"  :
                     seg === "unknown"        ? "new"     : "—";
+                  const isFirstBelowLine = !c.above_send_line && (i === 0 || eligible[i - 1].above_send_line);
                   return (
-                    <tr key={i} style={{
+                    <React.Fragment key={i}>
+                      {isFirstBelowLine && (
+                        <tr>
+                          <td colSpan={10} style={{
+                            padding: "6px 8px",
+                            borderTop: `2px dashed ${C.accent}`,
+                            borderBottom: `1px solid ${C.border}`,
+                            background: `${C.accent}10`,
+                            fontFamily: C.mono, fontSize: 9, fontWeight: 600,
+                            color: C.accent, letterSpacing: "0.08em",
+                            textTransform: "uppercase",
+                          }}>
+                            ─── send line (cap: {f.send_line_cap ?? data.send_line_cap}) ─── candidates below are ranked but outside the active cap
+                          </td>
+                        </tr>
+                      )}
+                    <tr style={{
                       borderBottom: `1px solid ${C.border}`,
-                      background: i % 2 === 0 ? "transparent" : C.surface2,
+                      background: c.above_send_line === false ? `${C.surface2}88` : (i % 2 === 0 ? "transparent" : C.surface2),
+                      opacity: c.above_send_line === false ? 0.65 : 1,
                     }}>
                       <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.textDim }}>{c.rank}</td>
                       <td style={{ padding: "7px 8px", color: C.text, fontWeight: 500 }}>
@@ -839,6 +863,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                         )}
                       </td>
                     </tr>
+                    </React.Fragment>
                   );
                 })}
               </tbody>

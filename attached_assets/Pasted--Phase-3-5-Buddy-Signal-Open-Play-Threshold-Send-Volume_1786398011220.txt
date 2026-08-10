@@ -1,0 +1,138 @@
+# Phase 3.5 — Buddy Signal, Open Play Threshold, Send Volume Policy
+
+**Mode:** Fix, backtest, configure. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 4 items.
+
+---
+
+## Context
+
+The consent import closed the reach problem: club-wide phone coverage went 59% → 74.7%, SMS-reachable in the eligible retention pool went 593 → 967, and cancellation SMS coverage for ever-attended players went ~70% → 98.6%.
+
+Three things remain before this system could reasonably send anything.
+
+**1. The buddy signal has never fired.** Phase 3.3 diagnosed why: `signedUpPlayerIds` is read from `attendances`, which only covers **past** events. For an upcoming session it is always empty, so `buddyMap` is always empty and the signal can never fire. Under retention framing this matters far more than it did under promotion framing — *"there's room Tuesday, and Dave and Marie are in"* is what makes a lapsing message land. It stops being a bonus signal and becomes core.
+
+**2. The open play PROMOTE threshold is a guess.** The rule was seeded at N=6 / T-6h. The T-6h offset is data-backed (open play books late — ~24% of bookings arrive inside the final 3 hours, and count-at-offset only starts predicting final count around T-6h). The N=6 threshold is not. Open play capacity runs 6–18 versus clinics at 4, so an absolute count means different things at different sizes: 5 of 14 is under-enrolled, 5 of 6 is nearly full.
+
+**3. Send volume has no policy.** Capacity is now ~1,934 sends per rolling 30 days against ~20 promoted sessions — roughly 97 available per session. That is not a target. The cap should come from what actually fills a session, not from what the budget permits.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No sending. At all.** No Twilio, no email, no writes to `messages`, `programming_notifications`, or `contact_ledger`.
+
+**3. No execution path.** No send button — not disabled, not hidden, not stubbed.
+
+**4. Supabase writes** limited to `programming_rules` and `promotion_candidates`. Do not modify `players`, `attendances`, `messages`, `conversations`, `event_fill`, or `sms_consent_records`.
+
+**5. Never use `signups._total`** as a live count. Use the shared constants in `src/lib/signupStatus.ts`.
+
+**6. Never echo full phone numbers or email addresses.** Masked samples only.
+
+**7. Evaluator stays unwired** from the nightly chain and any timer.
+
+**8. Never echo secrets.**
+
+---
+
+## Item 1 — Fix the buddy signal
+
+**1a. Apply the fix.** In the promotion candidate builder, `bookedExternalIds` is already fetched live from PodPlay. Convert those to internal player IDs via `players.external_id`, and use that set to build `buddyMap` instead of querying `attendances` by `event_id`.
+
+**1b. Verify it fires.** Rebuild the funnel for a current PROMOTE decision and confirm the signal appears in `reasons` for at least one candidate. If it doesn't fire on the current decision, find any upcoming session where a registrant has a buddy pair with an eligible non-booked player and demonstrate it there.
+
+If it still cannot fire anywhere, report why — that would mean the join itself is wrong, not just the source table.
+
+**1c. Audit the same assumption elsewhere.** This blind spot is unlikely to be unique to buddies. Grep for anything that queries `attendances` by `event_id` to determine who is signed up, and report every location with an assessment of whether it's reading upcoming events.
+
+Report findings; fix only what is clearly broken and in scope. Anything larger, report and stop.
+
+**1d. Report expected hit rate.** Across upcoming sessions, how often is a buddy signal available at all? With 833 buddy pairs and a ~1,591-player eligible pool this should now be non-trivial, but report the actual number rather than assuming. If it fires on most sessions it's a core ranking input; if rare, it's a bonus and the weight should reflect that.
+
+**STATUS:**
+
+---
+
+## Item 2 — Backtest the open play promotion threshold
+
+**2a. Test both trigger types at T-6h**, across the last 120 days of open play events:
+
+- **Absolute count:** N = 4, 5, 6, 7, 8, 10
+- **Fill ratio:** 25%, 33%, 40%, 50%, 60% of `totalTeams`
+
+Use the full confusion matrix from Phase 2.5 — `evaluated`, `fired`, `fire_rate`, `tp`, `fp`, `fn`, `tn`, `precision`, `recall` — with raw counts in every cell, not just rates.
+
+**2b. Define the outcome correctly for a PROMOTE action.** This was wrong in the clinic backtest and should not be repeated.
+
+For a **cancel** rule, a false positive is cancelling a session that would have filled. For a **promote** rule, the framing inverts: a session that fills on its own didn't need outreach — that's a wasted send, not a harmful one — and a session that stays under-enrolled is one where promotion could have helped.
+
+State the definition being used explicitly in the output, and report both:
+- how often the rule fires on sessions that end under-enrolled (outreach warranted)
+- how often it fires on sessions that fill anyway (outreach wasted)
+
+**2c. Segment by capacity.** Split open play into small (`totalTeams` ≤ 6), medium (7–12), and large (13+). This is the whole reason fill ratio may beat absolute count — report whether the two triggers diverge across those bands.
+
+**2d. Report `n` and uncertainty** as in prior phases: median usable rows per event alongside every percentage, presented with the resulting band rather than to three decimals.
+
+**2e. Recommend a trigger and threshold** with the supporting numbers, and express the recommendation in **sessions per month**: how many open play sessions would be promoted, how many of those genuinely end under-enrolled. Update the seeded rule only after reporting.
+
+**STATUS:**
+
+---
+
+## Item 3 — Send volume policy
+
+**3a. Add `max_sends_per_decision` to the `contact_budget` object** in `programming_rules`, alongside `cooldown_days` and `max_per_30_days`. Rule data, not a constant — tunable without a code change.
+
+**3b. Apply it as a rank cutoff, not a filter.** Candidates beyond the cap stay in `promotion_candidates` with their scores and ranks intact; they are simply below the send line. The operator should be able to see the full ranked list and where the cutoff falls.
+
+**3c. Set conservative defaults and say why.** Suggested starting point: **25 for clinics, 40 for open play** — open play sessions are larger and need more fills. These are opening positions to be revised once real fill data exists, not derived numbers. Capacity permits ~97 per session; that is not a reason to send 97.
+
+**3d. Report the resulting monthly load.** At the proposed caps across ~20 promoted sessions a month, what fraction of the available budget gets used, and how many distinct players are contacted? Re-run the Phase 3.4 simulation shape — 10 sequential decisions, in memory only, no database writes — and report distinct players reached, contacts per player, and whether any decision ran short.
+
+**3e. Surface the cutoff on the queue screen.** Show which candidates fall above and below the send line, and display the active cap. No send button.
+
+**STATUS:**
+
+---
+
+## Item 4 — State of the system
+
+Short written summary, no code. What exists, what's verified, what's assumed.
+
+Specifically:
+- Which rules are seeded, with their checkpoints and thresholds, and which of those thresholds are backtested versus estimated
+- What the funnel looks like end to end for one clinic and one open play session
+- What has never been exercised — sending, cancellation execution, the ledger, outcome tracking
+- The largest remaining assumption in the system
+
+Written for someone who hasn't followed the build. This becomes the reference before any decision to send.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Buddy signal** — does it fire, and on what fraction of sessions?
+2. **Open play trigger** — absolute count or fill ratio, at what threshold, with the numbers.
+3. **Send caps** — proposed values and resulting monthly load.
+4. **The largest remaining assumption** before this system could send anything.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages`, `programming_notifications`, or `contact_ledger`; no send button built; evaluator not wired to any timer.**
