@@ -1,0 +1,173 @@
+# SMS Consent Import — Web Form Submissions
+
+**Mode:** Import + reconciliation. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 4 items, sequential. Item 1 is a dry-run analysis and gates the rest.
+**Source file:** `Customers_2026-08-10.csv` — 1,895 rows of SMS consent form submissions from the PB Club website.
+
+---
+
+## Context
+
+The club has consent-form submissions living outside Supabase. `players.phone` is populated for roughly 1,479 of 2,506 players (63%), which limits SMS reach — most critically for **cancellation notices**, where a member without a phone number may not learn in time that their session was cancelled two hours out.
+
+The retention rework also expanded the eligible pool from ~40 to ~1,586 players, so phone coverage is now the binding constraint on reach rather than the targeting filters.
+
+**File profile (already verified — no cleanup needed):**
+
+| Column | Notes |
+|---|---|
+| `First Name`, `Last Name` | Present on all rows |
+| `Email` | All lowercase, valid format, **zero duplicates** — this is the join key |
+| `Phone Number` | All 1,895 are 11 digits beginning with `1`. No formatting variance. |
+| `Created Date` | `M/D/YYYY H:MM`, all parse cleanly. Range: 2025-07-03 → 2026-08-10 |
+
+No duplicate emails, phones, or email+phone pairs. The file is clean.
+
+**Consent classification:** these are web-form submissions and should be recorded as `consent_source = 'web_form'`, which is the basis for **marketing/promotional** SMS. This is a stronger consent class than a booking waiver, which covers transactional messages only.
+
+The uploaded file does not contain the consent artifact itself (no checkbox field, no consent language version) — it carries phone, email, and timestamp. The original Webflow submissions remain the underlying evidentiary record. Preserve the submission timestamp accordingly and never substitute the import date.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No sending. At all.** No Twilio, no email, no writes to `messages`, `programming_notifications`, or `contact_ledger`.
+
+**3. No execution path.** No send button, no cancellation code — not behind a flag, not commented out.
+
+**4. Supabase writes** limited to: `players` (only `phone`, `sms_opt_in`/`consent_source`, and consent timestamp columns) and a new consent records table. Do not modify `attendances`, `messages`, `conversations`, `event_fill`, or `programming_*`.
+
+**5. Never overwrite an existing phone number** with an imported one without reporting the conflict first. See Item 2.
+
+**6. Never echo full phone numbers or email addresses** in report output. Use counts, and masked samples only (e.g. `j***@gmail.com`, `+1206***4471`).
+
+**7. Never echo secrets.**
+
+---
+
+## Go-ahead policy
+
+Item 1 is analysis only and must be reported before any write. If the match rate is far from expectation or conflicts are widespread, stop and report rather than importing.
+
+---
+
+## Item 1 — Dry run: match, conflict, and coverage analysis
+
+**No writes.** Load the CSV, normalize, and report.
+
+**1a. Normalize.**
+- Phone → E.164: `+` prepended to the existing 11 digits. Verify all 1,895 produce valid `+1XXXXXXXXXX`.
+- Email → lowercase, trimmed (already clean; confirm).
+- `Created Date` → timestamptz. **Report the timezone assumption you make and why** — these are wall-clock times from a web form with no offset. Treat as `America/New_York` (club local) unless something in the data contradicts that.
+
+**1b. Match against `players` on email.** Report:
+
+| Bucket | Count |
+|---|---|
+| CSV rows matching a player | |
+| CSV rows with no matching player | |
+| Players matched by ≥1 CSV row | |
+| Players with no CSV match | |
+
+**1c. Break the matched set down by current phone state:**
+
+| Case | Count | Action |
+|---|---|---|
+| Player has no phone → CSV fills the gap | | Import |
+| Player's phone matches CSV (same digits) | | No-op, mark consent |
+| Player's phone **differs** from CSV | | **Conflict — report, do not overwrite** |
+
+For conflicts, report the count and 5 masked examples. Note which is likely newer based on the CSV timestamp versus whatever provenance exists locally.
+
+**1d. Quantify the coverage gain.** Current SMS-reachable player count versus post-import projection. Report against both the full player base and the current eligible retention pool (~1,586 eligible / ~593 SMS-reachable).
+
+**1e. Cross-reference the never-booked cohort.** Roughly 1,085 players have no `last_visit_date` — accounts created that never booked. How many of them appear in the consent file? This distinguishes cold signups from people who engaged enough to give a number, and it determines whether that cohort is worth any outreach design at all.
+
+**1f. Profile the unmatched CSV rows.** Consent submissions with no PodPlay account — consented leads rather than members. Report the count and the `Created Date` distribution by quarter. Recent unmatched rows are live leads; old ones are not.
+
+**STATUS:**
+
+---
+
+## Item 2 — Conflict policy
+
+Only if Item 1 found phone conflicts.
+
+**2a.** Report the conflict count and what distinguishes the two sources.
+
+**2b. Do not resolve automatically.** Recommend a policy — most likely "keep existing, record the CSV number as an alternate, flag for manual review" — and **stop for a decision** rather than picking one. A wrong number on a cancellation notice means a member doesn't learn their session was cancelled.
+
+**2c.** If conflicts are zero or trivially few, say so and proceed.
+
+**STATUS:**
+
+---
+
+## Item 3 — Import
+
+Only after Items 1 and 2 are reported and the match rate looks sound.
+
+**3a. Create `sms_consent_records`** — the durable record, separate from the denormalized flag on `players`:
+
+- `id` uuid pk, `club_id` fk → clubs
+- `player_id` fk → players, **nullable** (unmatched leads have no player)
+- `email` text, `phone_e164` text
+- `first_name`, `last_name` text
+- `consented_at` timestamptz — **the CSV submission timestamp, never the import date**
+- `consent_source` text — `'web_form'`
+- `import_batch` text — filename plus import timestamp, so a batch can be traced or reversed
+- `matched` boolean
+- UNIQUE on `(club_id, email)`
+- Index on `phone_e164`
+- RLS + grants + timestamps per existing convention
+
+Load **all 1,895 rows**, matched and unmatched alike. The unmatched are consented leads and shouldn't be discarded.
+
+**3b. Update `players`** for matched rows only:
+- Set `phone` where currently NULL
+- Set consent fields — `sms_opt_in` / `consent_source = 'web_form'` / consent timestamp — following whatever columns already exist. **Read the schema first**; do not invent columns if suitable ones are present.
+- **Never overwrite an existing non-NULL phone.** Conflicts stay untouched pending Item 2.
+
+**3c. Idempotent.** Re-running must not duplicate rows or re-write unchanged values. Verify by running twice and reporting that the second run changes nothing.
+
+**3d. Report before/after:** players with phone, players with marketing consent, and the eligible-pool SMS-reachable count.
+
+**STATUS:**
+
+---
+
+## Item 4 — Verify against the retention pool
+
+**4a.** Rebuild the funnel for a current PROMOTE decision and report before/after SMS-reachable counts per segment (lapsing, recent dormant, active, new/unsynced).
+
+**4b.** Recompute promotional capacity: SMS-reachable eligible × 2 contacts per 30 days, against ~20 promoted sessions per month. Does the pool now support the cadence? This was the binding constraint at ~48 sends/month before the rework.
+
+**4c.** Report the practical effect on **cancellation notices** — how many more registrants can now be reached by SMS rather than email alone. This is the higher-stakes use, and it's the one most improved by the import.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Match rate** — CSV rows matched, players newly reachable.
+2. **Conflicts** — count and recommended policy.
+3. **Coverage before/after** — club-wide and within the retention pool.
+4. **Never-booked cohort** — how many of the ~1,085 are in the consent file.
+5. **Unmatched leads** — count and recency.
+
+Confirm: **no PodPlay writes; no messages sent; nothing written to `messages`, `programming_notifications`, or `contact_ledger`; no existing phone number overwritten; no full phone numbers or emails in report output.**
