@@ -1018,16 +1018,22 @@ router.post("/programming/rules/seed-phase3", async (req, res) => {
       .eq("club_id", clubId)
       .eq("name", "Off-Peak Open Play — native mirror");
 
-    // 2. Phase 3 rule definitions
+    // 2. Rule definitions (retention framing — revised spec)
+    //
+    // Open play: PROMOTE added at T-6h (initial threshold N=6; backtest at T-6h across
+    // N=4–10 recommended before tuning — fill ratio may be a better trigger than absolute
+    // count for sessions with 6–18 capacity, but requires a schema extension).
+    // Clinics: PROMOTE at T-18h (unchanged — strong backtest results at N=4).
     const ruleDefs = [
       {
         club_id:     clubId,
-        name:        "Open Play — cancel",
+        name:        "Open Play — cancel + promote",
         enabled:     true,
         mode:        "shadow" as const,
         match_rules: { podplay_types: ["Open Play"] },
         checkpoints: [
-          { index: 0, offset_hours: 2, min_signups: 4, action: "CANCEL" },
+          { index: 0, offset_hours: 6, min_signups: 6, action: "PROMOTE" }, // T-6h promote (initial; needs backtest)
+          { index: 1, offset_hours: 2, min_signups: 4, action: "CANCEL"  }, // T-2h cancel
         ],
       },
       {
@@ -1042,6 +1048,14 @@ router.post("/programming/rules/seed-phase3", async (req, res) => {
         ],
       },
     ];
+
+    // Disable old "Open Play — cancel" rule (renamed to "Open Play — cancel + promote").
+    // Idempotent — if it doesn't exist, the update is a no-op.
+    await supabase
+      .from("programming_rules")
+      .update({ enabled: false })
+      .eq("club_id", clubId)
+      .eq("name", "Open Play — cancel");
 
     const results: any[] = [];
     for (const def of ruleDefs) {
@@ -1109,20 +1123,28 @@ router.post("/programming/rules/seed-phase3", async (req, res) => {
 
 // ── GET /api/programming/promotion-candidates/:decisionId ─────────────────────
 //
-// Build (and store) the ranked promotion audience for a PROMOTE decision.
+// Build (and store) the ranked retention audience for a PROMOTE decision.
 // DATA ONLY — nothing here sends a message or writes to messages/notifications.
 //
 // Query params:
 //   rebuild=true  — re-score and overwrite existing promotion_candidates rows
 //                   (default: false — return existing rows if present)
 //
-// Filters applied in order (per spec §5b):
-//   1. Level fit      — coach_assigned_level or skill_level vs. event admissionRating
-//   2. Engagement     — exclude lapsing / dormant / churned (mark ineligible)
-//   3. Reachability   — attendance_archetype must be 'planner' or 'early' at T-18h
-//   4. Slot fit       — preferred_booking_dow / preferred_booking_hour vs. event
-//   5. Already booked — excluded (not included in candidates at all)
-//   6. Consent        — sms_opt_in / opted_out; both channels reported
+// Revised model (retention-first spec):
+//   Hard gates (remove from consideration entirely):
+//     1. Already booked for this event
+//     2. Level mismatch (where real level data exists; ~9% of players)
+//     3. Contact budget — cooldown and rolling cap from the ledger
+//     4. Long-dormant (91+ days) — routed to a separate win-back motion
+//
+//   Soft ranking signals (affect score only, never gate):
+//     - Retention segment: lapsing (15–30d) > recent-dormant (31–90d) > active (≤14d)
+//     - Warm score — program-specific, computed at build time
+//     - Archetype — small bonus at appropriate lead times (early/planner at T-18h+,
+//       late at T-6h-); 'default' (2,117 players) is explicitly neutral (no penalty)
+//     - Slot fit — preferred DOW / hour vs. event
+//     - Buddy signal — buddy already registered (strongest single signal when present)
+//     - Contact rotation — recency of last promotional contact
 
 const LEVEL_NUMERIC: Record<string, number> = {
   "Beginner":             1.5,
@@ -1191,7 +1213,8 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
     const eventHour      = eventStartDate.getUTCHours();
     const admissionMin   = eventDetail?.admissionRating?.minRating ?? null;
     const admissionMax   = eventDetail?.admissionRating?.maxRating ?? null;
-    const capacity       = (dec as any).total_teams as number ?? 0;
+    const capacity             = (dec as any).total_teams as number ?? 0;
+    const checkpointOffsetHours = (dec as any).checkpoint_offset_hours as number ?? 18;
 
     // ── 2b. Fetch programType from event_fill for warm score computation ───────
     // event_fill.podplay_type is available after migration 006 + backfill.
@@ -1330,17 +1353,17 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
 
     // ── 8. Filter + score each player ─────────────────────────────────────────
     const funnel = {
-      total_players:         players.length,
-      after_already_booked:  0,
-      after_level_fit:       0,
-      after_engagement_state:0,
-      after_archetype:       0,
-      after_contact_budget:  0,   // new Phase 3.4 stage — budget gate
-      eligible_final:        0,
-      sms_reachable:         0,
-      email_only:            0,
-      flagged_contacted_48h: 0,
-      contact_budget_settings: contactBudget,  // visible to operator in UI
+      total_players:          players.length,
+      after_already_booked:   0,
+      after_level_fit:        0,
+      after_long_dormant:     0,   // replaces engagement + archetype gates
+      segment_counts:         { active: 0, lapsing: 0, recent_dormant: 0, unknown: 0 },
+      after_contact_budget:   0,
+      eligible_final:         0,
+      sms_reachable:          0,
+      email_only:             0,
+      flagged_contacted_48h:  0,
+      contact_budget_settings: contactBudget,
     };
 
     const candidates: any[] = [];
@@ -1371,36 +1394,70 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       }
       if (eligible) funnel.after_level_fit++;
 
-      // 2. Engagement state — derived from last_visit_date (single source of truth).
-      //    Exclude lapsing (15–30 d) and dormant (31 d+); keep active (≤14 d) and
-      //    unknown (null last_visit_date — new/unsynced member, not definitively lapsing).
-      //    churn_risk is recorded in reasons for ranking visibility but does NOT gate.
+      // 2. Retention segmentation — replaces both the engagement gate and archetype gate.
+      //
+      // Segment by recency (days since last visit):
+      //   active         ≤14d  → eligible, lowest priority (they're coming anyway)
+      //   lapsing        15–30d → eligible, HIGHEST priority (habit intact, best ROI)
+      //   recent_dormant 31–90d → eligible, high priority (genuine win-back opportunity)
+      //   long_dormant    91+d  → excluded — different copy, offer, cadence needed
+      //   unknown        (null) → eligible, treated conservatively (new/unsynced member)
+      //
+      // Long-dormant is the ONLY hard gate introduced here.
+      // Engagement state and archetype are no longer eligibility gates.
       const daysSinceVisit = p.last_visit_date
-        ? (Date.now() - new Date(p.last_visit_date).getTime()) / (1000 * 60 * 60 * 24)
+        ? (Date.now() - new Date(p.last_visit_date).getTime()) / 86_400_000
         : null;
-      const engagementState: string =
+      const retentionSegment: "active" | "lapsing" | "recent_dormant" | "long_dormant" | "unknown" =
         daysSinceVisit === null ? "unknown"
         : daysSinceVisit <= 14  ? "active"
         : daysSinceVisit <= 30  ? "lapsing"
-        :                         "dormant";
-      reasons.churn_risk = p.churn_risk ?? null;   // visible, not filtering
-      if (eligible && (engagementState === "lapsing" || engagementState === "dormant")) {
+        : daysSinceVisit <= 90  ? "recent_dormant"
+        :                         "long_dormant";
+      reasons.retention_segment  = retentionSegment;
+      reasons.days_since_visit   = daysSinceVisit !== null ? Math.round(daysSinceVisit) : null;
+      reasons.churn_risk         = p.churn_risk ?? null;  // visible, not filtering
+
+      if (eligible && retentionSegment === "long_dormant") {
         eligible = false;
-        ineligibleReason = `engagement state: ${engagementState} (last visit ${Math.round(daysSinceVisit!)} d ago)`;
-        reasons.engagement_exclusion = ineligibleReason;
+        ineligibleReason = `long_dormant: ${Math.round(daysSinceVisit!)}d since last visit — win-back motion only`;
       } else if (eligible) {
-        funnel.after_engagement_state++;
-        reasons.engagement_state = engagementState;
+        funnel.after_long_dormant++;
+        if      (retentionSegment === "active")         funnel.segment_counts.active++;
+        else if (retentionSegment === "lapsing")        funnel.segment_counts.lapsing++;
+        else if (retentionSegment === "recent_dormant") funnel.segment_counts.recent_dormant++;
+        else                                            funnel.segment_counts.unknown++;
       }
 
-      // 3. Reachability — archetype must be 'planner' or 'early' for T-18h outreach
-      const arch = (p.attendance_archetype ?? "").toLowerCase();
-      if (eligible && arch && arch !== "planner" && arch !== "early") {
-        eligible = false;
-        ineligibleReason = `attendance_archetype '${arch}' unlikely to book at T-18h`;
-        reasons.archetype_exclusion = ineligibleReason;
-      } else if (eligible) {
-        funnel.after_archetype++;
+      // 3. Segment ranking score — lapsing/recent-dormant outrank active.
+      // Rationale: warm score contributes ×10 (range −30→+40). Segment bonus of +25/+15
+      // for lapsing/recent-dormant is large enough to prioritise them over active
+      // regulars with equivalent warm scores, but a strong warm=4 active player
+      // (+40) still outranks a cold lapsing player (−30 + 25 = −5).
+      if (eligible) {
+        const segmentScore =
+          retentionSegment === "lapsing"        ? 25 :
+          retentionSegment === "recent_dormant" ? 15 :
+          retentionSegment === "unknown"        ? 5  : 0;  // active = 0
+        score += segmentScore;
+        if (segmentScore > 0) reasons.segment_score = segmentScore;
+      }
+
+      // 3b. Archetype as a soft ranking signal (no longer a gate).
+      // 'default' (2,117 / 2,506 players) is explicitly neutral — not penalized.
+      // At long-lead checkpoints (T-12h+): early/planner get a small bonus.
+      // At short-lead checkpoints (T-11h−): late gets a small bonus.
+      // This reflects when they are *likely to act*, not whether they can be reached.
+      if (eligible) {
+        const arch = (p.attendance_archetype ?? "default").toLowerCase();
+        const isLongLead = checkpointOffsetHours >= 12;
+        let archetypeScore = 0;
+        if (isLongLead  && (arch === "early" || arch === "planner")) archetypeScore = 5;
+        if (!isLongLead && arch === "late")                          archetypeScore = 5;
+        score += archetypeScore;
+        reasons.archetype_signal = archetypeScore !== 0
+          ? `${arch}:+${archetypeScore}`
+          : arch;
       }
 
       // 3b. Contact budget gate

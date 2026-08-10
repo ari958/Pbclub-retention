@@ -1,0 +1,143 @@
+# Revised Targeting Spec — Retention Framing
+
+**Supersedes:** the targeting filters in the Phase 3 series (3.1–3.4).
+**Status:** Spec. Not yet built.
+
+---
+
+## What changed and why
+
+The candidate builder was designed as a **promotion** tool: fill an under-enrolled clinic. Under that framing, two filters made sense and were built:
+
+- Exclude `lapsing` and `dormant` players — a fragile returning player sent to a half-empty session that might still be cancelled becomes a churned player
+- Restrict to `early` and `planner` archetypes — a late booker texted 18 hours out is a wasted send
+
+Both were wrong, and the operator's reframing exposes why. **This is a retention system.** Filling the session is the pretext; bringing someone back is the goal.
+
+### Why the engagement filter was backwards
+
+The concern — cancelling on a fragile returner — was real but overweighted. Check it against the actual thresholds:
+
+- PROMOTE fires below 4 signups
+- CANCEL fires below 2 signups
+
+A clinic at 3 gets promoted and **will not** be cancelled. The gap between those numbers means most promoted sessions run regardless of whether the promotion works. The scenario being protected against is rare, and the cost of protecting against it was excluding the entire audience retention exists to serve.
+
+Active regulars are coming anyway. Texting them to fill a clinic is convenience marketing. **The player three weeks out who used to come every Tuesday is the actual opportunity.**
+
+### Why the archetype gate was wrong
+
+The argument was that `late` bookers (sub-0.5-day lead) are unreachable at T-18h. But a text doesn't expire. Text someone Monday night about Tuesday's 6pm; the late booker books Tuesday at 2pm. That is their pattern working exactly as designed, and the text is what caused it.
+
+**Archetype tells you when someone books, not when they can be reached.** Those were conflated. It belongs as a ranking signal and a send-time hint, not an eligibility gate.
+
+It was also excluding on absent data — 2,117 of 2,506 players are `default`, meaning "we don't know," and unknowns were being treated as disqualified.
+
+---
+
+## The revised model
+
+### Eligibility gates (hard)
+
+Only four things should remove a player from consideration:
+
+1. **Already booked** for this event
+2. **Level mismatch** — where real level data exists. Still a pass-through for ~91% of players. *Enrollment ≠ readiness* continues to govern: a DUPR or confidence-score fallback may inform who might enjoy a clinic, never who is ready to progress.
+3. **Contact budget** — cooldown and rolling cap, from the ledger
+4. **Long-dormant** — see segmentation below. Not a permanent exclusion; a routing decision.
+
+Engagement state and archetype are **removed as gates**.
+
+### Segmentation (replaces the engagement gate)
+
+Retention segments by recency because different distances need different treatment:
+
+| Segment | Days since last visit | Treatment |
+|---|---|---|
+| **Active** | ≤ 14 | Eligible. Lowest priority — they're coming anyway. |
+| **Lapsing** | 15–30 | **Highest priority.** Habit intact, coach remembered, small nudge works. |
+| **Recent dormant** | 31–90 | High priority. Genuine win-back opportunity, still recognizable to staff. |
+| **Long dormant** | 91+ | **Excluded from clinic-fill outreach.** Routed to a separate win-back motion with different copy, offer, and cadence. |
+
+The 90-day line is a judgment call, not a derived number — it separates "hasn't been in a while" from "has effectively left." Worth revisiting once outcome data exists.
+
+The inversion matters: **lapsing and recent-dormant should outrank active players**, because they're where the marginal return lives.
+
+### Ranking signals (all soft)
+
+- **Recency segment** — lapsing and recent-dormant weighted above active
+- **Warm score** — program-specific, computed at build time against the target event's type
+- **Archetype** — demoted from gate to signal. `early`/`planner` get a modest bonus at long-lead checkpoints; `late` gets a modest bonus at short-lead ones. `default` is neutral, not penalized.
+- **Slot fit** — `preferred_booking_dow` and `preferred_booking_hour`
+- **Buddy signal** — a buddy already registered. Strongest single signal when present; currently dark and worth fixing (see §Known gaps).
+- **Contact rotation** — recency of last promotional contact, spreading load across the pool
+
+### Open play needs its own checkpoint
+
+The Phase 3 build gave clinics a PROMOTE checkpoint at T-18h and gave open play only a CANCEL rule at N=4/T-2h. Under retention framing that is backwards.
+
+**Open play is the retention product.** It is where the Tuesday-night habit forms, where buddy pairs form, and where a lapsing player can return without committing to a series, a coach, or a purchase. A clinic is a purchase decision; open play is the thing they used to just show up to. For someone coming back, it is the easier ask — and it is the larger share of the schedule (23 upcoming open play events versus 16 clinics at last count).
+
+**Promotion fires off session risk for both types.** The trigger is an under-enrolled session; the audience is chosen for retention value. What differs is *when* the checkpoint can fire, because the two products book on completely different curves.
+
+| | Clinics | Open Play |
+|---|---|---|
+| Enrolled by T-6h | ~100% | partial |
+| Bookings inside final 3h | negligible | ~24% |
+| Count-at-offset predicts final | r² ≈ 0.89 at T-3h | r² ≈ 0.72 at T-2h, 0.62 at T-3h |
+| PROMOTE checkpoint | T-18h | **T-6h** |
+| CANCEL checkpoint | N=2 / T-2h | N=4 / T-2h |
+
+At T-18h an open play session that looks empty is usually fine — most of its bookings have not arrived yet, so promoting it would be noise. T-6h is where the count starts to mean something while still leaving a usable window to act.
+
+**Promotion threshold for open play** should be set from the same backtest method used for clinics, at T-6h across N=4–10. It is not simply "one above the cancel threshold" — open play sessions have much larger capacity (6–18) than clinics (4), so a session at 5 of 14 is under-enrolled in a way a clinic at 3 of 4 is not. **Fill ratio is likely the better trigger for open play than an absolute count**, and both should be tested.
+
+**Consequence for the contact budget.** Adding open play roughly doubles the number of promoted sessions per month. The 7-day cooldown and 2-per-30-days cap still hold the channel, but the eligible pool must be large enough to sustain the combined cadence — which is the main reason the engagement and archetype gates had to come off.
+
+### Message framing follows the segment
+Same trigger, different message. This is not cosmetic — it's the difference between a promotion and a retention touch.
+
+- **Active:** "Tuesday's session has spots."
+- **Lapsing:** "Haven't seen you in a couple of weeks — there's room Tuesday." Buddy mention where available.
+- **Recent dormant:** Explicit re-entry framing. Acknowledge the absence, lower the barrier, name a familiar coach or buddy.
+
+Product type shifts the framing too. Open play is the lower-barrier ask — no purchase decision, no series commitment, just show up — so it should carry the softer re-entry language for lapsing and dormant players. Clinic invitations imply a commitment and read better for active and lapsing players than for someone returning after two months.
+
+The lapsing and dormant versions only work because of buddy pairs and program history. That's the part nobody else can send.
+
+### Success metric
+
+**Not** "did the clinic fill."
+
+The clinic filling is the pretext. Success is:
+
+- Did the player attend within 30 days of the message?
+- Did they attend again in the following 30 days?
+
+That's what the `outcome` column on `contact_ledger` should record, and it's the number that tells you whether any of this works. A session that fills with three active regulars who'd have come anyway is a worse outcome than one that fills with one lapsing player who then returns twice more.
+
+---
+
+## Expected scale change
+
+| | Before | After |
+|---|---|---|
+| Eligible pool | ~40 | several hundred |
+| SMS-reachable | ~22 | ~150–250 (bounded by phone coverage at 63%) |
+| Monthly send capacity at 2/30d | ~48 | several hundred |
+| Sends per session | 3–5 | 20–40 |
+| Promoted sessions/month | ~10 (clinics only) | ~20 (clinics + open play) |
+
+The contact budget still protects the channel — 7-day cooldown, max 2 per 30 days per player — but it now operates across a pool large enough to sustain a real cadence rather than exhausting after two decisions.
+
+---
+
+## Known gaps this doesn't fix
+
+**Buddy signal is dark.** `signedUpPlayerIds` is read from `attendances`, which only covers past events, so it's always empty for upcoming ones. The fix is scoped: convert `bookedExternalIds` (already fetched live from PodPlay) to internal IDs via `players.external_id`. This matters more under retention framing than promotion framing — the buddy mention is what makes a lapsing message land.
+
+**Level data.** 7 coach assignments, 217 DUPR ratings, no `level_confidence` score above threshold. The level gate stays a pass-through until coaches log assessments.
+
+**Phone coverage.** 63% of players have a number. The consent-form CSV would improve this, and the players most likely missing are exactly the lapsing ones — but that's a separate piece of work.
+
+**Send timing.** With archetype demoted to a signal, it can inform *when* to send rather than *whether*. Not yet built; noted so the data isn't discarded.

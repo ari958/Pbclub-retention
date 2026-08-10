@@ -1,0 +1,161 @@
+# Phase 3.4 — Cross-Decision Contact Ledger
+
+**Mode:** Build. No execution path — nothing here can cancel an event, send a message, or write to PodPlay.
+**Scope:** 4 items.
+
+---
+
+## Context
+
+Phase 3.3 produced a defensible candidate list: 40 eligible, 24 SMS-reachable, ranked with real separation (scores −30 to +40).
+
+But that funnel describes **one clinic at one moment**. Across a month it doesn't hold up:
+
+- ~124 players club-wide have an `early` or `planner` archetype
+- ~40 survive the engagement gate for any given clinic
+- ~10 clinics promoted per month, ~24 SMS sends each
+
+That is roughly **240 sends landing on a recurring pool of ~40 people — about six promotional texts per person per month.** The same top-ranked players win every ranking, so the highest-warm-score candidates get contacted every single time.
+
+Opt-outs are permanent and the A2P campaign took real effort to get. This phase adds the contact ledger, budget gates, and rotation that prevent the system from burning its own channel.
+
+**Scope note:** treat the programming agent as the only system contacting members for now. Pulse contention is out of scope — but build the ledger so a second source can be folded in later without redesigning it.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. No execution path.** No code that cancels or patches — not behind a flag, not commented out.
+
+**3. No sending. At all.** No Twilio, no email, no writes to `messages` or `programming_notifications`.
+
+**4. No send button** on any screen — not disabled, not hidden, not stubbed.
+
+**5. Supabase writes** limited to: the new ledger table, `promotion_candidates`, and `programming_rules`. Do not modify `players`, `messages`, `conversations`, `event_fill`, or `attendances`.
+
+**6. Never use `signups._total`** as a live count.
+
+**7. Evaluator stays unwired** from the nightly chain and any timer.
+
+**8. Never echo secrets.**
+
+---
+
+## Item 1 — The ledger
+
+**1a. Read first.** Report how `messages` currently records outbound sends: which columns exist, whether anything distinguishes message purpose, and whether a promotional send could be told apart from a retention send today.
+
+**1b. Create `contact_ledger`:**
+
+- `id` uuid pk, `club_id` fk → clubs, `player_id` fk → players
+- `source` text — `'programming'` for now; the column exists so Pulse can be folded in later without a migration
+- `purpose` text — `'promotion'`, `'cancellation'`, `'other'`
+- `channel` text — `'sms'`, `'email'`
+- `decision_id` fk → `programming_decisions`, nullable
+- `sent_at` timestamptz
+- `outcome` text nullable — reserved for `'booked'`, `'opted_out'`, `'no_response'`
+- Index on `(club_id, player_id, sent_at DESC)` — this is the hot query for every candidate build
+- RLS + grants + timestamps per existing convention
+
+Nothing writes to it this phase. It exists so the budget logic has a real table to query and so the first send has somewhere to record itself.
+
+**1c. Cancellation notices are exempt.** A cancellation notice is transactional and must never be suppressed by a budget — a member whose session was cancelled has to be told regardless of how many promotions they've received. Record cancellations in the ledger with `purpose='cancellation'` for visibility, but the budget logic in Item 2 must ignore them entirely. State this explicitly in a code comment.
+
+**STATUS:**
+
+---
+
+## Item 2 — Budget gates
+
+Budget parameters live in `programming_rules` as data, not constants — the operator should be able to tune them without a code change.
+
+**2a. Add to the rule schema:**
+
+```
+contact_budget: {
+  cooldown_days: 7,          // no promotional contact within this window
+  max_per_30_days: 2,        // rolling cap on promotional contacts
+  applies_to: ["promotion"]  // cancellation is never budgeted
+}
+```
+
+Defaults: 7-day cooldown, max 2 per 30 days. At ~10 promoted clinics a month this takes a candidate from ~6 contacts to ~2.
+
+**2b. Apply as an eligibility gate** in the candidate builder, after the engagement and archetype gates. A player inside the cooldown or at their 30-day cap becomes `eligible = false` with `ineligible_reason` recording which limit was hit and when they were last contacted.
+
+Query the ledger, not `messages` — the ledger is the source of truth for budget purposes.
+
+**2c. Report as its own funnel stage.** Contact budget gets a labeled row in the funnel like every other filter, with survivors and removed counts.
+
+**2d. Handle the empty-ledger case.** The ledger is empty, so nothing will be gated today. Verify the query is correct rather than merely returning everything — construct a temporary in-memory fixture representing prior contacts, run the gate against it, and confirm the right players are excluded. **Do not write fixture rows to the database.**
+
+**STATUS:**
+
+---
+
+## Item 3 — Rotation ranking
+
+The structural problem: the highest-warm-score candidate wins every ranking, so the same people are texted every week. Rotation spreads load without manual tuning.
+
+**3a. Add a recency component to the score.** Among players who pass the budget gate, rank partly by time since last promotional contact:
+
+- never contacted → strongest bonus
+- contacted long ago → moderate bonus
+- contacted recently (but outside cooldown) → no bonus or a small penalty
+
+**3b. Weight it against the existing signals, not over them.** Warm score, slot fit, and buddy signal still carry the ranking. Recency is a tiebreaker that redistributes among comparable candidates — it should not push a poor-fit player above a strong-fit one. Report the weight chosen and the reasoning.
+
+**3c. Make the tradeoff visible.** Rotation deliberately sends to the second-best candidate sometimes, trading a little per-message precision for channel longevity. Record both the base score and the recency adjustment separately in `reasons` so the operator can see when rotation changed the order.
+
+**3d. Simulate 10 clinics.** With the ledger empty, simulate 10 sequential promotion decisions against the current eligible pool — each simulated send recorded in memory only, feeding the next decision's budget and rotation. Report:
+
+- distinct players contacted across all 10
+- contacts per player: min, median, max
+- how many decisions ran short of candidates because the budget exhausted the pool
+
+**Do not write simulation results to the database.**
+
+**3e. This is the number that matters.** If 10 clinics still concentrate on the same handful of players, the budget or the pool is wrong. If some decisions exhaust the pool entirely, the eligible set is too small to support the promotion cadence — report that plainly, because it would mean either loosening the archetype gate or promoting fewer clinics.
+
+**STATUS:**
+
+---
+
+## Item 4 — Surface it on the queue screen
+
+**4a.** Add the contact-budget stage to the funnel display, consistent with the other stages.
+
+**4b.** In the ranked candidate list, show last-contact date (or "never contacted") and the recency adjustment as its own column.
+
+**4c.** In the excluded table, group budget exclusions by which limit was hit — cooldown versus 30-day cap.
+
+**4d.** Add a club-level line at the top of the queue view: total promotional contacts in the last 30 days, and distinct players contacted. This is the number that tells the operator whether the channel is being over-used, at a glance.
+
+No send button. Read-only.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Ledger schema** — created and verified, with the cancellation exemption documented.
+2. **Budget gate verified against a fixture** — the right players excluded for the right reasons.
+3. **The 10-clinic simulation** — distinct players reached, contacts per player, decisions that exhausted the pool.
+4. **Is the eligible pool large enough** to support ~10 promoted clinics a month under this budget? If not, say what has to give — the archetype gate, the budget, or the cadence.
+
+Confirm: **no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no messages sent; nothing written to `messages` or `programming_notifications`; no fixture or simulation rows written to the database; no send button built; no execution path built; evaluator not wired to any timer.**

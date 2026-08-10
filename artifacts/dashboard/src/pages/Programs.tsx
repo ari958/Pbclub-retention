@@ -658,11 +658,10 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
   for (const c of ineligible) {
     const r = c.ineligible_reason ?? "unknown";
     const category =
-      r.startsWith("contact_cooldown")     ? "contact budget: cooldown window" :
-      r.startsWith("contact_30d_cap")      ? "contact budget: 30-day cap reached" :
-      r.startsWith("engagement")           ? "engagement (lapsing/dormant)" :
-      r.startsWith("attendance_archetype") ? "archetype (mid/late/default)" :
-      r.startsWith("level")               ? "level out of range" : r.slice(0, 50);
+      r.startsWith("contact_cooldown")  ? "contact budget: cooldown window" :
+      r.startsWith("contact_30d_cap")   ? "contact budget: 30-day cap reached" :
+      r.startsWith("long_dormant")      ? "long dormant 91+d — win-back only" :
+      r.startsWith("level")             ? "level out of range" : r.slice(0, 50);
     exclusionGroups[category] = (exclusionGroups[category] ?? 0) + 1;
   }
   const topExclusions = Object.entries(exclusionGroups).sort((a, b) => b[1] - a[1]);
@@ -705,13 +704,33 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
           fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
           color: C.textDim, textTransform: "uppercase", marginBottom: 14,
         }}>Funnel</div>
-        <FunnelBar label="all members"       total={fTotal} count={f.total_players ?? 0} />
+        <FunnelBar label="all members"        total={fTotal} count={f.total_players ?? 0} />
         <FunnelBar label="not already booked" total={fTotal} count={f.after_already_booked ?? 0} prev={f.total_players} />
-        <FunnelBar label="level fit"          total={fTotal} count={f.after_level_fit ?? 0} prev={f.after_already_booked} />
-        <FunnelBar label="engagement"         total={fTotal} count={f.after_engagement_state ?? 0} prev={f.after_level_fit} />
-        <FunnelBar label="archetype"          total={fTotal} count={f.after_archetype ?? 0} prev={f.after_engagement_state} />
-        <FunnelBar label="contact budget"     total={fTotal} count={f.after_contact_budget ?? 0} prev={f.after_archetype}
+        <FunnelBar label="level fit"           total={fTotal} count={f.after_level_fit ?? 0} prev={f.after_already_booked} />
+        <FunnelBar label="not long-dormant"   total={fTotal} count={f.after_long_dormant ?? 0} prev={f.after_level_fit}
+          tooltipNote="91+d excluded → win-back motion" />
+        <FunnelBar label="contact budget"     total={fTotal} count={f.after_contact_budget ?? 0} prev={f.after_long_dormant}
           tooltipNote={`cooldown=${f.contact_budget_settings?.cooldown_days ?? 7}d · max ${f.contact_budget_settings?.max_per_30_days ?? 2}/30d`} />
+        {/* Segment breakdown (visibility only — all segments are eligible) */}
+        {f.segment_counts && (f.segment_counts.lapsing > 0 || f.segment_counts.recent_dormant > 0) && (
+          <div style={{ marginTop: 6, marginBottom: 2, marginLeft: 170, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {f.segment_counts.lapsing > 0 && (
+              <span style={{ fontFamily: C.mono, fontSize: 9, color: C.accent, background: `${C.accent}18`, padding: "2px 7px", borderRadius: 3 }}>
+                lapsing ×{f.segment_counts.lapsing}
+              </span>
+            )}
+            {f.segment_counts.recent_dormant > 0 && (
+              <span style={{ fontFamily: C.mono, fontSize: 9, color: C.blue, background: `${C.blue}18`, padding: "2px 7px", borderRadius: 3 }}>
+                recent-dormant ×{f.segment_counts.recent_dormant}
+              </span>
+            )}
+            {f.segment_counts.active > 0 && (
+              <span style={{ fontFamily: C.mono, fontSize: 9, color: C.textDim, padding: "2px 7px", borderRadius: 3 }}>
+                active ×{f.segment_counts.active}
+              </span>
+            )}
+          </div>
+        )}
         <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 10, paddingTop: 10 }}>
           <FunnelBar label="eligible"      total={fTotal} count={f.eligible_final ?? 0} />
           <FunnelBar label="SMS-reachable" total={fTotal} count={f.sms_reachable ?? 0} />
@@ -739,7 +758,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-                  {["#", "Name", "Score", "Base", "Recency", "Warm", "Last Contact", "SMS", "Signals"].map((h, i) => (
+                  {["#", "Name", "Segment", "Score", "Base", "Recency", "Warm", "Last Contact", "SMS", "Signals"].map((h, i) => (
                     <th key={i} style={{
                       padding: "5px 8px", textAlign: "left",
                       fontFamily: C.mono, fontSize: 10, fontWeight: 500,
@@ -756,7 +775,18 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                   if (r.slot_hour_match)  signals.push("hour✓");
                   if (r.buddy_already_signed_up) signals.push(`buddy×${r.buddy_already_signed_up}`);
                   if (r.flagged_contacted_48h) signals.push("48h⚠");
+                  if (r.archetype_signal && r.archetype_signal.includes("+")) signals.push(`arch:${r.archetype_signal}`);
                   const wsBuilt = r.warm_score_built ?? r.warm_score;
+                  const seg = r.retention_segment ?? null;
+                  const segColor =
+                    seg === "lapsing"        ? C.accent :
+                    seg === "recent_dormant" ? C.blue   :
+                    seg === "active"         ? C.green  : C.textDim;
+                  const segLabel =
+                    seg === "lapsing"        ? "lapsing" :
+                    seg === "recent_dormant" ? "dormant" :
+                    seg === "active"         ? "active"  :
+                    seg === "unknown"        ? "new"     : "—";
                   return (
                     <tr key={i} style={{
                       borderBottom: `1px solid ${C.border}`,
@@ -765,8 +795,17 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                       <td style={{ padding: "7px 8px", fontFamily: C.mono, fontSize: 11, color: C.textDim }}>{c.rank}</td>
                       <td style={{ padding: "7px 8px", color: C.text, fontWeight: 500 }}>
                         {c.player_name}
-                        {r.engagement_state === "active" && (
-                          <span style={{ marginLeft: 5, fontSize: 9, color: C.green, fontFamily: C.mono }}>active</span>
+                      </td>
+                      <td style={{ padding: "7px 8px" }}>
+                        <span style={{
+                          fontFamily: C.mono, fontSize: 9, fontWeight: 600,
+                          color: segColor, background: `${segColor}22`,
+                          padding: "2px 6px", borderRadius: 3,
+                        }}>{segLabel}</span>
+                        {r.days_since_visit != null && (
+                          <div style={{ fontSize: 9, color: C.textDim, fontFamily: C.mono, marginTop: 2 }}>
+                            {r.days_since_visit}d ago
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: "7px 8px" }}><ScoreBadge score={c.score} /></td>
@@ -963,7 +1002,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["", "Clinic", "Starts", "Signups", "Eligible", "SMS-ready", "Decided"].map((h, i) => (
+              {["", "Session", "Starts", "Signups", "Eligible", "SMS-ready", "Decided"].map((h, i) => (
                 <th key={i} style={{
                   padding: "6px 10px", textAlign: "left",
                   fontFamily: C.mono, fontSize: 10, fontWeight: 500,
