@@ -17,6 +17,7 @@ import clubsRouter from "./clubs";
 import queueRouter from "./queue";
 import programmingRouter from "./programming";
 import consentRouter from "./consent";
+import experimentsRouter from "./experiments";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use("/clubs", clubsRouter);
 router.use(queueRouter);
 router.use(programmingRouter);
 router.use(consentRouter);
+router.use(experimentsRouter);
 
 export default router;

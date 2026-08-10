@@ -1356,6 +1356,31 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       }
     }
 
+    // ── 6b. Control holdout — exclude active experiment control arm members ────
+    // Phase 4: any player in an active experiment's control arm (within 30 days
+    // of randomization) must not appear in promotion outreach. This prevents
+    // their inclusion in separate sends that would invalidate the experiment.
+    // Non-fatal: if the table doesn't exist (pre-migration 007), proceed without.
+    const controlHoldoutIds = new Set<string>();
+    try {
+      const holdoutCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
+      const { data: activeExps } = await supabase
+        .from("outreach_experiments")
+        .select("id")
+        .eq("club_id", clubId)
+        .in("status", ["ready", "sent", "measuring"])
+        .gte("randomized_at", holdoutCutoff);
+      if (activeExps && activeExps.length > 0) {
+        const { data: ctrl } = await supabase
+          .from("experiment_participants")
+          .select("player_id")
+          .in("experiment_id", (activeExps as any[]).map(e => e.id))
+          .eq("arm", "control")
+          .eq("vetoed", false);
+        for (const r of (ctrl ?? [])) controlHoldoutIds.add((r as any).player_id);
+      }
+    } catch { /* pre-migration 007 — table doesn't exist yet */ }
+
     // ── 7. Contact-budget settings from rule (with fallback defaults) ─────────
     // Cancellation notices are ALWAYS exempt from budget — they are transactional
     // and must never be suppressed.  applies_to=['promotion'] only.

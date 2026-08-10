@@ -12,6 +12,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
+import ExperimentsTab from "./ExperimentsTab";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -1112,7 +1113,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
 
 // ── Shared components ─────────────────────────────────────────────────────────
 
-type Tab = "queue" | "upcoming" | "log";
+type Tab = "queue" | "upcoming" | "log" | "experiments";
 
 export default function Programs() {
   const { slug } = useParams<{ slug: string }>();
@@ -1179,7 +1180,7 @@ export default function Programs() {
           borderBottom: `1px solid ${C.border}`,
           marginBottom: 28,
         }}>
-          {(["queue", "upcoming", "log"] as Tab[]).map((t) => (
+          {(["queue", "upcoming", "log", "experiments"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -1196,7 +1197,10 @@ export default function Programs() {
                 transition: "color 0.15s",
               }}
             >
-              {t === "queue" ? "Promotion Queue" : t === "upcoming" ? "Upcoming Risk" : "Decision Log"}
+              {t === "queue" ? "Promotion Queue"
+               : t === "upcoming" ? "Upcoming Risk"
+               : t === "log" ? "Decision Log"
+               : "Experiments"}
             </button>
           ))}
         </div>
@@ -1213,8 +1217,10 @@ export default function Programs() {
           <PromotionQueueView clubId={clubId} />
         ) : tab === "upcoming" ? (
           <UpcomingRiskView clubId={clubId} />
-        ) : (
+        ) : tab === "log" ? (
           <DecisionLogView clubId={clubId} />
+        ) : (
+          <ExperimentsTab api={API} clubId={clubId} />
         )}
       </main>
     </div>

@@ -1,0 +1,196 @@
+# Phase 4 — Outreach Experiment Module
+
+**Mode:** Build. The system prepares, records, and measures. **The operator sends manually.** No automated send path is built in this phase.
+**Scope:** 5 items.
+
+---
+
+## Context
+
+Everything built so far is targeting infrastructure. It has never been tested against the one premise the whole system rests on: **that an SMS to a lapsing member causes them to book.**
+
+The backtest shows the rules point at genuinely under-enrolled sessions. The retention model ranks lapsing members first. The consent import made 967 of them reachable. None of that verifies the causal link. Only a send does.
+
+This module runs that test properly — with a randomized control group, automatic outcome measurement, and everything recorded in one place. **No spreadsheets, no manual tracking.**
+
+The split of responsibility is deliberate:
+
+- **System:** selects candidates, randomizes treatment/control, drafts messages, records the ledger, measures outcomes from attendance sync
+- **Operator:** reviews the list, vetoes anyone who shouldn't be in the experiment, sends the messages by hand, marks them sent
+
+Twilio integration is the piece that carries real risk — a bug there messages the wrong people. This phase doesn't need it, so it doesn't build it.
+
+---
+
+## Design decisions (already made — implement as specified)
+
+**70/30 split.** 70% treatment, 30% control. A 50/50 split gives a cleaner comparison but halves reach; the club needs filling too, and this is a first read rather than a published trial.
+
+**Randomize before operator review.** The system assigns groups, *then* the operator reviews. The operator's only action is a **hard veto that removes a person from the experiment entirely, on both arms.** They cannot move someone between groups, and cannot cut from treatment only — that would strip weak candidates from treatment while their equivalents remain in control, destroying the comparison.
+
+**30-day holdout, not per-session.** A control member is excluded from *all* outreach for 30 days, not just this session. This tests whether contact drives return behavior, which is the retention question, rather than whether one message fills one session.
+
+**Honest statement of power.** At ~20 treatment and ~9 control, a result of 5 bookings vs. 2 is suggestive but well inside noise. This design detects a large effect or a zero effect. It cannot measure a modest one. The module must present results with that caveat attached, and should pool across sessions as more experiments run.
+
+---
+
+## Hard constraints
+
+**1. No automated sending.** No Twilio API calls. No email sends. No code that dispatches a message — not behind a flag, not commented out. The system displays message text for the operator to copy.
+
+**2. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**3. Supabase writes** limited to the new experiment tables and `contact_ledger`. Do not modify `players`, `attendances`, `messages`, `conversations`, `event_fill`, or `sms_consent_records`.
+
+**4. Never use `signups._total`** as a live count. Use the shared constants in `src/lib/signupStatus.ts`.
+
+**5. Never echo full phone numbers** in report output. The UI may display them to the operator — that is the point — but reports use masked samples.
+
+**6. Never echo secrets.**
+
+---
+
+## Item 1 — Schema
+
+Migration 007 (`contact_ledger`) is still pending — check whether it has been applied and include it if not.
+
+**`outreach_experiments`**
+- `id` uuid pk, `club_id` fk
+- `name` text, `event_id` text, `event_name` text, `event_start` timestamptz
+- `status` text — `draft` | `ready` | `sent` | `measuring` | `complete`
+- `treatment_pct` numeric default 0.70
+- `randomized_at`, `sent_at` timestamptz
+- `notes` text
+- timestamps
+
+**`experiment_participants`**
+- `id` uuid pk, `experiment_id` fk, `player_id` fk
+- `arm` text — `treatment` | `control`
+- `rank` int, `score` numeric, `reasons` jsonb — snapshot at selection time
+- `vetoed` boolean default false, `veto_reason` text
+- `message_text` text — the drafted message, treatment only
+- `sent_at` timestamptz nullable — set when the operator marks it sent
+- `channel` text
+- **Outcome columns:** `booked_target_session` boolean, `attended_within_30d` boolean, `first_attendance_at` timestamptz, `outcome_measured_at` timestamptz
+- **UNIQUE (experiment_id, player_id)**
+- RLS + grants + timestamps per existing convention
+
+**`contact_ledger`** gets rows on send-marking, with `source='experiment'` and the `experiment_id` recorded, so the 30-day holdout is enforceable by the existing budget gate.
+
+**STATUS:**
+
+---
+
+## Item 2 — Selection and randomization
+
+**2a. Candidate selection.** Reuse the existing promotion candidate builder — funnel, segmentation, warm score, buddy signal, contact budget. Do not fork the logic.
+
+Restrict to:
+- `lapsing` (15–30d) and `recent_dormant` (31–90d) only. **Exclude `active`** (they're coming anyway) and **exclude the never-booked/unknown cohort** — they have no slot history to match on and belong in a separate first-booking motion.
+- SMS-reachable
+- Slot fit: day-of-week or time-band match to the target session
+
+**2b. Report the pool.** If fewer than ~30 candidates qualify, say so — the experiment may not be worth running on that session, and a different session should be chosen.
+
+**2c. Randomize.** Take the top N by rank, assign 70% treatment / 30% control using a seeded shuffle. **Store the seed** so the assignment is reproducible and auditable.
+
+**2d. Balance check.** Report the mean score, segment mix, and days-since-last-visit for each arm. If they differ substantially, re-randomize with a new seed and report that you did. Two groups that differ at baseline can't be compared afterward.
+
+**2e. Veto handling.** An operator veto sets `vetoed = true` and **removes that participant from analysis in whichever arm they were in.** Vetoed participants are never re-assigned. Report the veto count per arm — if vetoes are lopsided, the comparison is weakened and the report should say so.
+
+**STATUS:**
+
+---
+
+## Item 3 — Message drafting
+
+**3a. Draft per treatment participant**, following the existing agent voice rules — banned words, no em-dashes, no exclamation points, contractions always, 1–3 sentences, one ask, no surveillance framing, no unsupported claims about the person.
+
+Personalize with: first name, their slot ("your Tuesday 6pm"), buddy mention where the signal fired, session name and time.
+
+**3b. Segment-appropriate framing.**
+- **Lapsing:** familiar, low-pressure. *"Haven't seen you in a couple weeks — Tuesday 6pm has room."*
+- **Recent dormant:** explicit re-entry. Acknowledge the gap, lower the barrier, name a coach or buddy if known.
+
+No discounts, no urgency, no marketing voice.
+
+**3c. Fully editable.** The operator can rewrite any message before sending. Store the final text as sent, not the draft, so what actually went out is what's recorded.
+
+**3d. Include the booking link** where one exists for the session.
+
+**STATUS:**
+
+---
+
+## Item 4 — Operator UI
+
+New tab or section. Three views.
+
+**4a. Setup.** Pick an upcoming session, see the qualifying pool size, set treatment percentage (default 70), click randomize. Shows the balance check from 2d before anything is committed.
+
+**4b. Review and send.** The core screen.
+
+- Treatment list: name, rank, score, segment, days since last visit, signals, phone number, and the drafted message — editable inline
+- Control list: shown separately and clearly labeled **"Do not contact — held out for 30 days."** Visible so the operator understands who's being withheld and why.
+- Per-participant **veto** button with a reason field. Vetoing removes them from the experiment; the UI must state that plainly.
+- **Copy** button per message, and a copy-all option
+- **"Mark as sent"** per participant and in bulk. This writes `sent_at` and the `contact_ledger` row. It does not send anything.
+
+The screen must make clear the operator is sending manually. No button anywhere implies the system will send.
+
+**4c. Results.** Per experiment:
+
+| Metric | Treatment | Control |
+|---|---|---|
+| Participants | | |
+| Booked the target session | | |
+| Attended anything within 30 days | | |
+| Vetoed / excluded | | |
+
+Plus: absolute difference, and a plain-language read of whether the sample can support the conclusion. At these sizes it usually cannot on its own — **say so directly rather than presenting a percentage that looks more precise than it is.**
+
+Include a pooled view across all completed experiments. That's where a real answer eventually comes from.
+
+**STATUS:**
+
+---
+
+## Item 5 — Automatic outcome measurement
+
+The point of building this rather than using a spreadsheet.
+
+**5a. Measure from attendance data**, which already syncs nightly. Per participant:
+- `booked_target_session` — did they appear in the target event's signups?
+- `attended_within_30d` — any attendance in the 30 days following `sent_at` (or following `randomized_at` for control)
+- `first_attendance_at` — timestamp of the first such attendance
+
+**5b. Run measurement as a job**, invocable manually and safe to re-run. Do not wire it to the nightly chain in this phase; that's a later step once it's proven.
+
+**5c. Handle the timing correctly.** `booked_target_session` can be measured once the session passes. `attended_within_30d` needs 30 days from send. The experiment status should reflect which measurements are final versus provisional, and the UI must not present a provisional 30-day number as a result.
+
+**5d. Enforce the control holdout.** Control participants must be excluded from all outreach for 30 days. Since `contact_ledger` rows are only written for treatment sends, add an explicit check: the promotion candidate builder must exclude anyone in an active experiment's control arm. Verify this works — a control member contacted through another path invalidates the experiment.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Schema applied** — migration status, including whether 007 was still outstanding.
+2. **A dry-run experiment** on a real upcoming session: pool size, split, balance check across arms.
+3. **Control holdout verified** — proof that a control member is excluded from other outreach.
+4. **What the operator does**, step by step, in plain language.
+
+Confirm: **no automated sends; no Twilio calls; no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no send-dispatch code written.**
