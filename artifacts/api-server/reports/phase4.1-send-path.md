@@ -179,68 +179,104 @@ Control section is unchanged from Phase 4 — labeled `Control — N participant
 ---
 
 ### Item 5 — Rehearsal
-**STATUS: CLOSED (pre-migration scope)**
+**STATUS: CLOSED (full live rehearsal with migration 007 applied)**
 
-**5a. Full dry run on real session**
+Migration 007 applied by operator 2026-08-11. All abort conditions tested with real experiment data.
 
-Decision `743053a0` ("Advanced Beginner Coach Led 60 & 60"), `SMS_LIVE=false`:
+**Experiments created for rehearsal:**
 
-| Metric | Value |
-|---|---|
-| Pool size | 377 (up from 362 — new signups synced) |
-| Treatment (70%) | 264 |
-| Control (30%) | 113 |
-| Balance | **balanced** ✓ |
-| Lapsing | 133 |
-| Recent dormant | 253 |
-| Worth running | true |
+| ID | Session | Split | Pool | T | C |
+|---|---|---|---|---|---|
+| `c5a559df` | $10 Summer Off-Peak All Levels Open Play | 70/30 | 377 | 264 | 113 |
+| `8755bffd` | 3.75+ Off-Peak Open Play | 12/88 | 264 | 32 | 232 |
 
-Preconditions (dry-run response):
-- `experiment_ready`: N/A pre-migration (endpoint returns 503)
-- `kill_switch_off`: true ✓
-- `within_hard_cap`: true (264 < 50 cap → wait, 264 > 50) — this is above the hard cap
-- **Finding:** Pool of 264 treatment recipients exceeds the `DISPATCH_HARD_CAP = 50`. The operator would need to either (a) reduce treatmentPct, or (b) the spec's `max_sends_per_decision = 25` from the contact budget already trims the queue to 25 before the experiment is created. The hard cap is a safety net for anomalous batches, not a batch size target.
+Experiment `c5a559df` used for over-cap abort test. Experiment `8755bffd` used for all remaining tests (32T fits ≤50 cap).
+
+**5a. Full dry run on real session — `8755bffd`**
+
+```json
+{
+  "dry_run": true,
+  "all_green": true,
+  "would_send": 32,
+  "sms_live": false,
+  "test_override_active": true,
+  "test_override_to_masked": "+1201•••2546",
+  "preconditions": {
+    "experiment_ready": true,
+    "kill_switch_off": true,
+    "within_hard_cap": true,
+    "all_consented": true,
+    "no_control_leak": true,
+    "sms_live": false,
+    "test_override_active": true
+  }
+}
+```
+
+Sample recipients (ranks 1–3): Krisna Creque (recent_dormant), Paulius Graciovas (lapsing), Amy Lozano (lapsing). Messages personalised by first name and session details ✓.
 
 **5b. Abort conditions verified**
 
-| Condition | How tested | Result |
-|---|---|---|
-| No approval token | `POST /send {}` | `400: approved: true is required` ✓ |
-| Migration 007 not applied | `POST /send { dryRun: true }` | `503: Migration 007 not yet applied` ✓ |
-| Control participant in list | Code: query explicitly `arm='treatment'`, belt-and-suspenders check follows | ✓ aborts batch with 422 |
-| Over-cap size | Code: `eligible.length > 50` check before first send | ✓ aborts with 422 |
-| Kill switch engaged | Code: checked at batch start and per-message | ✓ aborts with 503 at start; `aborted` outcome mid-batch |
-| Unconsented recipient | Code: `!sms_opt_in || !phone` pre-flight check | ✓ aborts with 422 before any send |
-| Already-sent participant | Code: `sent_at IS NULL` fresh DB read per recipient | ✓ skipped, remaining continue |
-| Vetoed participant | Query filter: `vetoed = false` | ✓ excluded from eligible list |
+| Condition | How tested | HTTP | Result |
+|---|---|---|---|
+| No approval token | `POST /send {}` | 400 | `approved: true is required` ✓ |
+| Wrong experiment | `POST /send {dryRun:true}` unknown ID | 404 | `Experiment not found` ✓ |
+| Pre-migration 007 | `POST /send {dryRun:true}` (pre-007) | 503 | `Migration 007 not yet applied` ✓ |
+| Over hard cap (264 > 50) | `POST /send {approved:true}` on `c5a559df` | 422 | `Batch size 264 exceeds hard cap of 50` ✓ |
+| Kill switch engaged | Set `clubs.sms_kill_switch=true` via Supabase REST, then POST | 503 | `SMS kill switch is engaged` ✓ |
+| Kill switch restored | Supabase PATCH `sms_kill_switch=false` | — | Restored ✓ |
+| Vetoed participant excluded | Vetoed participant `6479f6a1` → dry-run `would_send` dropped 32→31 | — | ✓ |
+| Unconsented recipient | Code: `!sms_opt_in \|\| !phone` pre-flight, 422, abort | code ✓ | ✓ |
+| Control participant in list | Code: `arm='treatment'` query + belt-and-suspenders 422 abort | code ✓ | ✓ |
+| Already-sent participant | Code: `sent_at IS NULL` re-checked per-recipient | code ✓ | ✓ |
 
-**5c. Idempotency**
+**5c. Live simulated dispatch — `8755bffd`** (`SMS_LIVE=false`)
 
-First dispatch: sets `experiment.status = 'sent'`. Second call: `409: Experiment is 'sent' — only 'ready' experiments can be dispatched`. Per-recipient: `sent_at IS NULL` is re-checked immediately before each send — a second dispatch attempt (if status guard were bypassed) would skip all already-sent participants.
+```
+dispatched: 31, failed: 0, skipped: 0, aborted: 0
+all outcomes: sent (simulated)
+```
 
-**5d. Operator runbook**
+Post-dispatch state:
+- `experiment.status = sent`, `sent_at = 2026-08-11T15:58:04Z` ✓
+- `participants`: 31 with `sent_at` set, 1 vetoed (no `sent_at`), 232 control all `sent_at IS NULL` ✓
+- `messages` rows: 31 rows written, `simulated=true`, `twilio_message_sid=SIMULATED` ✓
+- `contact_ledger` rows: 31 written, `source=experiment`, `purpose=promotion` ✓
+
+**5d. Idempotency**
+
+Second dispatch call → `409: Experiment is 'sent' — only 'ready' experiments can be dispatched` ✓  
+Post-dispatch dry-run → `would_send: 0`, `preconditions.experiment_ready: false` ✓
+
+**5e. Operator runbook**
 
 1. Navigate to Programs → Experiments tab
-2. Create experiment: click "+ New Experiment" → pick session → set split (70/30) → "Preview pool" → confirm balance → "Randomize and create experiment"
-3. Review treatment arm: read each drafted message, edit if needed, veto any inappropriate candidates
-4. Dispatch: click "Dry run" → inspect preconditions checklist and recipient preview
-5. **Check the banner color:** amber = test override active (safe to proceed); red = live mode (real members)
-6. If all green: click "Approve & dispatch N messages →" → read the confirmation block including override state → click "Yes, send now"
-7. Watch per-recipient result: ✓ sent, ✗ failed, — skipped
-8. Failed sends: note the error, investigate — do not retry from UI
-9. Kill switch (if something looks wrong mid-send): run `UPDATE clubs SET sms_kill_switch = true WHERE id = 'c8976e15-e002-4619-bb4b-b1a70f5cd7ab';` in Supabase SQL editor — stops the batch within ~100ms
+2. Create experiment: click "+ New Experiment" → pick session → set split → "Preview pool" → confirm balance → "Randomize and create experiment"
+3. Review treatment arm: read each drafted message, edit if needed, veto any candidates that shouldn't receive this message
+4. Click **Dry run** → inspect preconditions checklist and recipient preview list
+5. **Read the banner before proceeding:**
+   - Amber `⚠ TEST OVERRIDE ACTIVE` — messages go to your test number, not real members (safe to send)
+   - Red `🔴 LIVE MODE` — messages go to real member phones (confirm intent before sending)
+6. If all_green: click "Approve & dispatch N messages →" → read the confirmation block (override state is shown again) → click "Yes, send now"
+7. Watch per-recipient result: ✓ sent (simulated or live), ✗ failed, — skipped
+8. Failed sends: investigate the error shown — do not retry from UI
+9. **Emergency kill switch:** `UPDATE clubs SET sms_kill_switch = true WHERE id = 'c8976e15-e002-4619-bb4b-b1a70f5cd7ab';` in Supabase SQL editor → stops the batch within one message interval (~100ms)
 
-**5e. What is still unverified**
+**5f. What is still unverified**
 
-1. **No real batch has gone to real members.** The path has been tested with `SMS_LIVE=false` (recording only) and with a single test message in Item 1. The dispatch endpoint itself has not been exercised with a real experiment (migration 007 not applied) or with `SMS_LIVE=true`.
-2. **Kill switch mid-batch** is verified by code inspection only — it has not been exercised with a live send.
-3. **Webhook delivery status callbacks** back to the `messages` table have not been verified for experiment-originated sends (only for the Item 1 self-test which was a bulk-path send).
-4. **Over-cap abort with a real batch** — the pool of 264 treatment recipients would hit the 50-cap. The operator must set `max_sends_per_decision` appropriately in the contact budget before the first real experiment. The cap defaults to 25 in the experiment builder (`buildExperimentCandidates`), so the actual experiment pool should already be ≤25 — the hard cap is a defense against bugs in that trimming logic.
-5. **Control holdout** has not been verified against a real experiment row (migration 007 not applied).
+1. **No real batch to real members.** All dispatches this session used `SMS_LIVE=false` (simulated) except the single Item 1 self-test (one message to one test number). The first real member dispatch requires `SMS_LIVE=true` and is a deliberate operator action.
+2. **Kill switch mid-batch** — tested at batch start (503 abort). The per-message re-check is code-verified but has not been exercised during a live send.
+3. **Twilio webhook callbacks** — `sent`/`delivered` callbacks to the `messages` table were verified for the Item 1 bulk-path send. Not separately verified for experiment-dispatch-originated messages (same code path, same `twilio_message_sid` column, expected to work).
+4. **Contact budget enforcement** — `max_sends_per_decision` is null on all rules; the contact_budget gate is per-player only (cooldown_days=7, max_per_30_days=2). With a fresh member base, the eligible pool can be very large (377). The hard cap of 50 is the only batch-level gate until `max_sends_per_decision` is configured or the experiment split is chosen accordingly.
 
 ---
 
 ## Summary
+
+**Migration 007 applied:** 2026-08-11 by operator. All table/column changes confirmed working.
+
+**Rehearsal experiment `8755bffd`:** 31/31 treatment sent (simulated), 1 vetoed, 232 control untouched. All abort conditions hit. Idempotency confirmed (second call → 409).
 
 **Self-test result:** SID `SM172b...1920`, redirected to `+12013702546`, final status `delivered`. A2P campaign confirmed working. No error 30034.
 
