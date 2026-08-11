@@ -2,7 +2,7 @@
 import { importAllPlayers } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
-import { getJob, startJob, finishJob, appendJobLog, isCancelled, heartbeatJob } from "./jobStore";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, heartbeatJob, reclaimStaleJobs } from "./jobStore";
 import { computeLevelConfidence } from "./levelConfidence";
 import { sendFeedbackForRecentEvents } from "./postSessionFeedback";
 import { computeBuddyPairs } from "./socialGraph";
@@ -78,6 +78,15 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
       : "Nightly chain started"
   );
 
+  // Log crash-recovery reclaim results so they appear in GET /api/sync/nightly/status
+  const reclaimed = await reclaimStaleJobs();
+  if (reclaimed > 0) {
+    await appendJobLog(JOB_NIGHTLY, `Crash recovery: reclaimed ${reclaimed} stale job(s) before starting chain`);
+    logger.info({ reclaimed }, "[scheduler] reclaimStaleJobs: reclaimed stale jobs at nightly chain start");
+  } else {
+    await appendJobLog(JOB_NIGHTLY, "Crash recovery: reclaimStaleJobs check complete — no stale jobs found");
+  }
+
   try {
     // Step 1: Player import
     await startJob(JOB_IMPORT);
@@ -99,32 +108,41 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 2: Incremental event sync (last 14 days)
-    await startJob(JOB_EVENTS);
-    await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS_EFFECTIVE} days)`);
-    try {
-      const syncStats: Record<string, number> = await syncEventAttendance(
-        CLUB_ID,
-        (msg: string) => appendJobLog(JOB_EVENTS, msg),
-        () => isCancelled(JOB_EVENTS),
-        INCREMENTAL_DAYS_EFFECTIVE,
-        () => heartbeatJob(JOB_EVENTS)   // Phase 3 §1b — keeps last_heartbeat fresh
-      );
-      const cancelled = await isCancelled(JOB_EVENTS);
-      await finishJob(JOB_EVENTS, cancelled ? "cancelled" : "done", syncStats);
-      await appendJobLog(JOB_EVENTS, `Nightly: event sync ${cancelled ? "cancelled" : "finished"}`);
-      if (cancelled) {
-        throw Object.assign(new Error("Event sync cancelled by operator"), { name: "CancelledError" });
+    // Cross-job guard: if a manual event sync is already running, skip this step
+    // to avoid concurrent double-writes to the attendances table.
+    const manualEventsJob = await getJob(JOB_EVENTS);
+    if (manualEventsJob.status === "running") {
+      await appendJobLog(JOB_NIGHTLY, "Step 2: skipped — manual sync in progress");
+      logger.info("[scheduler] Step 2 (event sync) skipped — manual event sync already running");
+    } else {
+      await startJob(JOB_EVENTS);
+      await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS_EFFECTIVE} days)`);
+      try {
+        const syncStats: Record<string, number> = await syncEventAttendance(
+          CLUB_ID,
+          (msg: string) => appendJobLog(JOB_EVENTS, msg),
+          () => isCancelled(JOB_EVENTS),
+          INCREMENTAL_DAYS_EFFECTIVE,
+          () => heartbeatJob(JOB_EVENTS)   // Phase 3 §1b — keeps last_heartbeat fresh
+        );
+        const cancelled = await isCancelled(JOB_EVENTS);
+        await finishJob(JOB_EVENTS, cancelled ? "cancelled" : "done", syncStats);
+        await appendJobLog(JOB_EVENTS, `Nightly: event sync ${cancelled ? "cancelled" : "finished"}`);
+        if (cancelled) {
+          throw Object.assign(new Error("Event sync cancelled by operator"), { name: "CancelledError" });
+        }
+      } catch (err: any) {
+        const wasCancelled = err.name === "CancelledError";
+        if (!wasCancelled) {
+          await finishJob(JOB_EVENTS, "error", undefined, err.message);
+          await appendJobLog(JOB_EVENTS, `Nightly: event sync failed: ${err.message}`);
+        }
+        throw err;
       }
-    } catch (err: any) {
-      const wasCancelled = err.name === "CancelledError";
-      if (!wasCancelled) {
-        await finishJob(JOB_EVENTS, "error", undefined, err.message);
-        await appendJobLog(JOB_EVENTS, `Nightly: event sync failed: ${err.message}`);
-      }
-      throw err;
     }
 
     // Step 3: Incremental confidence recompute for players with recent tagged sessions
+    await heartbeatJob(JOB_NIGHTLY); // keep nightly alive across multi-step chain
     await startJob(JOB_CONFIDENCE_NIGHTLY);
     await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS_EFFECTIVE} days`);
     try {
@@ -154,6 +172,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 4: Buddy pair graph (non-fatal)
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 4: updating buddy pair graph");
       const result = await computeBuddyPairs();
@@ -174,6 +193,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     // stale churn scores. Total nightly chain runtime grows by ~6 minutes
     // (typical churn batch duration) but Step 6 (milestones) now runs
     // against fresh churn data — correctness win.
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
       const result = await runChurnScoreBatch();
@@ -187,6 +207,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 6: Milestone check (non-fatal)
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
       const result = await runMilestoneBatch();
@@ -200,6 +221,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 7: Monthly recap — only on 1st of month (non-fatal)
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       const now = new Date();
       if (now.getDate() === 1) {
@@ -220,6 +242,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 8a: Incremental event fill sync — fetch capacity for newly-completed sessions
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 8a: syncing event fill for recently-completed sessions");
       const fillStats = await syncEventFill(
@@ -238,6 +261,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     }
 
     // Step 8b: Program ratings recompute (non-fatal, every night)
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 8b: recomputing program ratings");
       const result = await computeProgramRatings(
@@ -261,6 +285,7 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     // Step 9: Batch player timing computation (non-fatal)
     // Computes attendance_archetype, avg_booking_lead_days, preferred_booking_dow
     // for every player whose timing_computed_at is stale (>22 h) or missing.
+    await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 9: batch player timing computation");
       const timingResult = await batchComputePlayerTiming(CLUB_ID);
@@ -314,6 +339,13 @@ export function startScheduler(): void {
       if (!schedule) return;
 
       if (!isTimeToRun(schedule.scheduledTime, schedule.timezone)) return;
+
+      // Reclaim any crashed nightly job BEFORE checking its status.
+      // Without this, a crash that left status="running" blocks every future tick.
+      const reclaimed = await reclaimStaleJobs();
+      if (reclaimed > 0) {
+        logger.info({ reclaimed }, "[scheduler] reclaimStaleJobs: cleared stale job(s) before nightly tick check");
+      }
 
       const nightlyJob = await getJob(JOB_NIGHTLY);
       if (nightlyJob.status === "running") {

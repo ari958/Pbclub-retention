@@ -76,19 +76,40 @@ export async function startJob(id: string): Promise<void> {
   // Silently succeeds if the last_heartbeat column doesn't exist yet (pre-migration 006).
   await reclaimStaleJobs();
 
+  const now = new Date().toISOString();
+  // Also reset last_heartbeat so a stale value from a previous crashed run cannot
+  // cause reclaimStaleJobs() to falsely reclaim this freshly-started job.
+  // The update silently ignores the column if migration 006 hasn't run yet.
   const { error } = await supabase
     .from("jobs")
     .update({
       status: "running",
-      started_at: new Date().toISOString(),
+      started_at: now,
       finished_at: null,
       stats: null,
       error: null,
-      updated_at: new Date().toISOString(),
+      last_heartbeat: now,
+      updated_at: now,
     })
     .eq("id", id);
-  if (error) {
+  if (error && !error.message.includes("last_heartbeat")) {
     console.error(`[jobStore] startJob failed for ${id}:`, error.message);
+  } else if (error) {
+    // last_heartbeat column not yet added — retry without it (pre-migration 006)
+    const { error: err2 } = await supabase
+      .from("jobs")
+      .update({
+        status: "running",
+        started_at: now,
+        finished_at: null,
+        stats: null,
+        error: null,
+        updated_at: now,
+      })
+      .eq("id", id);
+    if (err2) {
+      console.error(`[jobStore] startJob failed for ${id}:`, err2.message);
+    }
   }
 }
 

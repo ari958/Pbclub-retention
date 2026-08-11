@@ -335,6 +335,7 @@ router.post("/sync/nightly", async (req, res) => {
 });
 
 router.get("/sync/nightly/status", async (_req, res) => {
+  await reclaimStaleJobs(); // auto-reclaim on status poll — mirrors events status behaviour
   const job = await getJob(JOB_NIGHTLY, { withLogs: true });
   res.json({
     status: job.status,
