@@ -631,11 +631,20 @@ function ReasonPill({ label }: { label: string }) {
   );
 }
 
-function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; clubId: string; onBack: () => void }) {
-  const [data, setData]       = useState<any>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+function QueueDetailView({ decisionId, clubId, approvedAt: initialApprovedAt, onBack, onApproved }: {
+  decisionId: string;
+  clubId: string;
+  approvedAt: string | null | undefined;
+  onBack: () => void;
+  onApproved: (approvedAt: string) => void;
+}) {
+  const [data, setData]             = useState<any>(null);
+  const [loading, setLoading]       = useState(true);
+  const [error, setError]           = useState<string | null>(null);
   const [showExcluded, setShowExcluded] = useState(false);
+  const [approvedAt, setApprovedAt] = useState<string | null | undefined>(initialApprovedAt);
+  const [approving, setApproving]   = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -644,6 +653,25 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
       .then(d => { setData(d); setLoading(false); })
       .catch(e => { setError(e.message); setLoading(false); });
   }, [decisionId, clubId]);
+
+  async function handleApprove() {
+    setApproving(true);
+    setApproveError(null);
+    try {
+      const r = await fetch(
+        `${API}/programming/decisions/${decisionId}/approve?clubId=${clubId}`,
+        { method: "PATCH" },
+      );
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error ?? `${r.status}`);
+      setApprovedAt(d.approved_at);
+      onApproved(d.approved_at);
+    } catch (e: any) {
+      setApproveError(e.message);
+    } finally {
+      setApproving(false);
+    }
+  }
 
   if (loading) return <div style={{ color: C.textDim, fontSize: 13, padding: "40px 0" }}>Building candidate list…</div>;
   if (error)   return <div style={{ color: C.red, fontSize: 13, padding: "20px 0" }}>Error: {error}</div>;
@@ -683,7 +711,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
           <PromoteBadge />
           <span style={{ fontSize: 18, fontWeight: 700, color: C.text }}>{data.event_name}</span>
         </div>
-        <div style={{ display: "flex", gap: 16, fontSize: 12, color: C.textSub }}>
+        <div style={{ display: "flex", gap: 16, fontSize: 12, color: C.textSub, flexWrap: "wrap", alignItems: "center" }}>
           <span>{fmtTime(data.event_start)}</span>
           <span style={{ fontFamily: C.mono }}>
             {data.current_signups}/{data.capacity} booked
@@ -694,6 +722,52 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
             </span>
           )}
         </div>
+      </div>
+
+      {/* ── Approval gate ── */}
+      <div style={{
+        background: approvedAt ? `${C.green}12` : C.surface,
+        border: `1px solid ${approvedAt ? C.green : C.border}`,
+        borderRadius: 8, padding: "16px 20px", marginBottom: 24,
+        display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+      }}>
+        <div>
+          <div style={{
+            fontFamily: C.mono, fontSize: 10, fontWeight: 600, letterSpacing: "0.06em",
+            color: approvedAt ? C.green : C.textDim, textTransform: "uppercase", marginBottom: 4,
+          }}>
+            {approvedAt ? "Audience Approved" : "Operator Approval"}
+          </div>
+          <div style={{ fontSize: 12, color: C.textSub }}>
+            {approvedAt
+              ? <>Approved {fmtTime(approvedAt)} — audience is locked for send dispatch.</>
+              : <>Review the funnel and ranked list below, then approve to gate the send.</>}
+          </div>
+          {approveError && (
+            <div style={{ marginTop: 6, fontSize: 11, color: C.red, fontFamily: C.mono }}>{approveError}</div>
+          )}
+        </div>
+        {!approvedAt ? (
+          <button
+            onClick={handleApprove}
+            disabled={approving}
+            style={{
+              background: approving ? C.surface2 : C.green,
+              border: "none",
+              color: approving ? C.textDim : "#0d1117",
+              fontSize: 12, fontWeight: 700, padding: "8px 20px",
+              borderRadius: 6, cursor: approving ? "default" : "pointer",
+              flexShrink: 0, whiteSpace: "nowrap",
+            }}
+          >
+            {approving ? "Approving…" : "✓ Approve Audience"}
+          </button>
+        ) : (
+          <span style={{
+            fontFamily: C.mono, fontSize: 10, fontWeight: 700, letterSpacing: "0.06em",
+            color: C.green, background: `${C.green}22`, padding: "5px 12px", borderRadius: 6,
+          }}>APPROVED</span>
+        )}
       </div>
 
       {/* ── The funnel ── */}
@@ -934,7 +1008,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
   const [channelStats, setChannelStats] = useState<any>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
-  const [selectedId, setSelectedId]     = useState<string | null>(null);
+  const [selectedRow, setSelectedRow]   = useState<any | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -954,12 +1028,28 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
 
   useEffect(() => { load(); }, [load]);
 
-  if (selectedId) {
+  // When the evaluator writes new decisions, auto-refresh the list.
+  // Simple approach: poll every 30s while the queue tab is visible.
+  useEffect(() => {
+    const id = setInterval(() => { load(); }, 30_000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  function handleApproved(decisionId: string, approvedAt: string) {
+    setQueue(q => q.map(row => row.id === decisionId ? { ...row, approved_at: approvedAt } : row));
+    if (selectedRow?.id === decisionId) {
+      setSelectedRow((r: any) => r ? { ...r, approved_at: approvedAt } : r);
+    }
+  }
+
+  if (selectedRow) {
     return (
       <QueueDetailView
-        decisionId={selectedId}
+        decisionId={selectedRow.id}
         clubId={clubId}
-        onBack={() => setSelectedId(null)}
+        approvedAt={selectedRow.approved_at}
+        onBack={() => setSelectedRow(null)}
+        onApproved={(ts) => handleApproved(selectedRow.id, ts)}
       />
     );
   }
@@ -1028,7 +1118,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${C.border}` }}>
-              {["", "Session", "Starts", "Signups", "Eligible", "SMS-ready", "Decided"].map((h, i) => (
+              {["", "Session", "Starts", "Signups", "Eligible", "SMS-ready", "Decided", "Status"].map((h, i) => (
                 <th key={i} style={{
                   padding: "6px 10px", textAlign: "left",
                   fontFamily: C.mono, fontSize: 10, fontWeight: 500,
@@ -1041,17 +1131,19 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
             {queue.map((row: any, i: number) => {
               const h = row.hours_until_start ?? 0;
               const urgency = h <= 0 ? C.red : h <= 12 ? C.orange : h <= 48 ? C.accent : C.textDim;
+              const isApproved = !!row.approved_at;
+              const rowBg = i % 2 === 0 ? "transparent" : C.surface2;
               return (
                 <tr
                   key={row.id}
-                  onClick={() => setSelectedId(row.id)}
+                  onClick={() => setSelectedRow(row)}
                   style={{
                     borderBottom: `1px solid ${C.border}`,
-                    background: i % 2 === 0 ? "transparent" : C.surface2,
+                    background: rowBg,
                     cursor: "pointer",
                   }}
                   onMouseEnter={e => (e.currentTarget.style.background = `${C.accent}11`)}
-                  onMouseLeave={e => (e.currentTarget.style.background = i % 2 === 0 ? "transparent" : C.surface2)}
+                  onMouseLeave={e => (e.currentTarget.style.background = rowBg)}
                 >
                   <td style={{ padding: "8px 4px 8px 10px" }}>
                     <PromoteBadge />
@@ -1097,6 +1189,20 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
                       {fmtTime(row.evaluated_at)}
                     </div>
                   </td>
+                  <td style={{ padding: "8px 10px", whiteSpace: "nowrap" }}>
+                    {isApproved ? (
+                      <span style={{
+                        fontFamily: C.mono, fontSize: 9, fontWeight: 700, letterSpacing: "0.06em",
+                        color: C.green, background: `${C.green}22`, padding: "2px 7px", borderRadius: 4,
+                      }}>APPROVED</span>
+                    ) : (
+                      <span style={{
+                        fontFamily: C.mono, fontSize: 9, color: C.textDim,
+                        background: C.surface2, border: `1px solid ${C.border}`,
+                        padding: "2px 7px", borderRadius: 4,
+                      }}>needs review</span>
+                    )}
+                  </td>
                 </tr>
               );
             })}
@@ -1104,7 +1210,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
         </table>
       </div>
       <div style={{ marginTop: 12, fontSize: 11, color: C.textDim, lineHeight: 1.6 }}>
-        Click a row to see the full funnel and ranked candidates.
+        Click a row to see the full funnel and ranked candidates. Approve each audience before sends are dispatched.
         Eligible / SMS-ready counts are from the most recent candidate build — click a row and rebuild if they look stale.
       </div>
     </div>

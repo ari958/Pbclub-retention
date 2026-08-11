@@ -151,7 +151,7 @@ router.get("/programming/queue", async (req, res) => {
 
   const { data: decisions, error } = await supabase
     .from("programming_decisions")
-    .select("id, event_id, event_name, event_start_time, signup_count, total_teams, evaluated_at, rule_name, checkpoint_offset_hours")
+    .select("id, event_id, event_name, event_start_time, signup_count, total_teams, evaluated_at, rule_name, checkpoint_offset_hours, approved_at")
     .eq("club_id", clubId)
     .eq("decision", "PROMOTE")
     .order("event_start_time", { ascending: true });
@@ -203,6 +203,50 @@ router.get("/programming/queue", async (req, res) => {
       window_days: 30,
     },
   });
+});
+
+// ── PATCH /api/programming/decisions/:id/approve ──────────────────────────────
+//
+// Writes approved_at = now() on a PROMOTE decision.
+// No-op if already approved (returns 200 with the existing timestamp).
+// This is purely a schema gate — no Twilio call is made.
+
+router.patch("/programming/decisions/:id/approve", async (req, res) => {
+  const { id } = req.params;
+  const clubId = req.query.clubId as string;
+  if (!clubId) { res.status(400).json({ error: "clubId required" }); return; }
+
+  // Verify the decision belongs to this club and is a PROMOTE
+  const { data: dec, error: fetchErr } = await supabase
+    .from("programming_decisions")
+    .select("id, decision, approved_at, event_name")
+    .eq("id", id)
+    .eq("club_id", clubId)
+    .maybeSingle();
+
+  if (fetchErr) { res.status(500).json({ error: fetchErr.message }); return; }
+  if (!dec)     { res.status(404).json({ error: "Decision not found" }); return; }
+  if ((dec as any).decision !== "PROMOTE") {
+    res.status(400).json({ error: "Only PROMOTE decisions can be approved" }); return;
+  }
+
+  // Idempotent — if already approved, return the existing timestamp
+  if ((dec as any).approved_at) {
+    res.json({ approved: true, approved_at: (dec as any).approved_at, id, already_approved: true });
+    return;
+  }
+
+  const approvedAt = new Date().toISOString();
+  const { error: updateErr } = await supabase
+    .from("programming_decisions")
+    .update({ approved_at: approvedAt })
+    .eq("id", id)
+    .eq("club_id", clubId);
+
+  if (updateErr) { res.status(500).json({ error: updateErr.message }); return; }
+
+  logger.info({ id, clubId, event_name: (dec as any).event_name }, "[programming/approve] decision approved");
+  res.json({ approved: true, approved_at: approvedAt, id, already_approved: false });
 });
 
 // ── GET /api/programming/decisions ────────────────────────────────────────────
