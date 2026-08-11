@@ -1451,12 +1451,19 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
     // deliberately excluded here — they must never count against a player's
     // promotional budget.
     const ledgerCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const { data: ledgerRows } = await supabase
+    const { data: ledgerRows, error: ledgerReadErr } = await supabase
       .from("contact_ledger")
       .select("player_id, sent_at")
       .eq("club_id", clubId)
       .eq("purpose", "promotion")   // cancellations are EXEMPT — never budgeted
       .gte("sent_at", ledgerCutoff);
+    if (ledgerReadErr) {
+      // FAIL CLOSED: an unreadable ledger means the budget gate would silently
+      // see an empty history and allow over-contacting players.
+      logger.error({ err: ledgerReadErr.message, clubId },
+        "[programming/candidates] contact_ledger read FAILED — aborting build (budget gate would be blind)");
+      throw new Error(`contact_ledger read failed: ${ledgerReadErr.message}`);
+    }
 
     interface ContactSummary { lastSentAt: Date | null; count30d: number; }
     const contactMap = new Map<string, ContactSummary>();

@@ -1,0 +1,116 @@
+# Phase 4.3 — Verify the Ledger, Audit Silent Failures, Count the Level Exclusion
+
+**Mode:** Verify and audit. Small scope, high stakes.
+**Constraint:** `SMS_LIVE` stays `false` for the entire phase.
+
+---
+
+## Context
+
+Three things surfaced in the last round that need closing before any real send.
+
+**1. `contact_ledger` has never written a row.** The insert referenced a `notes` column that doesn't exist in the deployed table, and the error was swallowed. That means the contact budget built in Phase 3.4 — 7-day cooldown, max 2 per 30 days — has been a **no-op for its entire existence**. The fixture test passed because it ran in memory against a constructed map; the real gate never had data.
+
+The column bug is fixed. **The fix has never been exercised.** Until a row is written and read back by the gate, the budget is unproven, not working.
+
+**2. A write failed silently for two phases and nobody noticed.** That is a pattern, not an incident. The same shape in the dispatch path means a message could fail at Twilio and be recorded as sent — which would make an experiment uninterpretable. If 8 of 25 messages fail silently, the result reads as "no response" when the truth is "never delivered."
+
+**3. Level-gated events are now excluded from outreach entirely.** That was the right call given the data. But "3.75+ Off-Peak Open Play" and "Advanced Intermediate Open Play" are recurring formats — if most open play carries `admissionRating`, outreach just lost access to much of the schedule and that needs to be a known number rather than a surprise.
+
+---
+
+## Hard constraints
+
+**1. `SMS_LIVE` stays `false` throughout.** All verification uses the simulated path.
+
+**2. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode.
+
+**3. Do not weaken any safeguard.** The 50-recipient hard cap stays a code constant. The level-gate exclusion stays as implemented.
+
+**4. Supabase writes** limited to `contact_ledger` and `experiment_participants` (Item 1 verification only). Do not modify `players`, `attendances`, `conversations`, `event_fill`, or `sms_consent_records`.
+
+**5. Never echo full phone numbers or secrets.**
+
+---
+
+## Item 1 — Prove the contact ledger works end to end
+
+Not a code review. Write a row, read it back through the gate, confirm it blocks.
+
+**1a. Confirm the deployed schema.** Query the live `contact_ledger` columns and compare against what the insert code sends. Report any remaining mismatch — the `notes` bug suggests the code and the deployed table drifted, and there may be more than one difference.
+
+**1b. Write a real row.** Use the mark-sent path on a single participant. Report the row as written: every column and value (phone masked).
+
+**1c. Verify the gate reads it.** Rebuild a candidate list that includes that player and confirm they are excluded with `contact_cooldown` as the reason. **This is the test that matters** — a row existing is not the same as the gate seeing it.
+
+**1d. Verify the 30-day cap.** Construct a second ledger row for the same player dated outside the 7-day cooldown but inside 30 days, rebuild, and confirm the cap now excludes them. Report which limit fired.
+
+**1e. Verify the cancellation exemption.** Insert a `purpose='cancellation'` row for a player and confirm it does **not** count against their promotional budget. A member whose session was cancelled must be reachable regardless of promotional history.
+
+**1f. Clean up.** Remove the test rows and confirm the affected players are eligible again. Report what was removed.
+
+**1g. Report the funnel impact.** With the gate genuinely functional, does the contact budget stage remove anyone on a real candidate build today? It should be zero — nothing has ever been sent — but confirm rather than assume.
+
+**STATUS:**
+
+---
+
+## Item 2 — Audit swallowed errors in the send and ledger paths
+
+**2a. Enumerate every catch block** in: the dispatch endpoint, `twilio.ts`, the mark-sent path, ledger writes, and outcome measurement. For each, report the file, line, what it catches, and what it does — rethrow, log, or swallow.
+
+**2b. Flag every silent swallow.** Any catch that neither logs nor rethrows is a defect in these paths. The ledger bug was exactly this shape.
+
+**2c. Fix them.** In the send and ledger paths specifically, a failure must either throw or log at error level with enough context to identify the affected record. **A failure must never leave state claiming success** — a participant marked `sent_at` when the send failed is the worst case, because it is indistinguishable from a real send afterward.
+
+**2d. Verify with induced failures.** Force each of these and report what the system does:
+- Twilio returns an error for one recipient mid-batch
+- A ledger insert fails
+- A participant update fails after a successful send
+
+For each: does it log, does the batch continue correctly, and is the resulting state accurate about what happened?
+
+**2e. Report on partial-failure state.** After an induced mid-batch Twilio failure, what does the participant row show, what does the UI show, and would that participant be counted as treated in outcome measurement? A participant whose message failed is **not a valid treatment subject** and must be excluded from the comparison.
+
+**STATUS:**
+
+---
+
+## Item 3 — Count the level-gate exclusion
+
+Read-only.
+
+**3a.** Across all upcoming events in the next 30 days, report: total events, how many carry a non-null `admissionRating` (either `minRating` or `maxRating`), and the breakdown by program type.
+
+**3b. Break down the excluded events** by name pattern and format — are they concentrated in a few recurring series, or spread across the schedule?
+
+**3c. Report the practical effect.** Of the sessions that would otherwise be eligible for outreach, what fraction is now excluded? If most open play is level-gated, outreach has lost its primary schedule and that changes what to build next.
+
+**3d. Report the rating values in use.** Which `minRating` / `maxRating` values actually appear? If PB Club only uses two or three distinct gates, a mapping to the existing level taxonomy may be more tractable than it appears — that is not this phase's work, but the numbers inform it.
+
+**3e. No changes.** Report only.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What ran / what changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Is the contact budget functional?** With evidence — a row written, and the gate observed excluding that player.
+2. **Silent failures found and fixed** — count, locations, and what changed.
+3. **Partial-failure handling** — what state a failed send leaves behind, and whether it can be distinguished from a successful one.
+4. **Level exclusion** — how many upcoming events and what fraction of the outreach-eligible schedule.
+
+Confirm: **`SMS_LIVE=false` at phase end; no messages sent; no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; hard cap and level-gate exclusion unchanged; all Item 1 test rows removed.**

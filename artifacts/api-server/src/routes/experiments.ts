@@ -309,14 +309,20 @@ async function buildExperimentCandidates(opts: {
   }
 
   // 8. Contact ledger (30-day promotional history)
+  // FAIL CLOSED: if the ledger cannot be read, the budget gate would silently
+  // see an empty history and allow over-contacting. Abort the build instead.
+  // (Note: supabase-js does NOT throw on query errors — the error must be
+  // checked explicitly; a try/catch alone is dead code here.)
   const ledgerCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
-  let ledgerRows: any[] = [];
-  try {
-    const { data } = await supabase.from("contact_ledger")
-      .select("player_id, sent_at").eq("club_id", clubId)
-      .eq("purpose", "promotion").gte("sent_at", ledgerCutoff);
-    ledgerRows = data ?? [];
-  } catch { /* pre-migration 007 — table doesn't exist yet */ }
+  const { data: ledgerData, error: ledgerReadErr } = await supabase.from("contact_ledger")
+    .select("player_id, sent_at").eq("club_id", clubId)
+    .eq("purpose", "promotion").gte("sent_at", ledgerCutoff);
+  if (ledgerReadErr) {
+    logger.error({ err: ledgerReadErr.message, clubId },
+      "[experiments/candidates] contact_ledger read FAILED — aborting build (budget gate would be blind)");
+    throw new Error(`contact_ledger read failed: ${ledgerReadErr.message}`);
+  }
+  const ledgerRows: any[] = ledgerData ?? [];
 
   const contactMap = new Map<string, { lastSentAt: Date | null; count30d: number }>();
   for (const row of ledgerRows) {
@@ -327,28 +333,45 @@ async function buildExperimentCandidates(opts: {
     contactMap.set(row.player_id, prev);
   }
 
-  // 9. Control holdout — exclude active experiment control arm members
+  // 9. Control holdout — exclude active experiment control arm members.
+  // FAIL CLOSED: a silent read failure here would put control-arm players back
+  // into candidate pools and contaminate running experiments.
   const controlHoldoutIds = new Set<string>();
-  try {
+  {
     const holdoutCutoff = new Date(Date.now() - 30 * 86_400_000).toISOString();
-    const { data: activeExps } = await supabase.from("outreach_experiments")
+    const { data: activeExps, error: expReadErr } = await supabase.from("outreach_experiments")
       .select("id").eq("club_id", clubId)
       .in("status", ["ready", "sent", "measuring"]).gte("randomized_at", holdoutCutoff);
+    if (expReadErr) {
+      logger.error({ err: expReadErr.message, clubId },
+        "[experiments/candidates] active-experiments read FAILED — aborting build (control holdout would be lost)");
+      throw new Error(`active experiments read failed: ${expReadErr.message}`);
+    }
     if (activeExps && activeExps.length > 0) {
-      const { data: ctrl } = await supabase.from("experiment_participants")
+      const { data: ctrl, error: ctrlReadErr } = await supabase.from("experiment_participants")
         .select("player_id").in("experiment_id", activeExps.map((e: any) => e.id))
         .eq("arm", "control").eq("vetoed", false);
+      if (ctrlReadErr) {
+        logger.error({ err: ctrlReadErr.message, clubId },
+          "[experiments/candidates] control-holdout read FAILED — aborting build (control holdout would be lost)");
+        throw new Error(`control holdout read failed: ${ctrlReadErr.message}`);
+      }
       for (const r of (ctrl ?? [])) controlHoldoutIds.add((r as any).player_id);
     }
-  } catch { /* pre-migration 007 */ }
+  }
 
-  // 10. Budget defaults
+  // 10. Budget defaults — a failed override read falls back to the stricter-
+  // is-safer defaults; log it so it is not invisible.
   const BUDGET = { cooldown_days: 7, max_per_30_days: 2 };
-  try {
-    const { data: ruleRow } = await supabase.from("programming_rules")
+  {
+    const { data: ruleRow, error: budgetReadErr } = await supabase.from("programming_rules")
       .select("contact_budget").eq("id", (dec as any).rule_id).maybeSingle();
+    if (budgetReadErr) {
+      logger.warn({ err: budgetReadErr.message },
+        "[experiments/candidates] contact_budget override read failed — using defaults {7d, 2/30d}");
+    }
     if (ruleRow?.contact_budget) Object.assign(BUDGET, ruleRow.contact_budget);
-  } catch { /* pre-migration 007 */ }
+  }
 
   const bookingLink = `https://${subdomain}.podplay.app/events/${eventId}`;
   const { dayName, timeStr } = formatEventSlot(eventStartIso, timezone);
@@ -819,7 +842,7 @@ router.get("/experiments/pooled-results", requireClub, async (req, res) => {
     // Simulated dispatches delivered nothing — exclude from pooled aggregation
     // (same rule as outcome measurement).
     const parts = (rawPooledParts ?? []).filter(
-      (p: any) => !(p.reasons?.dispatch_simulated === true));
+      (p: any) => !(p.reasons?.dispatch_simulated === true) && !(p.reasons?.dispatch_failed === true));
 
     // Per-experiment
     const byExp: Record<string, any> = {};
@@ -1069,10 +1092,10 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
         const { data: rawParts } = await supabase.from("experiment_participants")
           .select("id, player_id, arm, sent_at, vetoed, reasons")
           .eq("experiment_id", id).eq("vetoed", false);
-        // Exclude simulated participants from outcome measurement — nothing
-        // was delivered to them, so they carry no treatment signal.
+        // Exclude simulated participants (nothing was delivered) and failed
+        // dispatches (message never arrived) — neither carries treatment signal.
         const parts = (rawParts ?? []).filter(
-          (p: any) => !(p.reasons?.dispatch_simulated === true));
+          (p: any) => !(p.reasons?.dispatch_simulated === true) && !(p.reasons?.dispatch_failed === true));
 
         const now = new Date();
         const nowIso = now.toISOString();
@@ -1129,7 +1152,7 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
           .select("attended_within_30d, booked_target_session, reasons")
           .eq("experiment_id", id).eq("vetoed", false);
         const updatedParts = (updatedRaw ?? []).filter(
-          (p: any) => !(p.reasons?.dispatch_simulated === true));
+          (p: any) => !(p.reasons?.dispatch_simulated === true) && !(p.reasons?.dispatch_failed === true));
 
         const allHave30d = (updatedParts ?? []).every((p: any) =>
           (p as any).attended_within_30d !== null);
@@ -1141,6 +1164,7 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
 
         measurementJobs.set(id, { status: "done", result: { n_measured: nMeasured, event_passed: eventPassed }, startedAt: measurementJobs.get(id)!.startedAt });
       } catch (err: any) {
+        logger.error({ err, experiment_id: id }, "[experiments/measure] measurement job failed");
         measurementJobs.set(id, { status: "error", error: err.message, startedAt: measurementJobs.get(id)!.startedAt });
       }
     })();
@@ -1311,6 +1335,18 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
       });
     }
 
+    // ── Fault injection (development only) — used by Phase 4.3 induced-failure
+    // verification. Header format: "twilio:<pid>;ledger:<pid>;update:<pid>".
+    // Ignored entirely when NODE_ENV === "production".
+    const faultHeader = (process.env.NODE_ENV === "development" || process.env.NODE_ENV === "test")
+      ? String(req.headers["x-fault-inject"] ?? "") : "";
+    const faults = new Map<string, string>(); // participant_id → fault kind
+    for (const spec of faultHeader.split(";").filter(Boolean)) {
+      const [kind, pid] = spec.split(":");
+      if (kind && pid) faults.set(pid.trim(), kind.trim());
+    }
+    if (faults.size > 0) logger.warn({ faults: [...faults.entries()] }, "[experiments/send] FAULT INJECTION ACTIVE (dev only)");
+
     // ─── LIVE DISPATCH ────────────────────────────────────────────────────────
     logger.info({ experiment_id: id, batch_size: eligible.length, test_override: !!overrideTo }, "[experiments/send] dispatch started");
 
@@ -1359,11 +1395,14 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
       const sentAt      = new Date().toISOString();
 
       try {
+        if (faults.get(part.id) === "twilio") {
+          throw new Error("FAULT_INJECT: simulated Twilio API error (dev-only test)");
+        }
         // sendViaTwilio handles SMS_TEST_OVERRIDE_TO and SMS_LIVE gate
         const { sid, simulated } = await sendViaTwilio(freshPlayer.phone, messageBody);
 
         // Write messages row — insert before any other state mutation
-        const { data: msgRow } = await supabase.from("messages").insert({
+        const { data: msgRow, error: msgErr } = await supabase.from("messages").insert({
           player_id:         part.player_id,
           body:              messageBody,
           direction:         "outbound",
@@ -1373,11 +1412,17 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
           simulated,
           sent_at:           sentAt,
         }).select("id").maybeSingle();
+        if (msgErr) {
+          // Loud, not fatal — the send already happened. The sid in this log
+          // line is the only remaining record of it if the insert failed.
+          logger.error({ err: msgErr.message, participant_id: part.id, experiment_id: id, twilio_sid: sid },
+            "[experiments/send] messages insert FAILED — send happened but has no messages row");
+        }
 
         // Write contact_ledger row — REAL sends only. A simulated dispatch
         // (SMS_LIVE=false) delivered nothing; writing a ledger row would put
         // the player under a cooldown for a message they never received.
-        if (!simulated) {
+        if (!simulated || faults.get(part.id) === "ledger") {
           const { error: ledgerErr } = await supabase.from("contact_ledger").insert({
             club_id:       clubId,
             player_id:     part.player_id,
@@ -1386,7 +1431,9 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
             channel:       "sms",
             purpose:       "promotion",
             sent_at:       sentAt,
-          });
+            // dev-only fault: nonexistent column forces a real insert error
+            ...(faults.get(part.id) === "ledger" ? { fault_inject_nonexistent_col: true } : {}),
+          } as any);
           if (ledgerErr) {
             // Loud, not fatal — the send already happened; but a silent ledger
             // failure breaks the contact budget gate for this player.
@@ -1397,15 +1444,34 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
 
         // Mark participant sent + record simulation state on the row so
         // simulated dispatches are distinguishable from real ones.
-        await supabase.from("experiment_participants")
+        // A successful send clears any dispatch_failed flag from a prior attempt.
+        const successReasons: any = { ...((freshPart as any).reasons ?? {}), dispatch_simulated: simulated };
+        delete successReasons.dispatch_failed;
+        const { error: partUpdErr } = await supabase.from("experiment_participants")
           .update({
-            sent_at: sentAt,
-            // Spread from the freshly-read row (not the batch-loaded one) to
-            // minimize the lost-update window on concurrent reasons changes.
-            reasons: { ...((freshPart as any).reasons ?? {}), dispatch_simulated: simulated },
-          }).eq("id", part.id);
+            sent_at: sentAt, reasons: successReasons,
+            // dev-only fault: nonexistent column forces a real update error (retry below uses the clean payload)
+            ...(faults.get(part.id) === "update" ? { fault_inject_nonexistent_col: true } : {}),
+          } as any).eq("id", part.id);
 
         const maskedSid = `${sid.slice(0, 6)}...${sid.slice(-4)}`;
+        if (partUpdErr) {
+          // WORST CASE: the send happened but sent_at was not recorded — the
+          // participant would be re-dispatched (double send) on the next run.
+          // Retry once; if it still fails, surface loudly and report a distinct
+          // outcome so the operator does NOT re-dispatch blindly.
+          const { error: retryErr } = await supabase.from("experiment_participants")
+            .update({ sent_at: sentAt, reasons: successReasons }).eq("id", part.id);
+          if (retryErr) {
+            logger.error({ err: retryErr.message, participant_id: part.id, experiment_id: id, twilio_sid: sid },
+              "[experiments/send] participant update FAILED after send — sent_at NOT recorded; participant WOULD BE RE-DISPATCHED. Fix the row before dispatching again.");
+            results.push({ participant_id: part.id, outcome: "sent_unrecorded", twilio_sid: maskedSid, simulated, error: retryErr.message });
+            sentCount++;
+            await delay(100);
+            continue;
+          }
+        }
+
         results.push({
           participant_id: part.id,
           outcome:        "sent",
@@ -1416,10 +1482,19 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
         sentCount++;
       } catch (err: any) {
         logger.error({ err, participant_id: part.id, experiment_id: id }, "[experiments/send] Twilio error");
-        // Mark the participant as failed (not sent — they can be retried via UI investigation)
-        await supabase.from("experiment_participants")
-          .update({ veto_reason: `dispatch_error: ${err.message?.slice(0, 200) ?? "unknown"}` })
-          .eq("id", part.id);
+        // Mark the participant as failed: NOT sent (no sent_at), flagged so
+        // outcome measurement excludes them — a participant whose message
+        // failed is not a valid treatment subject.
+        const failReasons: any = { ...((freshPart as any).reasons ?? {}), dispatch_failed: true };
+        const { error: failUpdErr } = await supabase.from("experiment_participants")
+          .update({
+            veto_reason: `dispatch_error: ${err.message?.slice(0, 200) ?? "unknown"}`,
+            reasons: failReasons,
+          }).eq("id", part.id);
+        if (failUpdErr) {
+          logger.error({ err: failUpdErr.message, participant_id: part.id, experiment_id: id },
+            "[experiments/send] could not record dispatch failure on participant row");
+        }
         results.push({ participant_id: part.id, outcome: "failed", error: err.message });
         failedCount++;
         // Do NOT abort remaining — partial failure must not corrupt state

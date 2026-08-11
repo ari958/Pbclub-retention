@@ -13,4 +13,5 @@
 - [Retention reframe](retention-reframe.md) — engagement/archetype gates removed; retention segmentation is the model; long-dormant 91+d is the only new hard gate; eligible pool 37→1,586; SMS-reachable 22→593
 - [SMS consent import](sms-consent-import.md) — 1,895 web-form rows; 97.6% match; 394 phone fills; 1 conflict skipped; sms_consent_records + consent_source/sms_consented_at; migration 008 needed for full run; post-import SMS-reachable 967 in pool, 98.6% cancellation coverage
 - [Level-gate policy](level-gate-policy.md) — level-gated events (admission min OR max) excluded from ALL outreach; simulated sends flagged via reasons.dispatch_simulated, never in contact_ledger
+- [Silent-failure audit](silent-failure-audit.md) — supabase-js never throws; ledger/holdout reads fail closed; dispatch_failed excluded from measurement; contact_ledger schema drifted from migration 007
 - [Phase 4.1 send path](phase41-send-path.md) — TWILIO_PHONE_NUMBER=+12015281834 (A2P approved, confirmed delivered); SMS_LIVE env var gates dispatch; experiment dispatch at POST /experiments/:id/send; migration 007 required for full flow
