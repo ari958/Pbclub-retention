@@ -9,9 +9,9 @@
  *
  * Read-only. No action buttons (Phase 2 shadow evaluation only).
  */
-import { useState, useEffect, useCallback } from "react";
-import { useParams } from "react-router-dom";
+import { useState, useEffect, useCallback, Fragment } from "react";
 import { Sidebar } from "@/components/Sidebar";
+import { useClubStatus } from "@/lib/ClubContext";
 import ExperimentsTab from "./ExperimentsTab";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -796,7 +796,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                     seg === "unknown"        ? "new"     : "—";
                   const isFirstBelowLine = !c.above_send_line && (i === 0 || eligible[i - 1].above_send_line);
                   return (
-                    <React.Fragment key={i}>
+                    <Fragment key={i}>
                       {isFirstBelowLine && (
                         <tr>
                           <td colSpan={10} style={{
@@ -864,7 +864,7 @@ function QueueDetailView({ decisionId, clubId, onBack }: { decisionId: string; c
                         )}
                       </td>
                     </tr>
-                    </React.Fragment>
+                    </Fragment>
                   );
                 })}
               </tbody>
@@ -1116,31 +1116,9 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
 type Tab = "queue" | "upcoming" | "log" | "experiments";
 
 export default function Programs() {
-  const { slug } = useParams<{ slug: string }>();
+  const clubCtx = useClubStatus();
+  const clubId  = clubCtx.status === "ready" ? clubCtx.club.id : null;
   const [tab, setTab] = useState<Tab>("queue");
-  const [clubId, setClubId] = useState<string | null>(null);
-  const [loadingClub, setLoadingClub] = useState(true);
-
-  // Resolve clubId from slug
-  useEffect(() => {
-    if (!slug) return;
-    fetch(`${API}/clubs?slug=${slug}`)
-      .then((r) => r.json())
-      .then((d) => {
-        const id = d?.id ?? d?.clubs?.[0]?.id ?? null;
-        setClubId(id);
-      })
-      .catch(() => {})
-      .finally(() => setLoadingClub(false));
-  }, [slug]);
-
-  // Fallback: use env var club ID
-  useEffect(() => {
-    if (!loadingClub && !clubId) {
-      const fallback = import.meta.env.VITE_DEFAULT_CLUB_ID ?? null;
-      setClubId(fallback);
-    }
-  }, [loadingClub, clubId]);
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.bg, fontFamily: C.sans }}>
@@ -1206,21 +1184,24 @@ export default function Programs() {
         </div>
 
         {/* Content */}
-        {loadingClub ? (
+        {clubCtx.status === "loading" ? (
           <div style={{ color: C.textDim, fontSize: 13 }}>Resolving club…</div>
-        ) : !clubId ? (
+        ) : clubCtx.status === "not_found" ? (
           <div style={{ color: C.textDim, fontSize: 13 }}>
-            Could not resolve club ID. Set <code style={{ fontFamily: C.mono }}>VITE_DEFAULT_CLUB_ID</code> or navigate via{" "}
-            <code style={{ fontFamily: C.mono }}>/c/:slug</code>.
+            Club <code style={{ fontFamily: C.mono }}>{(clubCtx as any).slug}</code> not found.
+          </div>
+        ) : clubCtx.status === "error" ? (
+          <div style={{ color: C.red, fontSize: 13 }}>
+            {(clubCtx as any).error ?? "Could not resolve club."}
           </div>
         ) : tab === "queue" ? (
-          <PromotionQueueView clubId={clubId} />
+          <PromotionQueueView clubId={clubId!} />
         ) : tab === "upcoming" ? (
-          <UpcomingRiskView clubId={clubId} />
+          <UpcomingRiskView clubId={clubId!} />
         ) : tab === "log" ? (
-          <DecisionLogView clubId={clubId} />
+          <DecisionLogView clubId={clubId!} />
         ) : (
-          <ExperimentsTab api={API} clubId={clubId} />
+          <ExperimentsTab api={API} clubId={clubId!} />
         )}
       </main>
     </div>

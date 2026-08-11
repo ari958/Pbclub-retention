@@ -1,0 +1,48 @@
+# Fix — Experiments tab club resolution
+
+**Mode:** Bug fix. Small and contained.
+
+---
+
+## The problem
+
+The Experiments tab renders:
+
+> `Could not resolve club ID. Set VITE_DEFAULT_CLUB_ID or navigate via /c/:slug.`
+
+The other three tabs on the same page — Promotion Queue, Upcoming Risk, Decision Log — render fine in the same session with the same club selected in the sidebar switcher. So the club context is available; the Experiments tab isn't reading it the same way the others do.
+
+---
+
+## Constraints
+
+**1. Do not fix this with `VITE_DEFAULT_CLUB_ID`.** Hardcoding a single club is exactly what the multi-tenant conversion moved away from. The app has `clubs.slug`, `clubResolver.ts` middleware, `ClubContext.tsx`, and `ClubSwitcher.tsx` for this purpose. Use them.
+
+**2. No PodPlay writes.** No Supabase schema changes. No sending. `SMS_LIVE` stays `false`.
+
+**3. Do not modify the dispatch endpoint or any safeguard** from Phase 4.1.
+
+---
+
+## Task
+
+**1. Diagnose first.** Report how Promotion Queue, Upcoming Risk, and Decision Log obtain the club ID, and how the Experiments tab does it. Name the specific difference — it is likely a direct URL-param read instead of consuming `ClubContext`.
+
+**2. Fix it to match the working pattern.** The Experiments tab should resolve the club exactly as its sibling tabs do, so it works regardless of which URL form the operator arrives through. The operator should not have to know that `/c/pb-club/programs` works while `/programs` does not.
+
+**3. Check for the same bug elsewhere.** Grep the dashboard for other components reading a club ID directly from URL params or env rather than from context. Report every location. Fix any that are clearly the same defect; report anything larger rather than expanding scope.
+
+**4. Verify** all four tabs load with real data — from the tab bar, from a direct link, and after switching clubs in the switcher.
+
+**5. Confirm `tsc --noEmit` passes.**
+
+---
+
+## Report
+
+- The difference between how the working tabs and the Experiments tab resolved the club
+- What changed
+- Other components with the same defect
+- Verification: all four tabs loading through each navigation path
+
+Confirm: **no `VITE_DEFAULT_CLUB_ID` fallback added; no PodPlay writes; no schema changes; `SMS_LIVE` still false; dispatch endpoint and safeguards untouched.**
