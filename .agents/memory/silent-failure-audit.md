@@ -14,6 +14,6 @@ description: supabase-js error handling pitfall + fail-closed policy for ledger/
 - Dev-only fault injection: `x-fault-inject: twilio:<pid>;ledger:<pid>;update:<pid>` header on POST /experiments/:id/send, ignored when NODE_ENV==='production'.
 
 **Other durable facts (Phase 4.3):**
-- Deployed contact_ledger schema DRIFTED from migrations/007: no `notes` column (file has it), extra `updated_at`/`outcome` columns. Migration files ≠ deployed schema; probe before relying.
+- Deployed contact_ledger schema DRIFTED from migrations/007: no `notes` column (file has it), extra `updated_at`/`outcome` columns. Migration files ≠ deployed schema; probe before relying. Reconciled by idempotent migrations/009_contact_ledger_reconcile.sql (no-op on deployed DB; run manually in Supabase SQL editor like 006–008).
 - Control holdout is the dominant pool reducer: any ready/sent/measuring experiment's control arm (30d window) is excluded from ALL candidate builds — deleting/creating even a scratch experiment visibly shifts pool sizes. Fully delete scratch experiments (participants then experiment row).
 - Budget gate verified E2E: cooldown (7d), 30d cap (2), cancellation-purpose exemption all fire correctly against real ledger rows.

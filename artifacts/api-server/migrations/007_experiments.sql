@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS contact_ledger (
   channel        text        NOT NULL DEFAULT 'sms',
   purpose        text        NOT NULL DEFAULT 'promotion',
   sent_at        timestamptz NOT NULL DEFAULT now(),
-  notes          text,
+  notes          text,  -- DRIFT: absent in deployed DB; dropped by 009 — see 009_contact_ledger_reconcile.sql
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 
