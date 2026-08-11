@@ -58,12 +58,26 @@ export default defineConfig({
     fs: {
       strict: true,
     },
-    proxy: {
-      "/api": {
-        target: `http://localhost:${process.env.API_PORT ?? 8080}`,
+    proxy: (() => {
+      // Replit's reverse proxy does NOT strip the base-path prefix before
+      // forwarding to Vite, so the browser fetch "/dashboard/api/..." arrives
+      // at Vite as "/dashboard/api/..." — the bare "/api" rule never matches.
+      // We match the full prefixed path and rewrite it down to "/api/..." for
+      // the API server.  Also keep "/api" so direct (non-prefixed) calls work
+      // in local dev without a base path.
+      const base = basePath.replace(/\/$/, ""); // e.g. "/dashboard"
+      const apiPrefix = `${base}/api`;          // e.g. "/dashboard/api"
+      const apiTarget = `http://localhost:${process.env.API_PORT ?? 8080}`;
+      const prefixedRule = {
+        target: apiTarget,
         changeOrigin: true,
-      },
-    },
+        rewrite: (path: string) => path.replace(new RegExp(`^${apiPrefix}`), "/api"),
+      };
+      return {
+        [apiPrefix]: prefixedRule,
+        "/api": { target: apiTarget, changeOrigin: true },
+      };
+    })(),
   },
   preview: {
     port,

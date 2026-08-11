@@ -180,8 +180,17 @@ export default function ExperimentsTab({ api, clubId }: Props) {
 
   const fetch_ = useCallback(async (path: string, opts?: RequestInit) => {
     const url = `${api}${path}${path.includes("?") ? "&" : "?"}clubId=${clubId}`;
+    console.log("[ExperimentsTab] fetch →", url);
     const r = await fetch(url, opts);
-    if (!r.ok) { const t = await r.text(); throw new Error(`${r.status}: ${t}`); }
+    const ct = r.headers.get("content-type") ?? "";
+    if (!r.ok || !ct.includes("application/json")) {
+      const body = await r.text();
+      throw new Error(
+        `HTTP ${r.status} — expected JSON but got ${ct || "unknown"}\n` +
+        `URL: ${url}\n` +
+        (body.trimStart().startsWith("<") ? "(HTML response — proxy or routing issue)" : body.slice(0, 300))
+      );
+    }
     return r.json();
   }, [api, clubId]);
 
