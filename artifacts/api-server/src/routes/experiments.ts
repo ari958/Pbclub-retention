@@ -24,6 +24,7 @@ import { Router } from "express";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
 import { computeWarmScore } from "../lib/warmScore";
+import { sendViaTwilio } from "../lib/twilio";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -1050,6 +1051,268 @@ router.get("/experiments/pooled-results", requireClub, async (req, res) => {
 
     res.json({ experiments, pooled });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── POST /api/experiments/:id/send ──────────────────────────────────────────
+// Dispatches treatment arm via Twilio — or previews without dispatching if dryRun: true.
+//
+// Hard constraints enforced here:
+//   - No PodPlay writes.
+//   - No automatic or scheduled dispatch — only fires on an explicit approved: true request.
+//   - Writes only to: messages, contact_ledger, experiment_participants.
+//   - Phone numbers never echoed in response. Twilio SIDs masked.
+
+const DISPATCH_HARD_CAP = 50; // code-level, not tunable from rules
+
+router.post("/experiments/:id/send", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const { id }  = req.params;
+  const { approved = false, dryRun = false } = req.body ?? {};
+
+  // Explicit approval required for live dispatch
+  if (!dryRun && !approved) {
+    res.status(400).json({
+      error: "approved: true is required to dispatch. Use dryRun: true for a safe preview.",
+    });
+    return;
+  }
+
+  try {
+    // ── Load experiment ───────────────────────────────────────────────────────
+    const { data: exp, error: expErr } = await supabase
+      .from("outreach_experiments")
+      .select("id, name, status, event_name, event_start, decision_id, pool_size, treatment_pct")
+      .eq("id", id).eq("club_id", clubId).maybeSingle();
+    if (expErr?.message?.includes("schema cache")) {
+      res.status(503).json({ error: "Migration 007 not yet applied." }); return;
+    }
+    if (!exp) { res.status(404).json({ error: "Experiment not found" }); return; }
+    if (!dryRun && exp.status !== "ready") {
+      res.status(409).json({
+        error: `Experiment is '${exp.status}' — only 'ready' experiments can be dispatched. Already-sent experiments cannot be re-dispatched.`,
+      }); return;
+    }
+
+    // ── Kill switch (3d) — check once at batch start; also checked per-message ──
+    const overrideTo  = (process.env.SMS_TEST_OVERRIDE_TO ?? "").trim();
+    const smsLive     = process.env.SMS_LIVE === "true";
+    const killRow     = await supabase.from("clubs").select("sms_kill_switch, name").eq("id", clubId).maybeSingle();
+    const killSwitch  = !!(killRow.data as any)?.sms_kill_switch;
+    if (!dryRun && killSwitch) {
+      res.status(503).json({
+        error: "SMS kill switch is engaged. Set clubs.sms_kill_switch = false to resume.",
+      }); return;
+    }
+
+    // ── Load treatment participants ────────────────────────────────────────────
+    const { data: parts } = await supabase
+      .from("experiment_participants")
+      .select("id, player_id, arm, vetoed, sent_at, message_text, score, rank, reasons")
+      .eq("experiment_id", id)
+      .eq("arm", "treatment")
+      .eq("vetoed", false)
+      .is("sent_at", null)
+      .order("rank", { ascending: true });
+
+    const eligible = parts ?? [];
+
+    // ── 3c: Control-arm exclusion — belt-and-suspenders at send time ──────────
+    const controlLeak = eligible.filter((p: any) => p.arm !== "treatment");
+    if (controlLeak.length > 0) {
+      res.status(422).json({ error: "Control arm members detected in dispatch list — aborting. This should never happen." }); return;
+    }
+
+    // ── 3a: Hard batch cap ────────────────────────────────────────────────────
+    if (eligible.length > DISPATCH_HARD_CAP) {
+      res.status(422).json({
+        error: `Batch size ${eligible.length} exceeds hard cap of ${DISPATCH_HARD_CAP}. Dispatch aborted.`,
+      }); return;
+    }
+
+    // ── 3e: Consent re-check ──────────────────────────────────────────────────
+    const playerIds = eligible.map((p: any) => p.player_id);
+    const { data: players } = await supabase.from("players")
+      .select("id, name, phone, sms_opt_in").in("id", playerIds);
+    const playerMap = new Map((players ?? []).map((p: any) => [p.id, p]));
+
+    const unconsented = eligible.filter((p: any) => {
+      const pl = playerMap.get(p.player_id);
+      return !pl || !pl.sms_opt_in || !pl.phone;
+    });
+    if (unconsented.length > 0) {
+      res.status(422).json({
+        error: `${unconsented.length} recipient(s) lost consent or have no phone since list was built. Resolve before dispatching.`,
+        unconsented_participant_ids: unconsented.map((p: any) => p.id),
+      }); return;
+    }
+
+    // ── 3f: Dry-run — return full preview without dispatching ─────────────────
+    if (dryRun) {
+      const preconditions = {
+        experiment_ready: exp.status === "ready",
+        kill_switch_off: !killSwitch,
+        within_hard_cap: eligible.length <= DISPATCH_HARD_CAP,
+        all_consented:   unconsented.length === 0,
+        no_control_leak: controlLeak.length === 0,
+        sms_live:        smsLive,
+        test_override_active: !!overrideTo,
+      };
+      const allGreen = preconditions.experiment_ready
+        && preconditions.kill_switch_off
+        && preconditions.within_hard_cap
+        && preconditions.all_consented
+        && preconditions.no_control_leak;
+
+      return res.json({
+        dry_run:    true,
+        all_green:  allGreen,
+        sms_live:   smsLive,
+        test_override_active:   !!overrideTo,
+        test_override_to_masked: overrideTo ? `${overrideTo.slice(0, 5)}•••${overrideTo.slice(-4)}` : null,
+        would_send: eligible.length,
+        preconditions,
+        recipients: eligible.map((p: any) => {
+          const pl = playerMap.get(p.player_id);
+          return {
+            participant_id:  p.id,
+            player_name:     pl?.name ?? "Unknown",
+            rank:            p.rank,
+            score:           p.score,
+            segment:         p.reasons?.retention_segment ?? "—",
+            message_preview: (p.message_text ?? "").slice(0, 120) + ((p.message_text ?? "").length > 120 ? "…" : ""),
+            sms_reachable:   !!pl?.sms_opt_in && !!pl?.phone,
+          };
+        }),
+      });
+    }
+
+    // ─── LIVE DISPATCH ────────────────────────────────────────────────────────
+    logger.info({ experiment_id: id, batch_size: eligible.length, test_override: !!overrideTo }, "[experiments/send] dispatch started");
+
+    const results: any[] = [];
+    let sentCount = 0, failedCount = 0, skippedCount = 0, abortedCount = 0;
+    const delay = (ms: number) => new Promise(r => setTimeout(r, ms));
+    let killSwitchHit = false;
+
+    for (const part of eligible) {
+      if (killSwitchHit) {
+        results.push({ participant_id: part.id, outcome: "aborted", reason: "kill_switch_mid_batch" });
+        abortedCount++;
+        continue;
+      }
+
+      // ── Per-recipient: re-check kill switch ───────────────────────────────
+      const { data: ks } = await supabase.from("clubs").select("sms_kill_switch").eq("id", clubId).maybeSingle();
+      if ((ks as any)?.sms_kill_switch) {
+        killSwitchHit = true;
+        logger.warn({ experiment_id: id, participant_id: part.id }, "[experiments/send] kill switch engaged mid-batch — stopping");
+        results.push({ participant_id: part.id, outcome: "aborted", reason: "kill_switch_engaged" });
+        abortedCount++;
+        continue;
+      }
+
+      // ── Per-recipient: re-check sent_at IS NULL (idempotency guard) ────────
+      const { data: freshPart } = await supabase
+        .from("experiment_participants")
+        .select("sent_at, vetoed").eq("id", part.id).maybeSingle();
+      if (!freshPart || freshPart.sent_at || freshPart.vetoed) {
+        results.push({ participant_id: part.id, outcome: "skipped", reason: "already_sent_or_vetoed" });
+        skippedCount++;
+        continue;
+      }
+
+      // ── Per-recipient: re-check consent ───────────────────────────────────
+      const { data: freshPlayer } = await supabase
+        .from("players").select("id, name, phone, sms_opt_in").eq("id", part.player_id).maybeSingle();
+      if (!freshPlayer?.sms_opt_in || !freshPlayer?.phone) {
+        results.push({ participant_id: part.id, outcome: "skipped", reason: "not_consented_or_no_phone" });
+        skippedCount++;
+        continue;
+      }
+
+      const messageBody = part.message_text ?? "";
+      const sentAt      = new Date().toISOString();
+
+      try {
+        // sendViaTwilio handles SMS_TEST_OVERRIDE_TO and SMS_LIVE gate
+        const { sid, simulated } = await sendViaTwilio(freshPlayer.phone, messageBody);
+
+        // Write messages row — insert before any other state mutation
+        const { data: msgRow } = await supabase.from("messages").insert({
+          player_id:         part.player_id,
+          body:              messageBody,
+          direction:         "outbound",
+          sent_by:           "operator",
+          status:            "sent",
+          twilio_message_sid: sid,
+          simulated,
+          sent_at:           sentAt,
+        }).select("id").maybeSingle();
+
+        // Write contact_ledger row
+        try {
+          await supabase.from("contact_ledger").insert({
+            club_id:       clubId,
+            player_id:     part.player_id,
+            experiment_id: id,
+            source:        "experiment",
+            channel:       "sms",
+            purpose:       "promotion",
+            sent_at:       sentAt,
+            notes:         `experiment ${id}`,
+          });
+        } catch { /* non-fatal if table not yet created */ }
+
+        // Mark participant sent — idempotent because we checked sent_at IS NULL above
+        await supabase.from("experiment_participants")
+          .update({ sent_at: sentAt }).eq("id", part.id);
+
+        const maskedSid = `${sid.slice(0, 6)}...${sid.slice(-4)}`;
+        results.push({
+          participant_id: part.id,
+          outcome:        "sent",
+          twilio_sid:     maskedSid,
+          simulated,
+          message_id:     msgRow?.id ?? null,
+        });
+        sentCount++;
+      } catch (err: any) {
+        logger.error({ err, participant_id: part.id, experiment_id: id }, "[experiments/send] Twilio error");
+        // Mark the participant as failed (not sent — they can be retried via UI investigation)
+        await supabase.from("experiment_participants")
+          .update({ veto_reason: `dispatch_error: ${err.message?.slice(0, 200) ?? "unknown"}` })
+          .eq("id", part.id);
+        results.push({ participant_id: part.id, outcome: "failed", error: err.message });
+        failedCount++;
+        // Do NOT abort remaining — partial failure must not corrupt state
+      }
+
+      // Rate limit: ~10 msg/s (matches existing bulk path)
+      await delay(100);
+    }
+
+    // Update experiment status to 'sent' if any sent
+    if (sentCount > 0) {
+      await supabase.from("outreach_experiments")
+        .update({ status: "sent", sent_at: new Date().toISOString() }).eq("id", id);
+    }
+
+    logger.info({ experiment_id: id, sentCount, failedCount, skippedCount, abortedCount }, "[experiments/send] dispatch complete");
+
+    res.json({
+      dispatched:           sentCount,
+      failed:               failedCount,
+      skipped:              skippedCount,
+      aborted:              abortedCount,
+      test_override_active: !!overrideTo,
+      sms_live:             smsLive,
+      results,
+    });
+
+  } catch (err: any) {
+    logger.error({ err }, "[experiments/send] error");
     res.status(500).json({ error: err.message });
   }
 });

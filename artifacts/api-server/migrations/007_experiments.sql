@@ -112,3 +112,8 @@ ALTER TABLE experiment_participants  ENABLE ROW LEVEL SECURITY;
 
 GRANT ALL ON contact_ledger, outreach_experiments, experiment_participants TO service_role;
 GRANT ALL ON contact_ledger, outreach_experiments, experiment_participants TO authenticated;
+
+-- ── 7. Global SMS kill switch on clubs ───────────────────────────────────────
+-- Operator sets this to true to immediately halt all outbound SMS.
+-- Checked per-message (not just at batch start) so it stops an in-flight batch.
+ALTER TABLE clubs ADD COLUMN IF NOT EXISTS sms_kill_switch boolean NOT NULL DEFAULT false;

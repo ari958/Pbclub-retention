@@ -171,6 +171,13 @@ export default function ExperimentsTab({ api, clubId }: Props) {
   const [pooled, setPooled] = useState<any>(null);
   const [pooledExps, setPooledExps] = useState<any[]>([]);
 
+  // Dispatch state (Phase 4.1)
+  const [dryRunLoading, setDryRunLoading]     = useState(false);
+  const [dryRunResult, setDryRunResult]       = useState<any | null>(null);
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [dispatching, setDispatching]         = useState(false);
+  const [dispatchResult, setDispatchResult]   = useState<any | null>(null);
+
   const fetch_ = useCallback(async (path: string, opts?: RequestInit) => {
     const url = `${api}${path}${path.includes("?") ? "&" : "?"}clubId=${clubId}`;
     const r = await fetch(url, opts);
@@ -200,6 +207,8 @@ export default function ExperimentsTab({ api, clubId }: Props) {
 
   async function openDetail(exp: Experiment) {
     setSelectedExp(exp); setLoading(true); setError(null);
+    // Reset dispatch state when switching experiments
+    setDryRunResult(null); setAwaitingApproval(false); setDispatchResult(null);
     try {
       const d = await fetch_(`/experiments/${exp.id}`);
       setParticipants(d.participants ?? []);
@@ -208,6 +217,15 @@ export default function ExperimentsTab({ api, clubId }: Props) {
       setView("detail");
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
+  }
+
+  async function loadDetail(id: string) {
+    if (!selectedExp) return;
+    try {
+      const d = await fetch_(`/experiments/${id}`);
+      setParticipants(d.participants ?? []);
+      setSelectedExp(d.experiment ?? selectedExp);
+    } catch { /* non-fatal */ }
   }
 
   async function openResults() {
@@ -322,6 +340,35 @@ export default function ExperimentsTab({ api, clubId }: Props) {
       setSelectedExp(d.experiment);
     } catch (e: any) { setError(e.message); }
     finally { setMeasuring(false); }
+  }
+
+  async function runDryRun() {
+    if (!selectedExp) return;
+    setDryRunLoading(true); setDryRunResult(null); setAwaitingApproval(false);
+    try {
+      const d = await fetch_(`/experiments/${selectedExp.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: true }),
+      });
+      setDryRunResult(d);
+    } catch (e: any) { setError(e.message); }
+    finally { setDryRunLoading(false); }
+  }
+
+  async function dispatchSend() {
+    if (!selectedExp) return;
+    setDispatching(true); setDispatchResult(null); setAwaitingApproval(false);
+    try {
+      const d = await fetch_(`/experiments/${selectedExp.id}/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ approved: true, dryRun: false }),
+      });
+      setDispatchResult(d);
+      await loadDetail(selectedExp.id);
+    } catch (e: any) { setError(e.message); }
+    finally { setDispatching(false); }
   }
 
   function copyAll() {
@@ -553,11 +600,157 @@ export default function ExperimentsTab({ api, clubId }: Props) {
           </div>
         </div>
 
-        {/* Send reminder */}
-        <div style={{ background: AMBER + "12", border: `1px solid ${AMBER}33`, borderRadius: 6, padding: "8px 12px", fontSize: 11, color: AMBER, marginBottom: 16 }}>
-          You are sending these messages manually. The system does not send anything.
-          Copy each message, send it from your phone or SMS tool, then click "Mark sent" to record it.
-        </div>
+        {/* ── Dispatch Panel (Phase 4.1) ─────────────────────────────────── */}
+        {selectedExp.status === "ready" && !dispatchResult && (
+          <div style={{ marginBottom: 16 }}>
+            {/* Override / live-mode banner — shown after dry run */}
+            {dryRunResult && (
+              dryRunResult.test_override_active ? (
+                <div style={{ background: AMBER + "18", border: `2px solid ${AMBER}`, borderRadius: 8, padding: "10px 16px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 22 }}>⚠</span>
+                  <div>
+                    <div style={{ color: AMBER, fontWeight: 700, fontSize: 13 }}>TEST OVERRIDE ACTIVE</div>
+                    <div style={{ color: TEXT2, fontSize: 11 }}>All messages route to {dryRunResult.test_override_to_masked} — not to real members.</div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ background: RED + "18", border: `2px solid ${RED}`, borderRadius: 8, padding: "10px 16px", marginBottom: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 22 }}>🔴</span>
+                  <div>
+                    <div style={{ color: RED, fontWeight: 700, fontSize: 13 }}>LIVE MODE — MESSAGES GO TO REAL MEMBERS</div>
+                    <div style={{ color: TEXT2, fontSize: 11 }}>No test override active. Each message delivers to the member's actual phone number.</div>
+                  </div>
+                </div>
+              )
+            )}
+
+            <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 8, padding: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <div>
+                  <span style={{ fontWeight: 600, color: TEXT }}>Dispatch</span>
+                  <span style={{ color: TEXT2, fontSize: 11, marginLeft: 10 }}>
+                    Run a dry run first, then approve.
+                  </span>
+                </div>
+                <button onClick={runDryRun} disabled={dryRunLoading} style={btnStyle(AMBER, dryRunLoading)}>
+                  {dryRunLoading ? "Checking…" : dryRunResult ? "Re-run dry run" : "Dry run"}
+                </button>
+              </div>
+
+              {!dryRunResult && (
+                <div style={{ color: TEXT2, fontSize: 11, lineHeight: 1.7 }}>
+                  Dry run checks every precondition — kill switch, consent, control-arm exclusion, hard cap — and shows
+                  exactly who would receive a message and what they'd receive. No messages are sent.
+                  After review, you approve with a single click.
+                </div>
+              )}
+
+              {dryRunResult && (
+                <div>
+                  {/* Preconditions checklist */}
+                  <div style={{ marginBottom: 12, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 16px" }}>
+                    {Object.entries(dryRunResult.preconditions).map(([k, v]: any) => (
+                      <div key={k} style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 11 }}>
+                        <span style={{ color: v ? GREEN : RED, fontWeight: 700 }}>{v ? "✓" : "✗"}</span>
+                        <span style={{ color: v ? TEXT2 : RED }}>{k.replace(/_/g, " ")}</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div style={{ color: TEXT, fontSize: 13, marginBottom: 10 }}>
+                    Would dispatch <strong style={{ color: GREEN }}>{dryRunResult.would_send}</strong> messages to the treatment arm.
+                  </div>
+
+                  {/* Recipients preview */}
+                  {(dryRunResult.recipients?.length ?? 0) > 0 && (
+                    <div style={{ maxHeight: 180, overflowY: "auto", marginBottom: 12, background: SURF2, borderRadius: 6, padding: 8 }}>
+                      {dryRunResult.recipients.map((r: any) => (
+                        <div key={r.participant_id} style={{ display: "flex", gap: 8, alignItems: "flex-start", padding: "3px 0", borderBottom: `1px solid ${BORDER}22`, fontSize: 11 }}>
+                          <span style={{ color: TEXT2, minWidth: 22 }}>#{r.rank}</span>
+                          <span style={{ color: TEXT, minWidth: 110, flexShrink: 0 }}>{r.player_name}</span>
+                          <span style={{ color: r.segment === "lapsing" ? AMBER : PURPLE, minWidth: 55, flexShrink: 0 }}>{r.segment}</span>
+                          <span style={{ color: TEXT2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{r.message_preview}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Approve or precondition failure */}
+                  {dryRunResult.all_green ? (
+                    !awaitingApproval ? (
+                      <button onClick={() => setAwaitingApproval(true)} style={btnStyle(GREEN)}>
+                        Approve & dispatch {dryRunResult.would_send} messages →
+                      </button>
+                    ) : (
+                      <div style={{ background: GREEN + "11", border: `1px solid ${GREEN}44`, borderRadius: 6, padding: 14, marginTop: 8 }}>
+                        <div style={{ color: GREEN, fontWeight: 700, fontSize: 13, marginBottom: 6 }}>
+                          Send {dryRunResult.would_send} messages to treatment arm for {selectedExp.event_name}?
+                        </div>
+                        {dryRunResult.test_override_active && (
+                          <div style={{ background: AMBER + "18", border: `1px solid ${AMBER}44`, borderRadius: 4, padding: "6px 10px", marginBottom: 8, color: AMBER, fontSize: 12 }}>
+                            ⚠ Test override ACTIVE — all messages route to {dryRunResult.test_override_to_masked}
+                          </div>
+                        )}
+                        {!dryRunResult.test_override_active && (
+                          <div style={{ background: RED + "18", border: `1px solid ${RED}44`, borderRadius: 4, padding: "6px 10px", marginBottom: 8, color: RED, fontSize: 12, fontWeight: 600 }}>
+                            🔴 LIVE: each message will be delivered to the member's real phone number
+                          </div>
+                        )}
+                        <div style={{ display: "flex", gap: 10 }}>
+                          <button onClick={dispatchSend} disabled={dispatching} style={btnStyle(GREEN, dispatching)}>
+                            {dispatching ? "Dispatching…" : "Yes, send now"}
+                          </button>
+                          <button onClick={() => setAwaitingApproval(false)} style={btnStyle(TEXT2)}>Cancel</button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <div style={{ color: RED, fontSize: 11, padding: "6px 0" }}>
+                      ✗ One or more preconditions failed — resolve before dispatching.
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Dispatch result */}
+        {dispatchResult && (
+          <div style={{ background: SURF2, border: `1px solid ${dispatchResult.failed > 0 ? RED : GREEN}55`, borderRadius: 8, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, color: TEXT, marginBottom: 8 }}>
+              Dispatch complete — {dispatchResult.dispatched} sent · {dispatchResult.failed} failed · {dispatchResult.skipped + dispatchResult.aborted} skipped/aborted
+              {dispatchResult.test_override_active && <span style={{ color: AMBER, marginLeft: 8 }}>(test override was active)</span>}
+            </div>
+            <div style={{ maxHeight: 200, overflowY: "auto" }}>
+              {dispatchResult.results?.map((r: any, i: number) => (
+                <div key={r.participant_id ?? i} style={{ display: "flex", gap: 8, fontSize: 11, padding: "2px 0", borderBottom: `1px solid ${BORDER}22` }}>
+                  <span style={{ color: r.outcome === "sent" ? GREEN : r.outcome === "failed" ? RED : TEXT2, fontWeight: 700 }}>
+                    {r.outcome === "sent" ? "✓" : r.outcome === "failed" ? "✗" : "—"}
+                  </span>
+                  <span style={{ color: r.outcome === "sent" ? GREEN : r.outcome === "failed" ? RED : TEXT2 }}>
+                    {r.outcome}{r.simulated ? " (simulated)" : ""}{r.error ? `: ${r.error.slice(0, 80)}` : ""}
+                  </span>
+                  {r.twilio_sid && <span style={{ color: TEXT2 }}>SID {r.twilio_sid}</span>}
+                </div>
+              ))}
+            </div>
+            {/* No re-send button per 4d — failed messages are investigated, not retried */}
+            {dispatchResult.failed > 0 && (
+              <div style={{ color: TEXT2, fontSize: 11, marginTop: 8 }}>
+                Failed sends are recorded in the participant list for investigation. Do not retry from this UI.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Manual send reminder — shown when already-sent or no dispatch panel */}
+        {selectedExp.status !== "ready" && !dispatchResult && (
+          <div style={{ background: AMBER + "12", border: `1px solid ${AMBER}33`, borderRadius: 6, padding: "8px 12px", fontSize: 11, color: AMBER, marginBottom: 16 }}>
+            This experiment has already been dispatched or is in {selectedExp.status} status.
+            Use "Mark sent" to record any additional manual sends, or "Measure outcomes" to update results.
+          </div>
+        )}
 
         {/* Treatment section */}
         <div style={{ marginBottom: 24 }}>

@@ -1,0 +1,164 @@
+# Phase 4.1 — Twilio Send Path (Approval-Gated)
+
+**Mode:** Build. This phase creates the first code in the project that can actually send a message.
+**Scope:** 5 items, sequential. Item 1 gates everything — the existing send path must be verified end-to-end before anything is pointed at a list.
+
+---
+
+## Context
+
+The experiment module (Phase 4) prepares candidates, randomizes treatment/control, drafts messages, and measures outcomes. The operator currently sends by hand. This phase replaces the copy-paste step with a single approved dispatch.
+
+**The Twilio integration already exists.** Pulse has a working send path gated behind `SMS_LIVE` (defaults false), with `SMS_TEST_OVERRIDE_TO` for redirecting to a test number, and the A2P 10DLC campaign is approved on **`+12015281834`**.
+
+**Verify the configured sending number before Item 1c.** Project notes previously recorded `+19129134807`; the approved number is `+12015281834`. Report which number the code and environment are actually configured with. If it is the old one, correct it — sending from an unapproved number will fail or, worse, send from a sender with no campaign association. This phase connects the experiment module to that infrastructure — it is not building an integration from scratch. **Read the existing send path first and reuse it.** Do not write a second Twilio client.
+
+**What changes materially is the risk profile.** Pulse sends one message to one player, operator-initiated, one at a time. Bulk send is a different failure mode: a bug in list construction dispatches 20 wrong messages instantly and they cannot be recalled. The safeguards in Item 3 exist because of that difference.
+
+**Approval model, as decided:** the operator reviews the full list, clicks send once, and the system dispatches. Human gate on *who*; automation only removes the tedium of sending twenty messages by hand. No experiment ever dispatches without explicit approval.
+
+---
+
+## Hard constraints
+
+**1. No PodPlay writes.** No `POST`/`PATCH`/`PUT`/`DELETE`. Do not touch `lowTurnoutAutoCancel*`. Do not call `POST /events/{eventId}/cancellation` in any mode, including `PREVIEW`.
+
+**2. `SMS_LIVE` stays `false` for the entire phase except during the Item 1 self-test**, and returns to `false` immediately after. Every other item is built and verified against the disabled path.
+
+**3. No scheduled or automatic sending.** No timer, no cron, no nightly-chain wiring. Dispatch happens only in response to an explicit operator approval action.
+
+**4. Supabase writes** limited to the experiment tables, `contact_ledger`, and `messages` (send records). Do not modify `players`, `attendances`, `conversations`, `event_fill`, or `sms_consent_records`.
+
+**5. Never echo full phone numbers** in report output. Masked only. The UI may display them to the operator.
+
+**6. Never echo secrets** — no Twilio SID, auth token, or API keys in output or logs.
+
+---
+
+## Go-ahead policy
+
+Item 1 must complete and be reported before Item 2. If the self-test fails, stop and report — a send path that can't deliver to a known-good number must not be pointed at a member list.
+
+---
+
+## Item 1 — Verify the existing send path end to end
+
+The runbook documents a green-light sequence that was written and never executed. Execute it now, against your own test number only.
+
+**1a. Read and report the existing path.** Where the Twilio client lives, how `SMS_LIVE` gates it, how `SMS_TEST_OVERRIDE_TO` redirects, what gets written to `messages`, and how delivery status is recorded. Report the exact env var names in use.
+
+**Report the configured sending number.** It must be `+12015281834`. If the code or environment holds `+19129134807`, that is stale — correct it and note the change. This is a precondition for the self-test.
+
+**1b. Confirm `sanitizeScheduledSendAt`** is applied — TCPA window is 8:00am–7:30pm weekdays, 8:30am–7:30pm weekends, with roll-forward. Report where it's enforced and whether it applies to immediate sends or only scheduled ones.
+
+**1c. Self-test.** Set `SMS_TEST_OVERRIDE_TO` to the test player's number (Ari Saposh, `+12013702546`), set `SMS_LIVE=true`, send **one** message, and report:
+- the Twilio response and message SID (masked)
+- the `messages` row written — status, `sent_at`, `twilio_message_sid`
+- the final delivery status: `delivered`, or the error code if not
+
+Error 30034 indicates unregistered A2P traffic. If it appears, the campaign association needs checking before anything else proceeds.
+
+**1d. Return `SMS_LIVE` to `false`** and confirm it. Report the confirmation explicitly.
+
+**1e. Verify the disabled path.** With `SMS_LIVE=false`, attempt a send and confirm it is a no-op that still records intent correctly rather than silently doing nothing or throwing.
+
+**STATUS:**
+
+---
+
+## Item 2 — Experiment dispatch endpoint
+
+**2a. One endpoint**, e.g. `POST /api/experiments/:id/send`, that dispatches the approved treatment arm.
+
+Preconditions, checked server-side, every one of which aborts the whole batch:
+- experiment `status = 'ready'` — never `draft`, never already `sent`
+- an explicit approval token or flag in the request body; the endpoint must not fire on a bare POST
+- every recipient is `arm = 'treatment'`, `vetoed = false`, `sent_at IS NULL`
+- every recipient is SMS-reachable and consented
+- batch size within the hard cap (Item 3)
+
+**2b. Per-message, in order:** re-check the recipient against the preconditions, send, write the `messages` row, write the `contact_ledger` row (`source='experiment'`, `purpose='promotion'`, with `experiment_id`), set `sent_at` on the participant.
+
+**2c. Partial failure must not corrupt state.** If message 12 of 20 fails, the first 11 stay sent and recorded, 12 is marked failed with its error, and 13–20 continue. Report per-recipient outcome. **Never re-send on retry** — `sent_at IS NULL` is the guard, and it must be checked immediately before each send, not once at batch start.
+
+**2d. Idempotent.** Calling the endpoint twice must not double-send. Verify by calling it twice against the disabled path and confirming the second call dispatches zero.
+
+**2e. Rate limiting.** Space sends to stay within Twilio's throughput. Report the pacing used.
+
+**STATUS:**
+
+---
+
+## Item 3 — Safeguards
+
+These exist because bulk send fails differently than single send.
+
+**3a. Hard batch cap, independent of the rules.** If a dispatch would exceed **50 recipients**, abort the entire batch and report. This is a code-level guard against a bad query, not a tunable setting, and it should not read from `programming_rules`.
+
+**3b. Test-number override honored by the experiment path**, not just Pulse's. When `SMS_TEST_OVERRIDE_TO` is set, every message in the batch goes to that number instead, with the intended recipient recorded in the `messages` row. **Your first real experiment run should land 20 messages on your own phone.**
+
+**3c. Control-arm exclusion checked at the send call.** Not only at list build. A control member receiving a message through any path invalidates the experiment, and an automated sender is exactly where that leak happens. Verify explicitly: attempt to include a control participant and confirm the batch aborts.
+
+**3d. Global kill switch, readable from the database.** Not just an env var — during an incident the operator needs one UPDATE, not a redeploy. Checked immediately before each individual send, not once at batch start.
+
+**3e. Consent re-check at send time.** A player who opted out between list build and dispatch must not receive a message. Check `sms_opt_in` and opt-out status per recipient at send.
+
+**3f. Dry-run mode.** `dryRun: true` runs every precondition and returns exactly what would be sent, to whom, without dispatching. This is what the operator sees before approving.
+
+**STATUS:**
+
+---
+
+## Item 4 — Approval UI
+
+**4a. Approval is explicit and specific.** Not a generic "Send" button. The operator sees a confirmation naming the count, the arm, the session, and whether the test override is active — e.g. *"Send 21 messages to treatment arm for Tuesday 6pm Open Play. Test override ACTIVE — all messages route to +1201•••2546."* They confirm that.
+
+**4b. Override state must be unmissable.** When `SMS_TEST_OVERRIDE_TO` is set, the UI shows it prominently. When it is not — meaning messages go to real members — that must be even more prominent. The single worst outcome in this phase is the operator believing they are in test mode when they are not.
+
+**4c. Post-send state.** Per-recipient status: sent, failed with error, or pending. Delivery status updated as Twilio callbacks arrive, if the webhook is wired.
+
+**4d. No re-send button.** If a message fails, it is investigated, not retried from the UI. Retry logic is a later decision.
+
+**4e. Control arm stays visible** and clearly labeled *"Do not contact — held out 30 days."*
+
+**STATUS:**
+
+---
+
+## Item 5 — Rehearsal
+
+**5a. Full dry run** on a real upcoming session with `SMS_LIVE=false`. Report: pool size, split, balance check, drafted messages for the treatment arm, and every precondition result.
+
+**5b. Verify the abort conditions.** Confirm each of these stops the batch: over-cap size, a control participant in the list, a vetoed participant, an already-sent participant, the kill switch engaged, an unconsented recipient.
+
+**5c. Verify idempotency** — double call dispatches zero the second time.
+
+**5d. Report the operator runbook** in plain language: what they click, what they see, what happens, how they know it worked, and how they stop it if something looks wrong.
+
+**5e. State what remains unverified.** The path will have been tested with `SMS_LIVE=false` and, in Item 1, with a single message to a test number. It will not have been exercised as a real batch to real members. Say so plainly.
+
+**STATUS:**
+
+---
+
+## Report format
+
+Per item:
+
+```
+### Item N — <title>
+STATUS: CLOSED | PARTIAL | BLOCKED
+What changed:
+Verification:
+Findings:
+Blockers:
+```
+
+Close with:
+1. **Self-test result** — did a real message deliver to the test number, and what was the final status?
+2. **`SMS_LIVE` confirmed `false`** at end of phase.
+3. **Safeguards verified** — one line per abort condition, tested.
+4. **Operator runbook** — the click-by-click sequence.
+5. **What is still unverified** before a real batch goes out.
+
+Confirm: **`SMS_LIVE=false` at phase end; no messages sent to any number other than the test number in Item 1; no PodPlay writes; no `lowTurnoutAutoCancel*` touched; no cancellation called in any mode; no scheduled or automatic sending wired.**
