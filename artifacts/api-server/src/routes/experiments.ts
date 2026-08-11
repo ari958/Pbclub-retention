@@ -1222,6 +1222,36 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
       }); return;
     }
 
+    // ── Operator approval gate — decision must be approved before any dispatch ──
+    // Fails closed: if the experiment is tied to a PROMOTE decision that has not
+    // been approved by the operator (programming_decisions.approved_at IS NULL),
+    // live dispatch is blocked with 403.
+    let decisionApproved: boolean | null = null; // null = no linked decision
+    if ((exp as any).decision_id) {
+      const { data: dec, error: decErr } = await supabase
+        .from("programming_decisions")
+        .select("id, decision, approved_at")
+        .eq("id", (exp as any).decision_id)
+        .maybeSingle();
+      if (decErr || !dec) {
+        if (!dryRun) {
+          res.status(503).json({ error: "Cannot verify audience approval — linked decision not found. Dispatch blocked." });
+          return;
+        }
+        decisionApproved = false;
+      } else {
+        decisionApproved = !!(dec as any).approved_at;
+        if (!dryRun && !decisionApproved) {
+          res.status(403).json({
+            error: "Audience not approved. The operator must approve this decision's audience (Programs → queue → Approve Audience) before SMS dispatch.",
+            approval_required: true,
+            decision_id: (exp as any).decision_id,
+          });
+          return;
+        }
+      }
+    }
+
     // ── Level-gate recheck — covers experiments created before the gate rule ──
     if (!dryRun && (exp as any).event_id) {
       const { data: gateClub } = await supabase.from("clubs")
@@ -1305,12 +1335,14 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
         no_control_leak: controlLeak.length === 0,
         sms_live:        smsLive,
         test_override_active: !!overrideTo,
+        audience_approved: decisionApproved !== false,
       };
       const allGreen = preconditions.experiment_ready
         && preconditions.kill_switch_off
         && preconditions.within_hard_cap
         && preconditions.all_consented
-        && preconditions.no_control_leak;
+        && preconditions.no_control_leak
+        && preconditions.audience_approved;
 
       return res.json({
         dry_run:    true,

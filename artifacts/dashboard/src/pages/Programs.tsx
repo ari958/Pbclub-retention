@@ -741,7 +741,7 @@ function QueueDetailView({ decisionId, clubId, approvedAt: initialApprovedAt, on
           <div style={{ fontSize: 12, color: C.textSub }}>
             {approvedAt
               ? <>Approved {fmtTime(approvedAt)} — audience is locked for send dispatch.</>
-              : <>Review the funnel and ranked list below, then approve to gate the send.</>}
+              : <>SMS dispatch is blocked until this audience is approved. Review the funnel and ranked list below, then approve to unlock the send.</>}
           </div>
           {approveError && (
             <div style={{ marginTop: 6, fontSize: 11, color: C.red, fontFamily: C.mono }}>{approveError}</div>
