@@ -1470,18 +1470,16 @@ router.get("/programming/promotion-candidates/:decisionId", async (req, res) => 
       let score = 0;
       let ineligibleReason: string | null = null;
 
-      // 1. Level fit
-      const playerLevel = p.coach_assigned_level ?? p.skill_level ?? null;
-      if (admissionMin !== null && admissionMax !== null && playerLevel) {
-        const playerNumeric = LEVEL_NUMERIC[playerLevel];
-        if (playerNumeric !== undefined && playerNumeric !== 0) {
-          if (playerNumeric < admissionMin || playerNumeric > admissionMax) {
-            eligible = false;
-            ineligibleReason = `level ${playerLevel} outside event range ${admissionMin}–${admissionMax}`;
-          } else {
-            reasons.level_fit = `${playerLevel} ∈ [${admissionMin}, ${admissionMax}]`;
-          }
-        }
+      // 1. Level fit — level-gated events are excluded from outreach entirely.
+      // PodPlay admission ratings are DUPR-scale (e.g. 3.75); player levels are
+      // word tags on a 1–5 scale and mostly null. Eligibility cannot be
+      // verified, and inviting a player below the gate is worse than inviting
+      // no one. (Mirrors buildExperimentCandidates in experiments.ts.)
+      if (admissionMin !== null || admissionMax !== null) {
+        eligible = false;
+        ineligibleReason =
+          `level-gated event (admission min=${admissionMin ?? "—"}${admissionMax !== null ? `, max=${admissionMax}` : ""}) — ` +
+          `outreach disabled: player DUPR data unavailable, eligibility cannot be verified`;
       }
       if (eligible) funnel.after_level_fit++;
 

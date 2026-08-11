@@ -138,6 +138,33 @@ function draftMessage(opts: {
   return `Hey ${first}, ${gapPhrase} -- ${sessionName} this ${dayName} at ${timeStr} has open spots if you're looking to get back on the courts. ${bookingLink}`;
 }
 
+// ─── Level-gate recheck at send time ─────────────────────────────────────────
+// Level-gated events are excluded from outreach entirely (see
+// buildExperimentCandidates). This recheck protects experiments created BEFORE
+// that rule existed (or if PodPlay adds a gate after creation). Fails CLOSED:
+// if the event cannot be fetched, dispatch is blocked rather than risking a
+// send to unverifiable recipients.
+async function checkEventLevelGate(
+  apiBase: string, apiKey: string, eventId: string,
+): Promise<{ gated: boolean; min: number | null; max: number | null; fetchError: string | null }> {
+  try {
+    const er = await fetch(`${apiBase}/events/${eventId}`, { headers: { "x-api-key": apiKey } });
+    if (!er.ok) return { gated: false, min: null, max: null, fetchError: `PodPlay event fetch failed (${er.status})` };
+    const ed: any = await er.json();
+    const min = ed?.admissionRating?.minRating ?? null;
+    const max = ed?.admissionRating?.maxRating ?? null;
+    return { gated: min !== null || max !== null, min, max, fetchError: null };
+  } catch (err: any) {
+    return { gated: false, min: null, max: null, fetchError: err.message };
+  }
+}
+
+function levelGateMessage(min: number | null, max: number | null): string {
+  return `This event has a level gate (admission rating min=${min ?? "—"}` +
+    `${max !== null ? `, max=${max}` : ""}). Player DUPR data is not available, so eligibility ` +
+    `cannot be verified — level-gated events are excluded from outreach.`;
+}
+
 const LEVEL_NUMERIC: Record<string, number> = {
   beginner: 1, advanced_beginner: 2, "advanced beginner": 2,
   intermediate: 3, "low intermediate": 3,
@@ -189,6 +216,20 @@ async function buildExperimentCandidates(opts: {
       admissionMax = ed?.admissionRating?.maxRating ?? null;
     }
   } catch { /* best-effort */ }
+
+  // Level-gated events are EXCLUDED from outreach entirely.
+  //
+  // PodPlay admission ratings are DUPR-scale (e.g. minRating=3.75); our player
+  // level data is word tags on a 1–5 scale (beginner … advanced) and is null
+  // for the vast majority of players. There is no defensible mapping between
+  // the two, so we cannot verify that any player meets the gate. Inviting a
+  // player below a level gate is worse than not inviting anyone, so the whole
+  // event is excluded until real DUPR data exists for players.
+  //
+  // (The old per-player check required BOTH minRating and maxRating to be
+  // non-null and silently passed players with null levels — a 3.75+ event
+  // with no maxRating was never filtered at all.)
+  const levelGated = admissionMin !== null || admissionMax !== null;
 
   // 3. Program type for warm score
   const { data: fillRow } = await supabase.from("event_fill").select("podplay_type").eq("event_id", eventId).maybeSingle();
@@ -328,7 +369,7 @@ async function buildExperimentCandidates(opts: {
     segment_counts:       { lapsing: 0, recent_dormant: 0 },
   };
 
-  for (const p of players) {
+  for (const p of levelGated ? [] : players) {
     // Already booked
     if (p.external_id && bookedExternalIds.has(p.external_id)) continue;
     if (signedUpPlayerIds.has(p.id)) continue;
@@ -337,12 +378,7 @@ async function buildExperimentCandidates(opts: {
     // Control holdout
     if (controlHoldoutIds.has(p.id)) { funnel.control_holdout++; continue; }
 
-    // Level fit
-    const playerLevel = p.coach_assigned_level ?? p.skill_level ?? null;
-    if (admissionMin !== null && admissionMax !== null && playerLevel) {
-      const pn = LEVEL_NUMERIC[playerLevel];
-      if (pn !== undefined && pn !== 0 && (pn < admissionMin || pn > admissionMax)) continue;
-    }
+    // Level fit — level-gated events never reach this loop (see levelGated above)
     funnel.after_level_fit++;
 
     // Retention segment — experiment restricts to lapsing + recent_dormant only
@@ -447,7 +483,11 @@ async function buildExperimentCandidates(opts: {
     c.reasons.base_score_final = c.score; // for display
   });
 
-  return { candidates, funnel, programType, programName, eventStartIso, dayName, timeStr, bookingLink, dec };
+  return {
+    candidates, funnel, programType, programName, eventStartIso, dayName, timeStr, bookingLink, dec,
+    levelGated,
+    admission: { min: admissionMin, max: admissionMax },
+  };
 }
 
 // ─── GET /api/experiments/eligible-sessions ──────────────────────────────────
@@ -506,10 +546,25 @@ router.post("/experiments/preview", requireClub, async (req, res) => {
     const apiKey  = (club as any).platform_api_key ?? process.env.PODPLAY_API_KEY ?? "";
     const timezone = (club as any).timezone ?? "America/New_York";
 
-    const { candidates, funnel } = await buildExperimentCandidates({
+    const { candidates, funnel, levelGated, admission } = await buildExperimentCandidates({
       clubId, decisionId,
       apiBase, apiKey, timezone, subdomain: club.platform_subdomain,
     });
+
+    if (levelGated) {
+      res.json({
+        pool_size: 0, n_treatment: 0, n_control: 0,
+        worth_running: false,
+        level_gated: true,
+        min_pool_note:
+          `This event has a level gate (admission rating min=${admission.min ?? "—"}` +
+          `${admission.max !== null ? `, max=${admission.max}` : ""}). Player DUPR data is not ` +
+          `available, so eligibility cannot be verified — level-gated events are excluded from outreach.`,
+        funnel,
+        balance: null, treatment_stats: null, control_stats: null,
+      });
+      return;
+    }
 
     const poolSize = candidates.length;
     const nTreatment = Math.round(poolSize * treatmentPct);
@@ -559,12 +614,23 @@ router.post("/experiments", requireClub, async (req, res) => {
     const timezone = (club as any).timezone ?? "America/New_York";
     const subdomain = club.platform_subdomain;
 
-    const { candidates, funnel, programName, eventStartIso, dayName, timeStr, bookingLink, dec } =
+    const { candidates, funnel, programName, eventStartIso, dayName, timeStr, bookingLink, dec, levelGated, admission } =
       await buildExperimentCandidates({
         clubId, decisionId, apiBase, apiKey, timezone, subdomain,
       });
 
     const eventId = (dec as any).event_id as string;
+
+    if (levelGated) {
+      res.status(422).json({
+        error:
+          `This event has a level gate (admission rating min=${admission.min ?? "—"}` +
+          `${admission.max !== null ? `, max=${admission.max}` : ""}). Player DUPR data is not ` +
+          `available, so eligibility cannot be verified — level-gated events are excluded from outreach.`,
+        level_gated: true,
+      });
+      return;
+    }
 
     const poolSize = candidates.length;
     if (poolSize === 0) {
@@ -730,6 +796,84 @@ router.get("/experiments", requireClub, async (req, res) => {
 
 // ─── GET /api/experiments/:id ─────────────────────────────────────────────────
 
+// ─── GET /api/experiments/pooled-results ─────────────────────────────────────
+// Aggregate results across all completed experiments for this club.
+// NOTE: must be registered BEFORE /experiments/:id or Express matches
+// "pooled-results" as an :id (pre-existing routing bug, fixed here).
+
+router.get("/experiments/pooled-results", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  try {
+    const { data: exps } = await supabase.from("outreach_experiments")
+      .select("id, name, event_name, event_start, status, sent_at")
+      .eq("club_id", clubId)
+      .in("status", ["measuring", "complete"])
+      .order("event_start", { ascending: false });
+
+    if (!exps || exps.length === 0) { res.json({ experiments: [], pooled: null }); return; }
+
+    const { data: rawPooledParts } = await supabase.from("experiment_participants")
+      .select("experiment_id, arm, vetoed, booked_target_session, attended_within_30d, reasons")
+      .in("experiment_id", exps.map((e: any) => e.id))
+      .eq("vetoed", false);
+    // Simulated dispatches delivered nothing — exclude from pooled aggregation
+    // (same rule as outcome measurement).
+    const parts = (rawPooledParts ?? []).filter(
+      (p: any) => !(p.reasons?.dispatch_simulated === true));
+
+    // Per-experiment
+    const byExp: Record<string, any> = {};
+    for (const e of exps) {
+      byExp[e.id] = { experiment: e, treatment: [], control: [] };
+    }
+    for (const p of (parts ?? [])) {
+      const ex = byExp[(p as any).experiment_id];
+      if (!ex) continue;
+      if ((p as any).arm === "treatment") ex.treatment.push(p);
+      else ex.control.push(p);
+    }
+
+    const experiments = Object.values(byExp).map(({ experiment: e, treatment, control }: any) => ({
+      id: e.id, name: e.name, event_name: e.event_name, event_start: e.event_start, status: e.status,
+      treatment: {
+        n: treatment.length,
+        booked:   treatment.filter((p: any) => p.booked_target_session === true).length,
+        attended: treatment.filter((p: any) => p.attended_within_30d === true).length,
+        provisional_30d: treatment.some((p: any) => p.attended_within_30d === null),
+      },
+      control: {
+        n: control.length,
+        booked:   control.filter((p: any) => p.booked_target_session === true).length,
+        attended: control.filter((p: any) => p.attended_within_30d === true).length,
+        provisional_30d: control.some((p: any) => p.attended_within_30d === null),
+      },
+    }));
+
+    // Pooled across all experiments
+    const allTreatment = experiments.flatMap(e => Array(e.treatment.n).fill(null).map((_, i) => ({
+      booked: i < e.treatment.booked, attended: i < e.treatment.attended
+    })));
+    const allControl = experiments.flatMap(e => Array(e.control.n).fill(null).map((_, i) => ({
+      booked: i < e.control.booked, attended: i < e.control.attended
+    })));
+
+    const pooled = {
+      n_experiments:        experiments.length,
+      treatment_n:          allTreatment.length,
+      control_n:            allControl.length,
+      treatment_booked:     allTreatment.filter(p => p.booked).length,
+      control_booked:       allControl.filter(p => p.booked).length,
+      treatment_attended:   allTreatment.filter(p => p.attended).length,
+      control_attended:     allControl.filter(p => p.attended).length,
+      power_caveat: "With fewer than 100 participants per arm, this pooled result can detect a large effect or a zero effect. It cannot distinguish a modest positive effect from chance. Treat these numbers as a directional read only.",
+    };
+
+    res.json({ experiments, pooled });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/experiments/:id", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   const { id } = req.params;
@@ -826,6 +970,27 @@ router.post("/experiments/:id/mark-sent", requireClub, async (req, res) => {
     if (!exp) { res.status(404).json({ error: "Experiment not found" }); return; }
     if (exp.status === "complete") { res.status(409).json({ error: "Experiment is already complete" }); return; }
 
+    // ── Level-gate recheck — a manual send to a level-gated event is still an
+    // invalid invitation; block it just like automated dispatch. Fails closed.
+    if ((exp as any).event_id) {
+      const { data: gateClub } = await supabase.from("clubs")
+        .select("platform_subdomain, platform_api_key").eq("id", clubId).maybeSingle();
+      if (!gateClub?.platform_subdomain) {
+        res.status(503).json({ error: "Club not configured — cannot verify event level gate. Mark-sent blocked." }); return;
+      }
+      const gate = await checkEventLevelGate(
+        `https://${gateClub.platform_subdomain}.podplay.app/apis/v2`,
+        (gateClub as any).platform_api_key ?? process.env.PODPLAY_API_KEY ?? "",
+        (exp as any).event_id,
+      );
+      if (gate.fetchError) {
+        res.status(503).json({ error: `Cannot verify event level gate (${gate.fetchError}). Mark-sent blocked — retry when PodPlay is reachable.` }); return;
+      }
+      if (gate.gated) {
+        res.status(422).json({ error: levelGateMessage(gate.min, gate.max), level_gated: true }); return;
+      }
+    }
+
     // Only treatment participants can be marked sent
     const { data: parts } = await supabase.from("experiment_participants")
       .select("id, player_id, arm, vetoed")
@@ -842,7 +1007,8 @@ router.post("/experiments/:id/mark-sent", requireClub, async (req, res) => {
       .update({ sent_at: now }).in("id", toMark.map((p: any) => p.id));
     if (markErr) { res.status(500).json({ error: markErr.message }); return; }
 
-    // Write contact_ledger rows (one per participant)
+    // Write contact_ledger rows (one per participant).
+    // mark-sent = operator confirms a REAL manual send, so ledger rows are correct here.
     const ledgerRows = toMark.map((p: any) => ({
       club_id:       clubId,
       player_id:     p.player_id,
@@ -851,13 +1017,14 @@ router.post("/experiments/:id/mark-sent", requireClub, async (req, res) => {
       channel:       "sms",
       purpose:       "promotion",
       sent_at:       now,
-      notes:         `experiment ${id}`,
     }));
-    try {
-      for (let i = 0; i < ledgerRows.length; i += 100) {
-        await supabase.from("contact_ledger").insert(ledgerRows.slice(i, i + 100));
+    for (let i = 0; i < ledgerRows.length; i += 100) {
+      const { error: ledgerErr } = await supabase.from("contact_ledger").insert(ledgerRows.slice(i, i + 100));
+      if (ledgerErr) {
+        logger.error({ err: ledgerErr.message, experiment_id: id },
+          "[experiments/mark-sent] contact_ledger insert FAILED — budget gate will not see these sends");
       }
-    } catch { /* non-fatal if table doesn't exist yet */ }
+    }
 
     // Update experiment status to 'sent' if not already
     if (exp.status === "ready") {
@@ -899,9 +1066,13 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
     // Run async — do not await
     (async () => {
       try {
-        const { data: parts } = await supabase.from("experiment_participants")
-          .select("id, player_id, arm, sent_at, vetoed")
+        const { data: rawParts } = await supabase.from("experiment_participants")
+          .select("id, player_id, arm, sent_at, vetoed, reasons")
           .eq("experiment_id", id).eq("vetoed", false);
+        // Exclude simulated participants from outcome measurement — nothing
+        // was delivered to them, so they carry no treatment signal.
+        const parts = (rawParts ?? []).filter(
+          (p: any) => !(p.reasons?.dispatch_simulated === true));
 
         const now = new Date();
         const nowIso = now.toISOString();
@@ -951,10 +1122,14 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
           nMeasured++;
         }
 
-        // Update experiment status
-        const { data: updatedParts } = await supabase.from("experiment_participants")
-          .select("attended_within_30d, booked_target_session")
+        // Update experiment status — simulated participants excluded from the
+        // completeness rollup too (they are never measured, so they'd hold the
+        // experiment in "measuring" forever otherwise).
+        const { data: updatedRaw } = await supabase.from("experiment_participants")
+          .select("attended_within_30d, booked_target_session, reasons")
           .eq("experiment_id", id).eq("vetoed", false);
+        const updatedParts = (updatedRaw ?? []).filter(
+          (p: any) => !(p.reasons?.dispatch_simulated === true));
 
         const allHave30d = (updatedParts ?? []).every((p: any) =>
           (p as any).attended_within_30d !== null);
@@ -981,78 +1156,6 @@ router.get("/experiments/:id/measure/status", requireClub, async (req, res) => {
   const job = measurementJobs.get(id);
   if (!job) { res.json({ status: "idle" }); return; }
   res.json(job);
-});
-
-// ─── GET /api/experiments/pooled-results ─────────────────────────────────────
-// Aggregate results across all completed experiments for this club.
-
-router.get("/experiments/pooled-results", requireClub, async (req, res) => {
-  const clubId = (req as ClubScopedRequest).clubId;
-  try {
-    const { data: exps } = await supabase.from("outreach_experiments")
-      .select("id, name, event_name, event_start, status, sent_at")
-      .eq("club_id", clubId)
-      .in("status", ["measuring", "complete"])
-      .order("event_start", { ascending: false });
-
-    if (!exps || exps.length === 0) { res.json({ experiments: [], pooled: null }); return; }
-
-    const { data: parts } = await supabase.from("experiment_participants")
-      .select("experiment_id, arm, vetoed, booked_target_session, attended_within_30d")
-      .in("experiment_id", exps.map((e: any) => e.id))
-      .eq("vetoed", false);
-
-    // Per-experiment
-    const byExp: Record<string, any> = {};
-    for (const e of exps) {
-      byExp[e.id] = { experiment: e, treatment: [], control: [] };
-    }
-    for (const p of (parts ?? [])) {
-      const ex = byExp[(p as any).experiment_id];
-      if (!ex) continue;
-      if ((p as any).arm === "treatment") ex.treatment.push(p);
-      else ex.control.push(p);
-    }
-
-    const experiments = Object.values(byExp).map(({ experiment: e, treatment, control }: any) => ({
-      id: e.id, name: e.name, event_name: e.event_name, event_start: e.event_start, status: e.status,
-      treatment: {
-        n: treatment.length,
-        booked:   treatment.filter((p: any) => p.booked_target_session === true).length,
-        attended: treatment.filter((p: any) => p.attended_within_30d === true).length,
-        provisional_30d: treatment.some((p: any) => p.attended_within_30d === null),
-      },
-      control: {
-        n: control.length,
-        booked:   control.filter((p: any) => p.booked_target_session === true).length,
-        attended: control.filter((p: any) => p.attended_within_30d === true).length,
-        provisional_30d: control.some((p: any) => p.attended_within_30d === null),
-      },
-    }));
-
-    // Pooled across all experiments
-    const allTreatment = experiments.flatMap(e => Array(e.treatment.n).fill(null).map((_, i) => ({
-      booked: i < e.treatment.booked, attended: i < e.treatment.attended
-    })));
-    const allControl = experiments.flatMap(e => Array(e.control.n).fill(null).map((_, i) => ({
-      booked: i < e.control.booked, attended: i < e.control.attended
-    })));
-
-    const pooled = {
-      n_experiments:        experiments.length,
-      treatment_n:          allTreatment.length,
-      control_n:            allControl.length,
-      treatment_booked:     allTreatment.filter(p => p.booked).length,
-      control_booked:       allControl.filter(p => p.booked).length,
-      treatment_attended:   allTreatment.filter(p => p.attended).length,
-      control_attended:     allControl.filter(p => p.attended).length,
-      power_caveat: "With fewer than 100 participants per arm, this pooled result can detect a large effect or a zero effect. It cannot distinguish a modest positive effect from chance. Treat these numbers as a directional read only.",
-    };
-
-    res.json({ experiments, pooled });
-  } catch (err: any) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // ─── POST /api/experiments/:id/send ──────────────────────────────────────────
@@ -1083,7 +1186,7 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
     // ── Load experiment ───────────────────────────────────────────────────────
     const { data: exp, error: expErr } = await supabase
       .from("outreach_experiments")
-      .select("id, name, status, event_name, event_start, decision_id, pool_size, treatment_pct")
+      .select("id, name, status, event_id, event_name, event_start, decision_id, pool_size, treatment_pct")
       .eq("id", id).eq("club_id", clubId).maybeSingle();
     if (expErr?.message?.includes("schema cache")) {
       res.status(503).json({ error: "Migration 007 not yet applied." }); return;
@@ -1093,6 +1196,26 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
       res.status(409).json({
         error: `Experiment is '${exp.status}' — only 'ready' experiments can be dispatched. Already-sent experiments cannot be re-dispatched.`,
       }); return;
+    }
+
+    // ── Level-gate recheck — covers experiments created before the gate rule ──
+    if (!dryRun && (exp as any).event_id) {
+      const { data: gateClub } = await supabase.from("clubs")
+        .select("platform_subdomain, platform_api_key").eq("id", clubId).maybeSingle();
+      if (!gateClub?.platform_subdomain) {
+        res.status(503).json({ error: "Club not configured — cannot verify event level gate. Dispatch blocked." }); return;
+      }
+      const gate = await checkEventLevelGate(
+        `https://${gateClub.platform_subdomain}.podplay.app/apis/v2`,
+        (gateClub as any).platform_api_key ?? process.env.PODPLAY_API_KEY ?? "",
+        (exp as any).event_id,
+      );
+      if (gate.fetchError) {
+        res.status(503).json({ error: `Cannot verify event level gate (${gate.fetchError}). Dispatch blocked — retry when PodPlay is reachable.` }); return;
+      }
+      if (gate.gated) {
+        res.status(422).json({ error: levelGateMessage(gate.min, gate.max), level_gated: true }); return;
+      }
     }
 
     // ── Kill switch (3d) — check once at batch start; also checked per-message ──
@@ -1216,7 +1339,7 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
       // ── Per-recipient: re-check sent_at IS NULL (idempotency guard) ────────
       const { data: freshPart } = await supabase
         .from("experiment_participants")
-        .select("sent_at, vetoed").eq("id", part.id).maybeSingle();
+        .select("sent_at, vetoed, reasons").eq("id", part.id).maybeSingle();
       if (!freshPart || freshPart.sent_at || freshPart.vetoed) {
         results.push({ participant_id: part.id, outcome: "skipped", reason: "already_sent_or_vetoed" });
         skippedCount++;
@@ -1251,9 +1374,11 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
           sent_at:           sentAt,
         }).select("id").maybeSingle();
 
-        // Write contact_ledger row
-        try {
-          await supabase.from("contact_ledger").insert({
+        // Write contact_ledger row — REAL sends only. A simulated dispatch
+        // (SMS_LIVE=false) delivered nothing; writing a ledger row would put
+        // the player under a cooldown for a message they never received.
+        if (!simulated) {
+          const { error: ledgerErr } = await supabase.from("contact_ledger").insert({
             club_id:       clubId,
             player_id:     part.player_id,
             experiment_id: id,
@@ -1261,13 +1386,24 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
             channel:       "sms",
             purpose:       "promotion",
             sent_at:       sentAt,
-            notes:         `experiment ${id}`,
           });
-        } catch { /* non-fatal if table not yet created */ }
+          if (ledgerErr) {
+            // Loud, not fatal — the send already happened; but a silent ledger
+            // failure breaks the contact budget gate for this player.
+            logger.error({ err: ledgerErr.message, participant_id: part.id, experiment_id: id },
+              "[experiments/send] contact_ledger insert FAILED — budget gate will not see this send");
+          }
+        }
 
-        // Mark participant sent — idempotent because we checked sent_at IS NULL above
+        // Mark participant sent + record simulation state on the row so
+        // simulated dispatches are distinguishable from real ones.
         await supabase.from("experiment_participants")
-          .update({ sent_at: sentAt }).eq("id", part.id);
+          .update({
+            sent_at: sentAt,
+            // Spread from the freshly-read row (not the batch-loaded one) to
+            // minimize the lost-update window on concurrent reasons changes.
+            reasons: { ...((freshPart as any).reasons ?? {}), dispatch_simulated: simulated },
+          }).eq("id", part.id);
 
         const maskedSid = `${sid.slice(0, 6)}...${sid.slice(-4)}`;
         results.push({

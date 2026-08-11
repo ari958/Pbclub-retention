@@ -536,15 +536,17 @@ export default function ExperimentsTab({ api, clubId }: Props) {
               <Metric label="Control (30-day holdout)" value={preview.n_control} />
             </div>
 
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ color: TEXT2, fontSize: 11, marginBottom: 6 }}>Arm balance check</div>
-              <ArmStatsRow label="Treatment" stats={preview.treatment_stats} />
-              <ArmStatsRow label="Control"   stats={preview.control_stats} />
-              {preview.balance.balanced
-                ? <div style={{ color: GREEN, fontSize: 11, marginTop: 6 }}>✓ Groups are balanced</div>
-                : <div style={{ color: AMBER, fontSize: 11, marginTop: 6 }}>⚠ Imbalance: {preview.balance.reason} — re-randomization will be attempted on create.</div>
-              }
-            </div>
+            {preview.balance && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ color: TEXT2, fontSize: 11, marginBottom: 6 }}>Arm balance check</div>
+                {preview.treatment_stats && <ArmStatsRow label="Treatment" stats={preview.treatment_stats} />}
+                {preview.control_stats && <ArmStatsRow label="Control" stats={preview.control_stats} />}
+                {preview.balance.balanced
+                  ? <div style={{ color: GREEN, fontSize: 11, marginTop: 6 }}>✓ Groups are balanced</div>
+                  : <div style={{ color: AMBER, fontSize: 11, marginTop: 6 }}>⚠ Imbalance: {preview.balance.reason} — re-randomization will be attempted on create.</div>
+                }
+              </div>
+            )}
 
             <div style={{ background: SURF2, borderRadius: 6, padding: 10, fontSize: 11, color: TEXT2, marginBottom: 12 }}>
               <strong style={{ color: TEXT }}>Funnel:</strong>{" "}
@@ -766,9 +768,14 @@ export default function ExperimentsTab({ api, clubId }: Props) {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <div style={{ color: TEXT, fontWeight: 600, fontSize: 13 }}>
               Treatment — {treatment.length} participants
-              {treatment.some(p => !p.vetoed && p.sent_at) && (
+              {treatment.some(p => !p.vetoed && p.sent_at && !p.reasons?.dispatch_simulated) && (
                 <span style={{ color: GREEN, marginLeft: 8, fontSize: 11 }}>
-                  {treatment.filter(p => p.sent_at).length} sent
+                  {treatment.filter(p => !p.vetoed && p.sent_at && !p.reasons?.dispatch_simulated).length} sent
+                </span>
+              )}
+              {treatment.some(p => !p.vetoed && p.sent_at && p.reasons?.dispatch_simulated) && (
+                <span style={{ color: AMBER, marginLeft: 8, fontSize: 11 }}>
+                  {treatment.filter(p => !p.vetoed && p.sent_at && p.reasons?.dispatch_simulated).length} simulated (nothing delivered)
                 </span>
               )}
             </div>
@@ -977,9 +984,10 @@ function TreatmentRow(props: {
   onSelect: (checked: boolean) => void;
 }) {
   const { p } = props;
-  const sent    = !!p.sent_at;
-  const vetoed  = p.vetoed;
-  const seg     = p.reasons?.retention_segment ?? "—";
+  const sent      = !!p.sent_at;
+  const simulated = sent && p.reasons?.dispatch_simulated === true;
+  const vetoed    = p.vetoed;
+  const seg       = p.reasons?.retention_segment ?? "—";
 
   return (
     <div style={{
@@ -1005,7 +1013,8 @@ function TreatmentRow(props: {
             {p.reasons?.buddy_already_signed_up && (
               <Pill label={`buddy×${p.reasons.buddy_already_signed_up}`} color={BLUE} />
             )}
-            {sent && <Badge label="sent" color={GREEN} />}
+            {sent && !simulated && <Badge label="sent" color={GREEN} />}
+            {simulated && <Badge label="simulated — not delivered" color={AMBER} />}
             {vetoed && <Badge label={`vetoed${p.veto_reason ? ": " + p.veto_reason : ""}`} color={RED} />}
           </div>
 
