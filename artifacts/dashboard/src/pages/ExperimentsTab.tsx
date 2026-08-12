@@ -180,16 +180,17 @@ export default function ExperimentsTab({ api, clubId }: Props) {
 
   const fetch_ = useCallback(async (path: string, opts?: RequestInit) => {
     const url = `${api}${path}${path.includes("?") ? "&" : "?"}clubId=${clubId}`;
-    console.log("[ExperimentsTab] fetch →", url);
     const r = await fetch(url, opts);
     const ct = r.headers.get("content-type") ?? "";
     if (!r.ok || !ct.includes("application/json")) {
       const body = await r.text();
-      throw new Error(
+      const err = new Error(
         `HTTP ${r.status} — expected JSON but got ${ct || "unknown"}\n` +
         `URL: ${url}\n` +
         (body.trimStart().startsWith("<") ? "(HTML response — proxy or routing issue)" : body.slice(0, 300))
       );
+      (err as any).status = r.status;
+      throw err;
     }
     return r.json();
   }, [api, clubId]);
@@ -224,7 +225,17 @@ export default function ExperimentsTab({ api, clubId }: Props) {
       setSelectedTreatment(new Set());
       setMessageEdits({});
       setView("detail");
-    } catch (e: any) { setError(e.message); }
+    } catch (e: any) {
+      if (e.status === 404) {
+        // Experiment was deleted since the list loaded — refresh the list.
+        setSelectedExp(null);
+        setView("list");
+        setError("That experiment no longer exists — the list has been refreshed.");
+        loadExperiments();
+      } else {
+        setError(e.message);
+      }
+    }
     finally { setLoading(false); }
   }
 
