@@ -63,11 +63,18 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 - `components/PlayerDrawer.tsx` — Player detail drawer with churn risk section
 - `lib/types.ts` — `Player` interface (includes `churn_risk`, `churn_score`)
 
-## Onboarding Flow
+## Single-club testing and parked onboarding
 
-New club owners are routed through a 3-step wizard (`/onboarding`) before accessing the dashboard.
+`DEFAULT_CLUB_SLUG=pb-club` is the default for unscoped API requests and the frontend club lookup. Resolve it by slug, never by the first row: the database contains a separate `test-club` row. Explicit club IDs/slugs remain validated. Startup logs identify the default club, and club-scoped request logs and the `X-Resolved-Club-Id` response header identify the resolved club.
 
-- **Guard**: `App.tsx → OnboardingGuard` calls `GET /api/onboarding/status` on load. If `onboarded=false`, redirects to `/onboarding`.
+- `/` and `/onboarding` open the default club's dashboard. In the dashboard artifact, its base path is `/dashboard/`, so the final URL is `/dashboard/c/pb-club/dashboard`.
+- `OnboardingGuard` and the wizard remain in the source tree but are not mounted. The stored `clubs.onboarded` value must not gate dashboard access or be rewritten to bypass onboarding.
+- `/api/onboarding/*` returns 404 while `RETENTION_ONLY_MODE=true`. The existing wizard/API implementation is parked for a later phase.
+- Retention navigation includes Dashboard and Approvals; the multi-club switcher is parked. Authentication and login are deferred.
+- Dashboard reads are scoped to the active club, including messages with no conversation. This routing policy does not change SMS approval, dispatch, kill-switch, live-mode or operator-override rules.
+
+### Preserved wizard implementation (currently parked)
+
 - **Step 1** — Club basics: name, timezone, nightly sync time.
 - **Step 2** — Platform selection (PodPlay or CourtReserve) + API credentials + live validation via `POST /api/onboarding/validate`. For CourtReserve, also selects skill rating category from the fetched category list.
 - **Step 3** — Confirms settings, saves via `POST /api/onboarding/complete`, then triggers initial player import and polls progress.

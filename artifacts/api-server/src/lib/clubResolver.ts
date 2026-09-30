@@ -3,7 +3,7 @@
  *
  * Every API route that touches club-scoped data must call this before any
  * Supabase query. Returns the club UUID; throws if missing, malformed, or
- * not found.
+ * not found. Requests without an explicit club use DEFAULT_CLUB_SLUG.
  *
  * Accepts (in priority order):
  *   1. ?clubId=<uuid> in query string
@@ -43,6 +43,10 @@ export class ClubResolutionError extends Error {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SLUG_RE = /^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$/;
+
+export function getDefaultClubSlug(): string {
+  return (process.env.DEFAULT_CLUB_SLUG ?? "pb-club").trim();
+}
 
 // --- Cache -------------------------------------------------------------------
 
@@ -111,49 +115,44 @@ export async function resolveClubId(req: Request): Promise<string> {
     return rawClubId;
   }
 
-  // 2. Try slug
+  // 2. Explicit slug, or the configured single-club default. Never first row.
   const rawSlug =
-    typeof req.query.slug === "string"
+    (typeof req.query.slug === "string"
       ? req.query.slug
       : typeof (req.params as Record<string, unknown>).slug === "string"
         ? (req.params as Record<string, string>).slug
-        : undefined;
+        : undefined) || getDefaultClubSlug();
 
-  if (rawSlug) {
-    if (!SLUG_RE.test(rawSlug)) {
-      throw new ClubResolutionError(
-        `Invalid slug format: ${rawSlug}`,
-        400,
-        "invalid_slug",
-      );
-    }
+  return resolveClubSlug(rawSlug);
+}
 
-    const cached = cachedSlug(rawSlug);
-    if (cached) return cached;
-
-    const { data, error } = await supabase
-      .from("clubs")
-      .select("id")
-      .eq("slug", rawSlug)
-      .maybeSingle();
-    if (error) throw error;
-    if (!data) {
-      throw new ClubResolutionError(
-        `No club with slug=${rawSlug}`,
-        404,
-        "club_not_found",
-      );
-    }
-    rememberSlug(rawSlug, data.id);
-    return data.id;
+export async function resolveClubSlug(slug: string): Promise<string> {
+  if (!SLUG_RE.test(slug)) {
+    throw new ClubResolutionError(
+      `Invalid slug format: ${slug}`,
+      400,
+      "invalid_slug",
+    );
   }
 
-  // 3. Neither provided
-  throw new ClubResolutionError(
-    "Missing clubId or slug. Every API request must specify the active club via ?clubId=<uuid> or ?slug=<slug>.",
-    400,
-    "missing_club",
-  );
+  const cached = cachedSlug(slug);
+  if (cached) return cached;
+
+  const { data, error } = await supabase
+    .from("clubs")
+    .select("id")
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) {
+    throw new ClubResolutionError(
+      `No club with slug=${slug}`,
+      404,
+      "club_not_found",
+    );
+  }
+  rememberSlug(slug, data.id);
+  return data.id;
 }
 
 /**
@@ -178,6 +177,13 @@ export async function requireClub(
   try {
     const clubId = await resolveClubId(req);
     (req as ClubScopedRequest).clubId = clubId;
+    res.setHeader("X-Resolved-Club-Id", clubId);
+    req.log.info({
+      club_id: clubId,
+      club_resolution: req.query.clubId || req.params.clubId
+        ? "explicit_id"
+        : req.query.slug || req.params.slug ? "explicit_slug" : "default_slug",
+    }, "Request club resolved");
     next();
   } catch (err) {
     if (err instanceof ClubResolutionError) {

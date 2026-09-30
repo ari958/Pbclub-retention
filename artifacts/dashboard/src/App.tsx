@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { Component, type ReactNode, useEffect, useState } from "react";
-import { ClubProvider, useClubStatus } from "./lib/ClubContext";
+import { ClubProvider, DEFAULT_CLUB_SLUG, useClubStatus } from "./lib/ClubContext";
 import Dashboard from "./pages/Dashboard";
 import Players from "./pages/Players";
 import Assessments from "./pages/Assessments";
@@ -13,7 +13,6 @@ import Programs from "./pages/Programs";
 import Rules from "./pages/Rules";
 import Approvals from "./pages/Approvals";
 import { RETENTION } from "./lib/navMode";
-import Onboarding from "./pages/Onboarding";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 
@@ -135,9 +134,9 @@ function NotFound() {
   );
 }
 
-// ─── Onboarding guard ─────────────────────────────────────────────────────────
-// Checks onboarding status on first load. If the club has not completed
-// onboarding it redirects to /onboarding before rendering any dashboard page.
+// ─── Onboarding guard (parked) ────────────────────────────────────────────────
+// Kept with the onboarding flow for future use. It is intentionally not mounted:
+// retention-mode access must not be gated or redirected by onboarding status.
 
 function OnboardingGuard({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
@@ -153,7 +152,7 @@ function OnboardingGuard({ children }: { children: ReactNode }) {
 
     // A deep link must check its own club, not the first club in the database.
     const encodedSlug = location.pathname.match(/^\/c\/([^/]+)/)?.[1]
-      ?? (location.pathname === "/" ? "pb-club" : null);
+      ?? (location.pathname === "/" ? DEFAULT_CLUB_SLUG : null);
     const query = encodedSlug ? `?slug=${encodedSlug}` : "";
     const controller = new AbortController();
     const api = import.meta.env.BASE_URL.replace(/\/$/, "") + "/api";
@@ -284,17 +283,16 @@ export default function App() {
   return (
     <BrowserRouter basename={import.meta.env.BASE_URL}>
       <ToastProvider>
-        <OnboardingGuard>
-          <Routes>
-            {/* Standalone onboarding flow — no sidebar */}
-            <Route path="/onboarding" element={<Onboarding />} />
+        <Routes>
+            {/* Onboarding remains in the source tree, but its route is parked. */}
+            <Route path="/onboarding" element={<Navigate to={`/c/${DEFAULT_CLUB_SLUG}/dashboard`} replace />} />
 
             {/* Root redirect → default club (single-club Phase 0) */}
-            <Route path="/" element={<Navigate to={RETENTION ? "/c/pb-club/approvals" : "/c/pb-club/dashboard"} replace />} />
+            <Route path="/" element={<Navigate to={`/c/${DEFAULT_CLUB_SLUG}/dashboard`} replace />} />
 
             {/* Club-scoped routes — all gated by ClubLayout */}
             <Route path="/c/:slug" element={<ClubLayout />}>
-              <Route index element={<Navigate to={RETENTION ? "approvals" : "dashboard"} replace />} />
+              <Route index element={<Navigate to="dashboard" replace />} />
               <Route
                 path="approvals"
                 element={
@@ -387,8 +385,7 @@ export default function App() {
             </Route>
 
             <Route path="*" element={<NotFound />} />
-          </Routes>
-        </OnboardingGuard>
+        </Routes>
       </ToastProvider>
     </BrowserRouter>
   );

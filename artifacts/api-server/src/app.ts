@@ -3,6 +3,7 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { getDefaultClubSlug } from "./lib/clubResolver";
 
 const app: Express = express();
 
@@ -31,8 +32,9 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/", (_req, res) => res.redirect("/dashboard/"));
-app.get("/onboarding", (_req, res) => res.redirect("/dashboard/onboarding"));
+const defaultDashboardPath = () => `/dashboard/c/${encodeURIComponent(getDefaultClubSlug())}/dashboard`;
+app.get("/", (_req, res) => res.redirect(defaultDashboardPath()));
+app.get("/onboarding", (_req, res) => res.redirect(defaultDashboardPath()));
 
 app.use("/api", router);
 

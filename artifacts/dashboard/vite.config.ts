@@ -26,12 +26,21 @@ if (!basePath) {
   );
 }
 
+const defaultClubSlug = process.env.DEFAULT_CLUB_SLUG;
+
+if (!defaultClubSlug) {
+  throw new Error(
+    "DEFAULT_CLUB_SLUG environment variable is required but was not provided.",
+  );
+}
+
 export default defineConfig({
   base: basePath,
   define: {
     // Expose existing server secrets to the Vite frontend without requiring new VITE_-prefixed vars
     "import.meta.env.VITE_SUPABASE_URL": JSON.stringify(process.env.SUPABASE_URL ?? ""),
     "import.meta.env.VITE_SUPABASE_ANON_KEY": JSON.stringify(process.env.SUPABASE_ANON_KEY ?? ""),
+    "import.meta.env.VITE_DEFAULT_CLUB_SLUG": JSON.stringify(defaultClubSlug),
   },
   plugins: [
     react(),

@@ -2,42 +2,24 @@ import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { isRetentionOnlyMode } from "../lib/retentionPolicy";
 
 const router: IRouter = Router();
+
+// Preserve onboarding for later phases, but expose no onboarding endpoints now.
+router.use("/onboarding", (_req, res, next) => {
+  if (isRetentionOnlyMode()) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
+  next();
+});
 
 const CR_BASE = "https://api.courtreserve.com/api/v1";
 
 // ─── GET /api/onboarding/status ───────────────────────────────────────────────
-// Transitional: accepts ?slug= or ?clubId= (Step 5 will always pass slug).
-// Falls back to first club if neither provided, for backward compat with
-// old dashboard clients that don't pass slug yet. Remove fallback in Step 5.
-
-router.get("/onboarding/status", async (req, res) => {
-  let clubId: string | null = null;
-
-  if (typeof req.query.slug === "string") {
-    const { data } = await supabase
-      .from("clubs")
-      .select("id")
-      .eq("slug", req.query.slug)
-      .maybeSingle();
-    clubId = data?.id ?? null;
-  } else if (typeof req.query.clubId === "string") {
-    clubId = req.query.clubId;
-  } else {
-    // Backward compat: Step 5 TODO — remove this branch once dashboard passes slug
-    const { data } = await supabase
-      .from("clubs")
-      .select("id")
-      .limit(1)
-      .maybeSingle();
-    clubId = data?.id ?? null;
-  }
-
-  if (!clubId) {
-    res.json({ onboarded: true, platform: "podplay", name: null });
-    return;
-  }
+router.get("/onboarding/status", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
 
   const { data, error } = await supabase
     .from("clubs")

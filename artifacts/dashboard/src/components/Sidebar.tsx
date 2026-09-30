@@ -125,22 +125,28 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
   const location = useLocation();
   const ctx = useClubStatus();
   const slug = ctx.status === "ready" ? ctx.club.slug : "";
+  const clubId = ctx.status === "ready" ? ctx.club.id : null;
   const clubDisplayName = ctx.status === "ready" ? ctx.club.name : "—";
   const [unreadReplies, setUnreadReplies] = useState(0);
 
   useEffect(() => {
+    if (!clubId) {
+      setUnreadReplies(0);
+      return;
+    }
     const fetchUnread = async () => {
       const { count } = await supabase
         .from("messages")
-        .select("id", { count: "exact", head: true })
+        .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
         .eq("direction", "inbound")
+        .eq("players.club_id", clubId)
         .is("read_at", null);
       setUnreadReplies(count ?? 0);
     };
     fetchUnread();
     const interval = setInterval(fetchUnread, 30000);
     return () => clearInterval(interval);
-  }, []);
+  }, [clubId]);
 
   useEffect(() => {
     const messagesPath = slug ? `/c/${slug}/messages` : null;
@@ -188,6 +194,7 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
 
   const retentionItems: NavItem[] = slug
     ? [
+        { label: "Dashboard", path: `/c/${slug}/dashboard`, icon: <IconDashboard /> },
         { label: "Approvals", path: `/c/${slug}/approvals`, icon: <IconApprovals /> },
         { label: "Players", path: `/c/${slug}/players`, icon: <IconPlayers /> },
         {
@@ -270,8 +277,8 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
 
       <div style={{ width: "100%", height: 1, background: "var(--border-dark)" }} />
 
-      {/* Club switcher — static label when one club; dropdown when multiple */}
-      <ClubSwitcher />
+      {/* Keep the switcher implementation parked during single-club retention testing. */}
+      {NAV_MODE !== "retention" && <ClubSwitcher />}
 
       <nav style={{ flex: 1, padding: "12px 0" }}>
         {navItems.map((item) => {

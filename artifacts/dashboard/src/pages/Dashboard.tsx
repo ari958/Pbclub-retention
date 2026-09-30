@@ -293,23 +293,26 @@ export default function Dashboard() {
     const res = await supabase
       .from("messages")
       .select(
-        "id, body, signup_url, status, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name, skill_level, progression_status, last_outbound_at))"
+        "id, body, signup_url, status, conversation_id, players!player_id!inner(club_id), conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name, skill_level, progression_status, last_outbound_at))"
       )
       .eq("direction", "outbound")
       .eq("sent_by", "agent")
       .eq("status", "pending")
+      .eq("players.club_id", club.id)
       .returns<MessageQueueItem[]>();
     if (res.data) setMessages(res.data);
-  }, []);
+  }, [club.id]);
 
   const fetchData = useCallback(async () => {
     const [outboundRes, inboundRes, winbackData] = await Promise.all([
-      supabase.from("messages").select("id", { count: "exact", head: true })
+      supabase.from("messages").select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
         .eq("direction", "outbound")
         .eq("status", "sent")
+        .eq("players.club_id", club.id)
         .gte("sent_at", new Date(Date.now() - 30 * 86400000).toISOString()),
-      supabase.from("messages").select("id", { count: "exact", head: true })
+      supabase.from("messages").select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
         .eq("direction", "inbound")
+        .eq("players.club_id", club.id)
         .gte("created_at", new Date(Date.now() - 30 * 86400000).toISOString()),
       fetch(clubApiUrl(club.slug, "/api/players/winback-stats")).then((r) => r.ok ? r.json() : null).catch(() => null),
     ]);
@@ -324,6 +327,7 @@ export default function Dashboard() {
       const { data, error } = await supabase
         .from("players")
         .select(selectCols)
+        .eq("club_id", club.id)
         .range(offset, offset + 999)
         .returns<Player[]>();
       if (error?.code === "42703") {
@@ -344,7 +348,7 @@ export default function Dashboard() {
     setWinbackRate(winbackData?.conversion_rate_pct ?? null);
     await fetchMessages();
     setLoading(false);
-  }, [fetchMessages, club.slug]);
+  }, [fetchMessages, club.id, club.slug]);
 
   const runAgent = useCallback(async (playerId: string) => {
     const res = await fetch(clubApiUrl(club.slug, "/api/agent/run"), {

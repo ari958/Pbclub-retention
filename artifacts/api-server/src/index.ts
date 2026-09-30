@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startScheduler } from "./lib/scheduler";
 import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
+import { getDefaultClubSlug, resolveClubSlug } from "./lib/clubResolver";
 
 const rawPort = process.env["PORT"];
 
@@ -107,6 +108,15 @@ app.listen(port, async (err) => {
   }
 
   logger.info({ port }, "Server listening");
+
+  try {
+    const defaultSlug = getDefaultClubSlug();
+    const defaultClubId = await resolveClubSlug(defaultSlug);
+    logger.info({ club_slug: defaultSlug, club_id: defaultClubId }, "Default club resolved at startup");
+  } catch (err) {
+    logger.error({ err }, "Default club could not be resolved at startup");
+    process.exit(1);
+  }
 
   await seedAllClubTemplates();
   startScheduler();

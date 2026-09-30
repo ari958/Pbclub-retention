@@ -1149,17 +1149,20 @@ For a new developer joining the project:
 
 ### 21. Multi-tenant onboarding flow (Phase 0.5)
 
-Current onboarding flow is single-tenant only:
+Onboarding is currently parked for single-club retention testing:
 
-- `OnboardingGuard` in `App.tsx` runs once on mount (empty dep array) and never re-checks when the active club changes.
-- `GET /api/onboarding/status` takes no slug; it queries the first/default club and returns its `onboarded` flag. A new club row with `onboarded=false` will not trigger the wizard.
-- `<Route path="/onboarding">` is not club-scoped — it has no `:slug` segment.
+- `DEFAULT_CLUB_SLUG=pb-club` is shared by API default resolution and the Vite-exposed frontend default. Lookups use `.eq("slug", ...)`, never the first club row.
+- Fresh loads of `/` and `/onboarding` redirect to `/dashboard/c/pb-club/dashboard`. The preserved `OnboardingGuard` is not mounted, and stored onboarding flags are unchanged.
+- The preserved onboarding API returns 404 for `/api/onboarding/*` while `RETENTION_ONLY_MODE=true`. When unparked, its status route uses `requireClub` rather than first-row fallback.
+- Default club resolution is logged at startup; `requireClub` logs each request's resolved ID and includes `X-Resolved-Club-Id` in the response.
+- Dashboard read-only counts, player lists, and pending messages are scoped to the active club, including messages without conversations. Retention navigation hides club switching. Authentication/login remain a later phase.
+- The separate `test-club` row is preserved. Routing/default changes do not modify SMS dispatch, approvals, kill switches, live mode or test override behavior.
 
 **Required changes for Phase 0.5:**
 
 - Make the route club-scoped: `/c/:slug/onboarding`
 - `OnboardingGuard` needs to re-check on club context change — add `club.slug` to its dep array and call the status endpoint with `?slug=<slug>`
-- `GET /api/onboarding/status` and `POST /api/onboarding/complete` need `requireClub` middleware
+- Retain `requireClub` on `GET /api/onboarding/status` and `POST /api/onboarding/complete`
 - `POST /api/onboarding/complete` should write `onboarded=true` for the specific club being onboarded
 
 Owner work, not Phase 0. Track separately.

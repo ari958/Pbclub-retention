@@ -280,7 +280,7 @@ router.post("/sync/events", requireClub, async (req, res) => {
   });
 });
 
-router.get("/sync/events/status", async (_req, res) => {
+router.get("/sync/events/status", requireClub, async (_req, res) => {
   await reclaimStaleJobs(); // §1c — auto-reclaim on status poll
   const job = await getJob(JOB_SYNC_EVENTS, { withLogs: true });
   res.json({

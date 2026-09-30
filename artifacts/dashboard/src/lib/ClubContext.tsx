@@ -2,10 +2,9 @@
  * ClubContext — supplies the active club (id, slug, name, timezone) to
  * every page in the dashboard.
  *
- * Source of truth: the URL :slug parameter under /c/:slug/*.
- * Provider mounts inside the /c/:slug route in App.tsx. Pages call
- * useClub() to access the resolved club; they should never read the slug
- * directly or fetch the clubs table themselves.
+ * Source of truth: the URL :slug parameter under /c/:slug/*, or the shared
+ * default slug when no explicit slug is present. Pages call useClub() to
+ * access the resolved club; they should never fetch the clubs table themselves.
  *
  * Loading model:
  *   - status: 'loading'   — initial render, slug present, fetch in flight
@@ -27,6 +26,8 @@ import {
 import { useParams } from "react-router-dom";
 import { supabase } from "./supabase";
 
+export const DEFAULT_CLUB_SLUG = import.meta.env.VITE_DEFAULT_CLUB_SLUG;
+
 export interface Club {
   id: string;
   slug: string;
@@ -44,24 +45,20 @@ const ClubContext = createContext<ClubContextValue | undefined>(undefined);
 
 export function ClubProvider({ children }: { children: ReactNode }) {
   const { slug } = useParams<{ slug: string }>();
+  const activeSlug = slug ?? DEFAULT_CLUB_SLUG;
   const [value, setValue] = useState<ClubContextValue>({
     status: "loading",
     club: null,
   });
 
   useEffect(() => {
-    if (!slug) {
-      setValue({ status: "error", club: null, error: "No slug in URL" });
-      return;
-    }
-
     let cancelled = false;
     setValue({ status: "loading", club: null });
 
     supabase
       .from("clubs")
       .select("id, slug, name, timezone")
-      .eq("slug", slug)
+      .eq("slug", activeSlug)
       .maybeSingle()
       .then(({ data, error }) => {
         if (cancelled) return;
@@ -70,7 +67,7 @@ export function ClubProvider({ children }: { children: ReactNode }) {
           return;
         }
         if (!data) {
-          setValue({ status: "not_found", club: null, slug });
+          setValue({ status: "not_found", club: null, slug: activeSlug });
           return;
         }
         setValue({ status: "ready", club: data as Club });
@@ -79,7 +76,7 @@ export function ClubProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [slug]);
+  }, [activeSlug]);
 
   return <ClubContext.Provider value={value}>{children}</ClubContext.Provider>;
 }
@@ -113,7 +110,7 @@ export function useClubStatus(): ClubContextValue {
 /**
  * Helper for constructing club-scoped API URLs.
  * Example: clubApiUrl(slug, '/api/players')
- *        → '/api/players?slug=pb-club'
+ *        → '/api/players?slug=<slug>'
  *        + extra query params merged in
  */
 export function clubApiUrl(
