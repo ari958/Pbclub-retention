@@ -6,27 +6,46 @@ id = "okhqfy5ZjshoQzK48oIeM"
 uri = "file://project-review.md"
 type = "text"
 title = "Pulse / PB Club — Full Project Review"
+logical_id = "d361bae8-0998-4f97-a442-fe2fa20a746b"
 
 [[outputs]]
 id = "OHjg_aIA4sLcZ-X4n7G25"
 uri = "file://pulse-technical-docs.md"
 type = "text"
 title = "Pulse — Technical Developer Docs (.md)"
+logical_id = "5e1735bd-8f88-49c5-a727-fc758fbaebc0"
 
 [[outputs]]
 id = "lZ3A3ex1B3DOOgAbDVpve"
 uri = "file://pulse-user-guide.md"
 type = "text"
 title = "Pulse — User Guide (.md)"
+logical_id = "7a36caca-e3f4-4c18-9627-49348408bf46"
 
 [[outputs]]
 id = "ho7MTrZAwy3l24z_Z-pb2"
 uri = "file://pulse-user-guide.pdf"
 type = "pdf"
 title = "Pulse — User Guide (PDF, 447 KB)"
+logical_id = "c36bacf5-5d98-45f9-962a-e451638d2f4f"
 
 [[outputs]]
 id = "yhTzj0Na2wRtOrrboK1Oy"
 uri = "file://pulse-technical-docs.pdf"
 type = "pdf"
 title = "Pulse — Technical Developer Docs (PDF, 36 KB)"
+logical_id = "bf76bfa7-a8eb-4fff-8b48-22fbb7ce165f"
+
+[[outputs]]
+id = "QnhGIi4UAoesDagTQrMy4"
+uri = "file://PLATFORM_STATE.md"
+type = "text"
+title = "Platform state snapshot"
+description = "Source- and live-database-generated report. Includes explicit warnings for unavailable full catalog and migration-history coverage."
+logical_id = "1135a407-02a0-4bb8-8a70-f2f1854c8c97"
+content_hash = "sha256:538e49f7065572617fb3833034ddb629f6232f32ac1a4eca6904c5317348ab8a"
+size = 33110
+mtime_ms = 1790803604069
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/1135a407-02a0-4bb8-8a70-f2f1854c8c97/72bc4ded-9aad-4564-8742-74b4ae9b6596"
+storage_version_token = "1790803608494197"
+content_type = "text/markdown"
