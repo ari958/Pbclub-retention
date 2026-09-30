@@ -1,12 +1,21 @@
 # Approved retention rollout
 
-## Database step still required
+## Database migration
 
-Run `artifacts/api-server/migrations/010_retention_approvals.sql` in the **existing application's Supabase SQL Editor**, not Replit's local database. The script runs in a transaction and includes read-only verification queries.
+Migration 010 has been applied to the existing application Supabase project, and the running application reports `schema_ready=true`. For an environment where it has not yet been applied, run `artifacts/api-server/migrations/010_retention_approvals.sql` in the **existing application's Supabase SQL Editor**, not Replit's local database. The script runs in a transaction and includes read-only verification queries.
 
 It adds approvals and dispatch claims, coupon attribution, a test-aware ledger, playbooks, candidates, and atomic draft/review functions. It parks old pending, unapproved messages created before the fixed cutoff `2026-09-30T22:09:46Z` as `archived`. It does not delete messages or feature code. Re-running it cannot archive drafts created after that cutoff.
 
 Until this schema is applied, Approvals shows a missing-schema warning and dispatch fails closed. Do not interpret that screen as a successfully completed rollout.
+
+## Acceptance status — 2026-09-30
+
+- The operator's migration verification returned 580 archived messages, 88 sent, 14 skipped, the seeded `ltp_followup` playbook, and zero unapproved pending messages with a send schedule.
+- The running app confirms the schema is ready, retention-only mode is enabled, and the operator-phone override is configured.
+- Real draft generation returned `created=0`, `skipped=4`, with no errors. Two prospective attendees' verified event dates fall outside the seven-day trigger window. The other two have qualifying first Learn-to-Play attendance, but no phone number in either the application or the live PodPlay user records.
+- No test records were created, no messages were approved, and no Twilio sends were attempted. Read-only checks found zero approved pending messages and zero contact-ledger rows.
+- Sending was paused for the test and remains paused; `SMS_LIVE=false`.
+- The two-message acceptance test remains incomplete. Do not widen the trigger window, fill customer phone fields with the operator override, or bypass eligibility to force it to pass. Operator-only fixtures require explicit authorization and would verify dispatch safety, not real-attendee draft generation.
 
 ## Operating rules
 
