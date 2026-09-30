@@ -49,3 +49,17 @@ mtime_ms = 1790803604069
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/1135a407-02a0-4bb8-8a70-f2f1854c8c97/72bc4ded-9aad-4564-8742-74b4ae9b6596"
 storage_version_token = "1790803608494197"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "rLV6SSMFMSuIToJpKBIcC"
+uri = "file://RETENTION_AUDIT.md"
+type = "text"
+title = "PB Club Retention Audit"
+description = "Read-only audit of live attendance, retention cohorts, classmates, consent eligibility, send-path safety, PodPlay coupons, and buddy notification permissions, with source citations and data-quality caveats."
+logical_id = "46e1fad1-8f01-4cde-8596-3cfbfdf0fb1b"
+content_hash = "sha256:684787c6cd6209cd1f6dd184743a106d866fbf34be2c00be8c2cf57db9bec65f"
+size = 36217
+mtime_ms = 1790804636726
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/46e1fad1-8f01-4cde-8596-3cfbfdf0fb1b/73da8a1e-8cb7-43fd-a63b-39412f48a633"
+storage_version_token = "1790804654068725"
+content_type = "text/markdown"
