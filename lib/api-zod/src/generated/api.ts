@@ -14,3 +14,699 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ */
+export const ListRetentionApprovalsQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin = 0;
+export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax = 100;
+
+export const listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin = 0;
+
+export const ListRetentionApprovalsResponse = zod.object({
+  schema_ready: zod.boolean(),
+  error: zod.string().optional(),
+  playbooks: zod.array(
+    zod.object({
+      key: zod.string(),
+      name: zod.string(),
+      enabled: zod.boolean(),
+      promo_code: zod.string().nullish(),
+      offer_text: zod.string().nullish(),
+      next_program_names: zod.array(zod.string()),
+      message_guidance: zod.string().optional(),
+      holdout_pct: zod
+        .number()
+        .min(listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin)
+        .max(listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax),
+    }),
+  ),
+  candidates: zod.array(
+    zod.object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(
+            listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin,
+          ),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    }),
+  ),
+  warnings: zod.array(zod.string()),
+  mode: zod.object({
+    retention_only: zod.boolean(),
+    require_marketing_consent: zod.boolean(),
+    sms_live: zod.boolean().optional(),
+    test_override_configured: zod.boolean().optional(),
+    kill_switch: zod.boolean().nullish(),
+  }),
+});
+
+/**
+ * @summary Generate last-seven-day drafts only; never approve or send
+ */
+export const GenerateRetentionDraftsQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const GenerateRetentionDraftsResponse = zod.object({
+  created: zod.number().optional(),
+  skipped: zod.number().optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Pause or resume the global club SMS stop, without approving any message
+ */
+export const UpdateRetentionKillSwitchQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const UpdateRetentionKillSwitchBody = zod.object({
+  enabled: zod.boolean(),
+});
+
+export const updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin = 0;
+
+export const UpdateRetentionKillSwitchResponse = zod.object({
+  approved: zod.number().optional(),
+  candidate: zod
+    .object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(
+            updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin,
+          ),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    })
+    .optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Edit a pending draft and revoke any existing approval and schedule
+ */
+export const EditRetentionDraftParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const EditRetentionDraftQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const EditRetentionDraftBody = zod.object({
+  body: zod.string().min(1),
+});
+
+export const editRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
+
+export const EditRetentionDraftResponse = zod.object({
+  approved: zod.number().optional(),
+  candidate: zod
+    .object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(editRetentionDraftResponseCandidateContextClassmatesSignedUpMin),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    })
+    .optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Record explicit per-message approval and schedule the next open send slot
+ */
+export const ApproveRetentionDraftParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const ApproveRetentionDraftQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const ApproveRetentionDraftBody = zod.object({
+  approved_by: zod
+    .string()
+    .min(1)
+    .describe(
+      "Explicit operator attribution label, not an authenticated identity",
+    ),
+  expected_body: zod
+    .string()
+    .min(1)
+    .describe(
+      "Exact stored message text reviewed; stale approval requests are rejected",
+    ),
+});
+
+export const approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
+
+export const ApproveRetentionDraftResponse = zod.object({
+  approved: zod.number().optional(),
+  candidate: zod
+    .object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(
+            approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
+          ),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    })
+    .optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Skip without sending
+ */
+export const SkipRetentionDraftParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const SkipRetentionDraftQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
+
+export const SkipRetentionDraftResponse = zod.object({
+  approved: zod.number().optional(),
+  candidate: zod
+    .object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    })
+    .optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});
+
+/**
+ * @summary Approve only the explicit reviewed candidate IDs in one playbook
+ */
+export const ApproveRetentionPlaybookDraftsParams = zod.object({
+  key: zod.coerce.string(),
+});
+
+export const ApproveRetentionPlaybookDraftsQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const ApproveRetentionPlaybookDraftsBody = zod.object({
+  approved_by: zod.string().min(1),
+  candidate_ids: zod.array(zod.string().uuid()).min(1),
+  expected_bodies: zod
+    .record(zod.string(), zod.string())
+    .describe("Candidate ID to exact reviewed stored message text"),
+});
+
+export const approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin = 0;
+
+export const ApproveRetentionPlaybookDraftsResponse = zod.object({
+  approved: zod.number().optional(),
+  candidate: zod
+    .object({
+      id: zod.string(),
+      player_id: zod.string(),
+      playbook_key: zod.string(),
+      trigger_event_id: zod.string(),
+      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      context: zod.object({
+        player_first_name: zod.string().optional(),
+        trigger: zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        }),
+        next_program: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        booked_event: zod
+          .union([
+            zod.object({
+              event_id: zod.string(),
+              name: zod.string(),
+              start_time: zod.string(),
+              date: zod.string(),
+              time: zod.string(),
+              signup_url: zod.string(),
+              spots_remaining: zod.number().optional(),
+            }),
+            zod.null(),
+          ])
+          .optional(),
+        classmates_signed_up: zod
+          .number()
+          .min(
+            approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin,
+          ),
+        already_booked: zod.boolean(),
+        promo: zod
+          .object({
+            code: zod.string().optional(),
+            offer_text: zod.string().optional(),
+          })
+          .nullish(),
+        coupon_warning: zod.string().nullable(),
+        evaluated_at: zod.string(),
+      }),
+      player: zod
+        .object({
+          name: zod.string().nullish(),
+        })
+        .optional(),
+      message: zod
+        .union([
+          zod.object({
+            id: zod.string(),
+            body: zod.string(),
+            status: zod.string(),
+            approved_at: zod.string().nullish(),
+            approved_by: zod.string().nullish(),
+            scheduled_send_at: zod.string().nullish(),
+            sent_at: zod.string().nullish(),
+            simulated: zod.boolean().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+    })
+    .optional(),
+  errors: zod.array(zod.unknown()).optional(),
+});

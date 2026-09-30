@@ -1,7 +1,14 @@
 import { supabase } from "./supabaseClient";
-import { sendViaTwilio } from "./twilio";
+import {
+  composeApprovedMessageBody,
+  isSmsDispatchClaimError,
+  isSmsPolicyBlockedError,
+  recordSmsDispatchFailure,
+  sendViaTwilio,
+} from "./twilio";
 import { sanitizeScheduledSendAt, isInsideSendWindow } from "./playerTiming";
 import { logger } from "./logger";
+import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from "./retentionPolicy";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
@@ -28,8 +35,14 @@ export async function runQueueTick(): Promise<QueueTickStats> {
 
   const { data: rows, error } = await supabase
     .from("messages")
-    .select("id, player_id, body, players!inner(phone)")
+    .select("id, player_id, body, signup_url, players!inner(phone)")
     .eq("status", "pending")
+    .not("approved_at", "is", null)
+    .neq("approved_by", "")
+    .not("approved_body", "is", null)
+    .neq("approved_body", "")
+    .is("dispatch_claimed_at", null)
+    .is("dispatch_token", null)
     .not("scheduled_send_at", "is", null)
     .lte("scheduled_send_at", new Date().toISOString())
     .order("scheduled_send_at", { ascending: true })
@@ -50,6 +63,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     const id = row.id as string;
     const player_id = row.player_id as string;
     const body = row.body as string;
+    const smsBody = composeApprovedMessageBody(body, row.signup_url as string | null);
     const phone = (row.players as any)?.phone as string | null;
 
     try {
@@ -66,7 +80,10 @@ export async function runQueueTick(): Promise<QueueTickStats> {
         await supabase
           .from("messages")
           .update({ scheduled_send_at: nextWindow.toISOString() })
-          .eq("id", id);
+          .eq("id", id)
+          .eq("status", "pending")
+          .is("dispatch_claimed_at", null)
+          .is("dispatch_token", null);
         logger.info(
           { id, nextWindow: nextWindow.toISOString() },
           `[queue] rolled ${id} to ${nextWindow.toISOString()} (outside TCPA window)`,
@@ -78,7 +95,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
       // ── b. OPT-OUT RE-CHECK (dispatch-time safety net) ─────────────────────
       const { data: playerRow, error: playerErr } = await supabase
         .from("players")
-        .select("sms_opt_in")
+        .select("phone, opted_out, sms_opt_in, consent_source, sms_consented_at")
         .eq("id", player_id)
         .single();
 
@@ -88,14 +105,20 @@ export async function runQueueTick(): Promise<QueueTickStats> {
         );
       }
 
-      if (!playerRow.sms_opt_in) {
+      const eligible = !isRetentionOnlyMode() && requiresMarketingConsent()
+        ? isTextEligible(playerRow)
+        : !!playerRow.phone?.trim() && playerRow.opted_out !== true;
+      if (!eligible) {
         await supabase
           .from("messages")
           .update({
             status: "skipped",
             error_message: "Player opted out (dispatch-time re-check)",
           })
-          .eq("id", id);
+          .eq("id", id)
+          .eq("status", "pending")
+          .is("dispatch_claimed_at", null)
+          .is("dispatch_token", null);
         logger.info({ id, player_id }, "[queue] skipped — opted out");
         stats.skipped++;
         continue;
@@ -109,43 +132,31 @@ export async function runQueueTick(): Promise<QueueTickStats> {
             status: "skipped",
             error_message: "No phone number at dispatch time",
           })
-          .eq("id", id);
+          .eq("id", id)
+          .eq("status", "pending")
+          .is("dispatch_claimed_at", null)
+          .is("dispatch_token", null);
         logger.info({ id, player_id }, "[queue] skipped — no phone");
         stats.skipped++;
         continue;
       }
 
       // ── c. DISPATCH — reuses /send persistence path exactly ─────────────────
-      const { sid, simulated } = await sendViaTwilio(phone, body);
-      const sentAt = new Date().toISOString();
+      const { sid, simulated, isTest } = await sendViaTwilio(phone, smsBody, {
+        messageId: id,
+        source: "queue",
+        purpose: "promotion",
+      });
 
-      await Promise.all([
-        supabase
-          .from("messages")
-          .update({
-            status: "sent",
-            twilio_message_sid: sid,
-            simulated,
-            sent_at: sentAt,
-          })
-          .eq("id", id),
-        supabase
-          .from("players")
-          .update({ last_outbound_at: sentAt })
-          .eq("id", player_id),
-      ]);
-
-      logger.info({ id, player_id, twilio_sid: sid, simulated }, "[queue] sent");
+      logger.info({ id, twilio_sid: sid, simulated, isTest }, "[queue] sent");
       stats.sent++;
     } catch (err: any) {
       logger.error({ err, id, player_id }, "[queue] dispatch error");
-      await supabase
-        .from("messages")
-        .update({
-          status: "failed",
-          error_message: err?.message ?? "Unknown dispatch error",
-        })
-        .eq("id", id);
+      if (isSmsPolicyBlockedError(err) || isSmsDispatchClaimError(err)) {
+        stats.skipped++;
+        continue;
+      }
+      await recordSmsDispatchFailure(err);
       stats.failed++;
     }
   }

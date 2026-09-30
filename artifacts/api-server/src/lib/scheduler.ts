@@ -14,6 +14,8 @@ import { syncEventFill } from "./eventFillSync";
 import { batchComputePlayerTiming } from "./playerTiming";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
+import { isRetentionOnlyMode } from "./retentionPolicy";
+import { generateRetentionDrafts } from "./retentionEngine";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -137,6 +139,17 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
         if (cancelled) {
           throw Object.assign(new Error("Event sync cancelled by operator"), { name: "CancelledError" });
         }
+        // Retention generation is isolated from the event sync job result and
+        // creates drafts only; a draft-generation failure must not fail sync.
+        try {
+          const drafts = await generateRetentionDrafts(CLUB_ID);
+          const summary = `Retention drafts generated — created=${drafts.stats.created}, skipped=${drafts.stats.skipped}, errors=${drafts.errors.length}`;
+          await appendJobLog(JOB_NIGHTLY, summary);
+          if (drafts.errors.length) logger.warn({ errors: drafts.errors }, "[scheduler] retention draft generation reported item errors");
+        } catch (draftError) {
+          logger.error({ err: draftError }, "[scheduler] retention draft generation failed after successful event sync");
+          await appendJobLog(JOB_NIGHTLY, `Retention draft generation failed (non-fatal): ${draftError instanceof Error ? draftError.message : String(draftError)}`);
+        }
       } catch (err: any) {
         const wasCancelled = err.name === "CancelledError";
         if (!wasCancelled) {
@@ -214,7 +227,9 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
 
     // Manual data catch-up must not queue outbound milestone messages.
     await heartbeatJob(JOB_NIGHTLY);
-    if (incrementalDaysOverride !== undefined) {
+    if (isRetentionOnlyMode()) {
+      await appendJobLog(JOB_NIGHTLY, "Step 6: legacy milestone generation parked by RETENTION_ONLY_MODE");
+    } else if (incrementalDaysOverride !== undefined) {
       await appendJobLog(JOB_NIGHTLY, "Step 6: milestone messages skipped (manual catch-up)");
     } else {
       try {
@@ -234,7 +249,9 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     await heartbeatJob(JOB_NIGHTLY);
     try {
       const now = new Date();
-      if (incrementalDaysOverride !== undefined) {
+      if (isRetentionOnlyMode()) {
+        await appendJobLog(JOB_NIGHTLY, "Step 7: legacy monthly recap generation parked by RETENTION_ONLY_MODE");
+      } else if (incrementalDaysOverride !== undefined) {
         await appendJobLog(JOB_NIGHTLY, "Step 7: recap messages skipped (manual catch-up)");
       } else if (now.getDate() === 1) {
         const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
@@ -331,8 +348,9 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
 export function startScheduler(): void {
   logger.info("[scheduler] Scheduler started — checking every 60s");
 
-  // Feedback poller — runs every 30 minutes, independent of nightly chain
+  // Feedback poller — retained but parked by RETENTION_ONLY_MODE.
   setInterval(async () => {
+    if (isRetentionOnlyMode()) return;
     try {
       const fbLog = (msg: string) => logger.info(msg);
       const result = await sendFeedbackForRecentEvents(undefined, fbLog, 0.5);

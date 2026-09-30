@@ -5,7 +5,8 @@
  * a "did everyone belong at this level?" feedback prompt to each attendee.
  */
 import { supabase } from "./supabaseClient";
-import { sendViaTwilio } from "./twilio";
+import { recordSmsDispatchFailure, sendViaTwilio } from "./twilio";
+import { isRetentionOnlyMode } from "./retentionPolicy";
 import { extractSkillLevel, isFeedbackLevel } from "./skillLevel";
 import { logger } from "./logger";
 import { expectReply, findActiveExpectation } from "./replyExpectations";
@@ -128,6 +129,10 @@ export async function sendFeedbackForEvent(
   log: (msg: string) => void = (m) => logger.info(m),
 ): Promise<{ sent: number; skipped: number; errors: number }> {
   const stats = { sent: 0, skipped: 0, errors: 0 };
+  if (isRetentionOnlyMode()) {
+    log("[feedback] Legacy post-session feedback is parked by RETENTION_ONLY_MODE");
+    return { ...stats, skipped: 1 };
+  }
 
   let podplayBase: string;
   let apiKey: string;
@@ -251,7 +256,7 @@ export async function sendFeedbackForEvent(
             .eq("id", msgRow.id);
         } catch (err: any) {
           log(`[feedback] Twilio send failed for player ${player.id}: ${err.message}`);
-          await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
+          await recordSmsDispatchFailure(err);
           stats.errors++;
           continue;
         }
@@ -282,6 +287,10 @@ export async function sendFeedbackForRecentEvents(
   log: (msg: string) => void = (m) => logger.info(m),
   windowHours = 2,
 ): Promise<{ eventsFound: number; totalSent: number; totalSkipped: number; totalErrors: number }> {
+  if (isRetentionOnlyMode()) {
+    log("[feedback] Legacy post-session feedback scheduler is parked by RETENTION_ONLY_MODE");
+    return { eventsFound: 0, totalSent: 0, totalSkipped: 0, totalErrors: 0 };
+  }
   const now = Date.now();
   const windowStart = now - windowHours * 60 * 60 * 1000;
 

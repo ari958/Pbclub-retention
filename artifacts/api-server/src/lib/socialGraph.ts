@@ -39,48 +39,70 @@ interface ContextOptions {
   logger?: { warn: Function; info: Function; error: Function };
   daysAhead?: number;
   maxEvents?: number;
+  /** Fail closed instead of returning partial/empty live context. */
+  strict?: boolean;
+  liveEventsCache?: Map<string, Promise<any[]>>;
+  liveSignupsCache?: Map<string, Promise<string[]>>;
 }
 
 // ─── PodPlay helpers (private) ────────────────────────────────────────────────
-async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number, apiKey: string): Promise<any[]> {
+async function fetchUpcomingEventsRaw(podplayBase: string, daysAhead: number, apiKey: string, strict = false): Promise<any[]> {
   const now = new Date().toISOString();
   const end = new Date(Date.now() + daysAhead * 24 * 60 * 60 * 1000).toISOString();
-  const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&ipp=100`;
-  const res = await fetch(url, {
-    headers: { "x-api-key": apiKey },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
-  const data = await res.json() as any;
-  return (data.items ?? []).filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
+  const all: any[] = [];
+  for (let page = 1; page <= (strict ? 100 : 1); page++) {
+    const url = `${podplayBase}/apis/v2/events?startTime=${encodeURIComponent(now)}&endTime=${encodeURIComponent(end)}&page=${page}&ipp=100`;
+    const res = await fetch(url, {
+      headers: { "x-api-key": apiKey },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) throw new Error(`PodPlay /events returned ${res.status}`);
+    const data = await res.json() as any;
+    const items = data.items ?? [];
+    all.push(...items);
+    const more = data.hasMore === true || Number(data.totalPages ?? 0) > page
+      || (data.total && page * 100 < Number(data.total));
+    if (!strict || (!more && items.length < 100)) break;
+    if (page === 100) throw new Error("PodPlay /events exceeded pagination safety limit");
+  }
+  return all.filter((e: any) => !e.isCanceled && e.status === "PUBLISHED");
 }
 
-async function fetchEventSignupsRaw(podplayBase: string, eventId: string, apiKey: string): Promise<string[]> {
-  const url = `${podplayBase}/apis/v2/events/${eventId}/signups`;
-  let res: Response;
-  try {
-    res = await fetch(url, {
-      headers: { "x-api-key": apiKey },
-      signal: AbortSignal.timeout(10_000),
-    });
-  } catch {
-    return [];
-  }
-  if (res.status === 404) return [];
-  if (res.status === 429) {
-    await sleep(3_000);
+async function fetchEventSignupsRaw(podplayBase: string, eventId: string, apiKey: string, strict = false): Promise<string[]> {
+  const ids: string[] = [];
+  for (let page = 1; page <= (strict ? 100 : 1); page++) {
+    const url = `${podplayBase}/apis/v2/events/${eventId}/signups?page=${page}&ipp=100`;
+    let res: Response;
     try {
-      const retry = await fetch(url, { headers: { "x-api-key": apiKey } });
-      if (!retry.ok) return [];
-      const d = await retry.json() as any;
-      return (d.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
-    } catch {
+      res = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(10_000) });
+    } catch (error) {
+      if (strict) throw error;
       return [];
     }
+    if (res.status === 429 && !strict) {
+      await sleep(3_000);
+      try {
+        res = await fetch(url, { headers: { "x-api-key": apiKey }, signal: AbortSignal.timeout(10_000) });
+      } catch {
+        return [];
+      }
+    }
+    if (res.status === 404 && !strict) return [];
+    if (!res.ok) {
+      if (strict) throw new Error(`PodPlay signup fetch for event ${eventId} returned ${res.status}`);
+      return [];
+    }
+    const data = await res.json() as any;
+    const items = data.items ?? [];
+    ids.push(...items
+      .filter((signup: any) => !strict || !["CANCELED", "DRAFT"].includes(String(signup.status ?? "").toUpperCase()))
+      .map((signup: any) => signup.owner?.id ?? ""));
+    const more = data.hasMore === true || Number(data.totalPages ?? 0) > page
+      || (data.total && page * 100 < Number(data.total));
+    if (!strict || (!more && items.length < 100)) break;
+    if (page === 100) throw new Error(`PodPlay signups for event ${eventId} exceeded pagination safety limit`);
   }
-  if (!res.ok) return [];
-  const data = await res.json() as any;
-  return (data.items ?? []).map((s: any) => s.owner?.id).filter(Boolean) as string[];
+  return ids;
 }
 
 // ─── Resolve PodPlay credentials (DB-first, env fallback) ────────────────────
@@ -151,6 +173,12 @@ export async function getPlayerSocialContext(
       .maybeSingle(),
   ]);
 
+  if (options.strict && playerResult.error) {
+    throw new Error(`Could not load player PodPlay identity: ${playerResult.error.message}`);
+  }
+  if (options.strict && !playerResult.data?.external_id) {
+    throw new Error(`Player ${playerId} has no PodPlay external_id; upcoming bookings cannot be verified`);
+  }
   if (pairsResult.error) {
     (log as any).warn?.({ err: pairsResult.error.message }, "[socialGraph] buddy_pairs query failed");
   }
@@ -211,32 +239,48 @@ export async function getPlayerSocialContext(
   try {
     ({ podplayBase, apiKey } = await resolveCredentials(options.clubId, log));
   } catch (err: any) {
+    if (options.strict) throw err;
     (log as any).warn?.({ err: err.message }, "[socialGraph] could not resolve PodPlay credentials");
     return { buddies, upcoming: [], registrations: [] };
   }
+  if (options.strict && !apiKey) throw new Error(`Club ${options.clubId} has no PodPlay API key configured`);
 
   let allEvents: any[] = [];
   try {
-    allEvents = await fetchUpcomingEventsRaw(podplayBase, daysAhead, apiKey);
+    const cached = options.liveEventsCache?.get(options.clubId ?? "");
+    if (cached) allEvents = await cached;
+    else {
+      const pendingEvents = fetchUpcomingEventsRaw(podplayBase, daysAhead, apiKey, options.strict);
+      options.liveEventsCache?.set(options.clubId ?? "", pendingEvents);
+      allEvents = await pendingEvents;
+    }
   } catch (err: any) {
+    if (options.strict) throw err;
     (log as any).warn?.({ err: err.message }, "[socialGraph] upcoming events fetch failed");
     return { buddies, upcoming: [], registrations: [] };
   }
-  const events = allEvents.slice(0, maxEvents);
+  allEvents.sort((a: any, b: any) => Date.parse(a.startTime) - Date.parse(b.startTime));
+  const events = options.strict ? allEvents : allEvents.slice(0, maxEvents);
 
   // ── 4. Fetch signups (parallel batches of 3 with throttle) ──────────────
   type EventSignups = { event: any; externalIds: string[] };
   const signupsByEvent: EventSignups[] = [];
   for (let i = 0; i < events.length; i += 3) {
-    if (i > 0) await sleep(250);
     const batch = events.slice(i, i + 3);
-    const results = await Promise.all(
-      batch.map((event) =>
-        fetchEventSignupsRaw(podplayBase, event.id, apiKey)
-          .then((externalIds) => ({ event, externalIds }))
-          .catch(() => ({ event, externalIds: [] as string[] }))
-      )
-    );
+    const hasUncachedSignups = batch.some((event) => !options.liveSignupsCache?.has(event.id));
+    if (i > 0 && hasUncachedSignups) await sleep(250);
+    const results = await Promise.all(batch.map(async (event) => {
+      try {
+        const cached = options.liveSignupsCache?.get(event.id);
+        if (cached) return { event, externalIds: await cached };
+        const pendingSignups = fetchEventSignupsRaw(podplayBase, event.id, apiKey, options.strict);
+        options.liveSignupsCache?.set(event.id, pendingSignups);
+        return { event, externalIds: await pendingSignups };
+      } catch (error) {
+        if (options.strict) throw error;
+        return { event, externalIds: [] as string[] };
+      }
+    }));
     signupsByEvent.push(...results);
   }
 

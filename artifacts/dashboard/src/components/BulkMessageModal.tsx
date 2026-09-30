@@ -149,7 +149,11 @@ function ConfirmScreen({
   onConfirm,
   onBack,
   sending,
+  operator,
+  setOperator,
 }: {
+  operator: string;
+  setOperator: (v: string) => void;
   recipients: Player[];
   resolvedBody: string;
   onConfirm: () => void;
@@ -157,10 +161,19 @@ function ConfirmScreen({
   sending: boolean;
 }) {
   const previews = recipients.slice(0, 5);
+  const operatorField = (
+    <div>
+      <label style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: "var(--text-tertiary)", textTransform: "uppercase", display: "block", marginBottom: 6 }}>Operator name (required)</label>
+      <input value={operator} onChange={(e) => setOperator(e.target.value)} placeholder="Your name" data-testid="input-bulk-operator"
+        style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg-surface-2)", color: "var(--text-primary)", fontSize: 13 }} />
+      <div style={{ fontSize: 11, color: "var(--text-tertiary)", marginTop: 4 }}>Recorded as approved_by. A typed label, not a sign-in. Sending is the approval.</div>
+    </div>
+  );
   const remaining = recipients.length - previews.length;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {operatorField}
       {/* Warning banner */}
       <div style={{ background: "rgba(207,34,46,0.06)", border: "1px solid rgba(207,34,46,0.2)", borderRadius: 7, padding: "12px 14px" }}>
         <div style={{ fontWeight: 600, fontSize: 13, color: "var(--state-dormant)", marginBottom: 4 }}>
@@ -206,8 +219,9 @@ function ConfirmScreen({
         </button>
         <button
           onClick={onConfirm}
-          disabled={sending}
-          style={{ padding: "7px 20px", borderRadius: 5, fontSize: 13, fontWeight: 600, background: sending ? "var(--border)" : "var(--state-dormant)", color: sending ? "var(--text-tertiary)" : "#fff", border: "none", cursor: sending ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}
+          disabled={sending || !operator.trim()}
+          data-testid="button-bulk-send-confirm"
+          style={{ opacity: operator.trim() ? 1 : 0.5, padding: "7px 20px", borderRadius: 5, fontSize: 13, fontWeight: 600, background: sending ? "var(--border)" : "var(--state-dormant)", color: sending ? "var(--text-tertiary)" : "#fff", border: "none", cursor: sending ? "not-allowed" : "pointer", display: "flex", alignItems: "center", gap: 6 }}
         >
           {sending && <span style={{ width: 12, height: 12, border: "2px solid rgba(255,255,255,0.4)", borderTopColor: "#fff", borderRadius: "50%", display: "inline-block", animation: "spin 0.7s linear infinite" }} />}
           {sending ? "Sending…" : `Confirm — send ${recipients.length} messages`}
@@ -233,6 +247,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
   const [optInOnly, setOptInOnly]               = useState(true);
   const [sending, setSending]                   = useState(false);
   const [showConfirm, setShowConfirm]           = useState(false);
+  const [operator, setOperator]                 = useState("");
 
   const [events, setEvents]               = useState<UpcomingEvent[]>([]);
   const [eventsLoading, setEventsLoading] = useState(false);
@@ -331,6 +346,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
   }, []);
 
   const handleSend = async () => {
+    if (!operator.trim()) { toast.error("Enter an operator name to approve this send"); return; }
     setSending(true);
     try {
       const res = await fetch(clubApiUrl(club.slug, "/api/messages/bulk"), {
@@ -340,6 +356,7 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
           player_ids: eligibleRecipients.map((p) => p.id),
           message_body: resolvedBodyForApi,
           template_id: selectedTemplate?.id,
+          approved_by: operator.trim(),
         }),
       });
       if (!res.ok) {
@@ -413,6 +430,8 @@ export function BulkMessageModal({ recipients, filterSummary, onClose }: BulkMes
               onConfirm={handleSend}
               onBack={() => setShowConfirm(false)}
               sending={sending}
+              operator={operator}
+              setOperator={setOperator}
             />
           ) : (
             <>

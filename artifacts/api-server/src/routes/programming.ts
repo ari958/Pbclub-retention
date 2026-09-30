@@ -29,6 +29,7 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { isRetentionOnlyMode } from "../lib/retentionPolicy";
 import { supabase } from "../lib/supabaseClient";
 import { runEvaluator, fetchActiveSignupCount } from "../lib/programmingEvaluator";
 import { loadArchetypes, classifyEvent, isDailyPeak, isPeakSeason } from "../lib/classifyEvent";
@@ -37,6 +38,14 @@ import { computeWarmScore } from "../lib/warmScore";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+router.use("/programming", (req, res, next) => {
+  if (isRetentionOnlyMode()) {
+    res.status(423).json({ error: "Programming tools are parked by RETENTION_ONLY_MODE" });
+    return;
+  }
+  next();
+});
 
 // ── Job store (in-process; survives as long as the server is up) ──────────────
 

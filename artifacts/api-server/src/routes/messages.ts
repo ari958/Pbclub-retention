@@ -1,11 +1,18 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
-import { sendViaTwilio } from "../lib/twilio";
+import {
+  composeApprovedMessageBody,
+  isSmsDispatchClaimError,
+  isSmsPolicyBlockedError,
+  recordSmsDispatchFailure,
+  sendViaTwilio,
+} from "../lib/twilio";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { parseFeedbackReply } from "../lib/postSessionFeedback";
 import { findActiveExpectation, resolveExpectation } from "../lib/replyExpectations";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from "../lib/retentionPolicy";
 
 const router: IRouter = Router();
 
@@ -73,7 +80,7 @@ router.post("/messages/send", requireClub, async (req, res) => {
   // Load message + conversation + player in one go
   const { data: message, error: msgErr } = await supabase
     .from("messages")
-    .select("id, body, signup_url, status, conversation_id")
+    .select("id, body, signup_url, status, conversation_id, player_id, approved_at, approved_by, approved_body, dispatch_claimed_at, dispatch_token")
     .eq("id", message_id)
     .single();
 
@@ -87,28 +94,34 @@ router.post("/messages/send", requireClub, async (req, res) => {
     res.status(409).json({ error: `Message is already ${message.status}` });
     return;
   }
+  if (!message.approved_at) {
+    res.status(403).json({ error: "Message requires explicit per-message approval before sending" });
+    return;
+  }
+  if (message.dispatch_claimed_at || message.dispatch_token) {
+    res.status(409).json({ error: "Message dispatch is already claimed and requires reconciliation" });
+    return;
+  }
 
-  const { data: conversation, error: convErr } = await supabase
-    .from("conversations")
-    .select("player_id, club_id")
-    .eq("id", message.conversation_id)
-    .single();
+  const { data: conversation, error: convErr } = message.conversation_id
+    ? await supabase.from("conversations").select("player_id, club_id").eq("id", message.conversation_id).maybeSingle()
+    : { data: null, error: null };
 
-  if (convErr || !conversation) {
+  if (convErr || (!conversation && !message.player_id)) {
     res.status(404).json({ error: "Conversation not found" });
     return;
   }
 
   // Cross-tenant guard: conversation must belong to this club
-  if (conversation.club_id && conversation.club_id !== clubId) {
+  if (conversation?.club_id && conversation.club_id !== clubId) {
     res.status(403).json({ error: "Message does not belong to this club" });
     return;
   }
 
   const { data: player, error: playerErr } = await supabase
     .from("players")
-    .select("id, name, phone, sms_opt_in, last_outbound_at, club_id")
-    .eq("id", conversation.player_id)
+    .select("id, name, phone, opted_out, sms_opt_in, consent_source, sms_consented_at, last_outbound_at, club_id")
+    .eq("id", message.player_id ?? conversation?.player_id)
     .single();
 
   if (playerErr || !player) {
@@ -123,27 +136,33 @@ router.post("/messages/send", requireClub, async (req, res) => {
   }
 
   // Guard: opted out
-  if (!player.sms_opt_in) {
+  if (player.opted_out === true || (!isRetentionOnlyMode() && requiresMarketingConsent() && !isTextEligible(player))) {
     await supabase
       .from("messages")
-      .update({ status: "skipped", error_message: "Player has opted out of SMS" })
-      .eq("id", message_id);
-    res.status(200).json({ skipped: true, reason: "Player has opted out of SMS" });
+      .update({ status: "skipped", error_message: "Player is not eligible for SMS" })
+      .eq("id", message_id)
+      .eq("status", "pending")
+      .is("dispatch_claimed_at", null)
+      .is("dispatch_token", null);
+    res.status(200).json({ skipped: true, reason: "Player is not eligible for SMS" });
     return;
   }
 
   // Guard: no phone
-  if (!player.phone) {
+  if (!player.phone?.trim()) {
     await supabase
       .from("messages")
       .update({ status: "skipped", error_message: "No phone number on record" })
-      .eq("id", message_id);
+      .eq("id", message_id)
+      .eq("status", "pending")
+      .is("dispatch_claimed_at", null)
+      .is("dispatch_token", null);
     res.status(200).json({ skipped: true, reason: "No phone number on record" });
     return;
   }
 
   // Guard: cooldown
-  if (player.last_outbound_at) {
+  if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
     const elapsed = Date.now() - new Date(player.last_outbound_at).getTime();
     if (elapsed < COOLDOWN_MS) {
       const remainingMins = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
@@ -153,7 +172,10 @@ router.post("/messages/send", requireClub, async (req, res) => {
           status: "skipped",
           error_message: `Cooldown active — ${remainingMins}min remaining`,
         })
-        .eq("id", message_id);
+        .eq("id", message_id)
+        .eq("status", "pending")
+        .is("dispatch_claimed_at", null)
+        .is("dispatch_token", null);
       res.status(200).json({
         skipped: true,
         reason: "cooldown",
@@ -174,38 +196,24 @@ router.post("/messages/send", requireClub, async (req, res) => {
   }
 
   // Build final SMS body
-  const smsBody = message.signup_url
-    ? `${message.body}\n${message.signup_url}`
-    : message.body;
+  const smsBody = composeApprovedMessageBody(message.body, message.signup_url);
 
   try {
-    const { sid, simulated } = await sendViaTwilio(player.phone, smsBody);
-    const now = new Date().toISOString();
+    const { sid, simulated, isTest } = await sendViaTwilio(player.phone, smsBody, {
+      messageId: message_id,
+      source: "retention",
+      purpose: "promotion",
+    });
 
-    await Promise.all([
-      supabase
-        .from("messages")
-        .update({ status: "sent", twilio_message_sid: sid, simulated, sent_at: now })
-        .eq("id", message_id),
-      supabase
-        .from("players")
-        .update({ last_outbound_at: now })
-        .eq("id", player.id),
-    ]);
-
-    req.log.info({ message_id, twilio_sid: sid, simulated, to: player.phone }, "SMS sent");
-    res.json({ success: true, twilio_sid: sid, simulated, to: player.phone });
+    req.log.info({ message_id, simulated, isTest }, "SMS dispatch completed");
+    res.json({ success: true, twilio_sid: sid, simulated, isTest, to: player.phone });
   } catch (err: unknown) {
     req.log.error({ err }, "Twilio send failed");
     const errMsg = err instanceof Error ? err.message : "Unknown error";
-    const errCode = (err as any)?.code?.toString();
+    await recordSmsDispatchFailure(err);
 
-    await supabase
-      .from("messages")
-      .update({ status: "failed", error_code: errCode, error_message: errMsg })
-      .eq("id", message_id);
-
-    res.status(502).json({ error: "Failed to send SMS", detail: errMsg });
+    res.status(isSmsPolicyBlockedError(err) || isSmsDispatchClaimError(err) ? 409 : 502)
+      .json({ error: "Failed to send SMS", detail: errMsg });
   }
 });
 
@@ -223,12 +231,16 @@ router.post("/messages/skip", requireClub, async (req, res) => {
   // Cross-tenant guard: verify the message's player belongs to this club
   const { data: msg } = await supabase
     .from("messages")
-    .select("player_id, players!inner(club_id)")
+    .select("player_id, dispatch_claimed_at, dispatch_token, players!inner(club_id)")
     .eq("id", message_id)
     .maybeSingle();
 
   if (!msg) {
     res.status(404).json({ error: "Message not found" });
+    return;
+  }
+  if (msg.dispatch_claimed_at || msg.dispatch_token) {
+    res.status(409).json({ error: "Message dispatch is already claimed and requires reconciliation" });
     return;
   }
   const playerClubId = (msg.players as any)?.club_id;
@@ -241,7 +253,9 @@ router.post("/messages/skip", requireClub, async (req, res) => {
     .from("messages")
     .update({ status: "skipped", error_message: "Skipped by operator" })
     .eq("id", message_id)
-    .eq("status", "pending");
+    .eq("status", "pending")
+    .is("dispatch_claimed_at", null)
+    .is("dispatch_token", null);
 
   if (error) {
     res.status(500).json({ error: error.message });
@@ -256,11 +270,17 @@ router.post("/messages/skip", requireClub, async (req, res) => {
 router.post("/messages/bulk", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
 
-  const { player_ids, message_body, template_id } = req.body as {
+  const { player_ids, message_body, template_id, approved_by } = req.body as {
     player_ids?: string[];
     message_body?: string;
     template_id?: string;
+    approved_by?: string;
   };
+
+  if (typeof approved_by !== "string" || !approved_by.trim()) {
+    res.status(400).json({ error: "approved_by is required for bulk message approval" });
+    return;
+  }
 
   if (!Array.isArray(player_ids) || player_ids.length === 0) {
     res.status(400).json({ error: "player_ids must be a non-empty array" });
@@ -292,17 +312,20 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
   // Fetch eligible players scoped to this club
   const { data: players, error: fetchErr } = await supabase
     .from("players")
-    .select("id, name, skill_level, last_visit_date, phone, club_id, sms_opt_in, last_outbound_at")
+    .select("id, name, skill_level, last_visit_date, phone, club_id, opted_out, sms_opt_in, consent_source, sms_consented_at, last_outbound_at")
     .in("id", player_ids)
-    .eq("club_id", clubId)
-    .eq("sms_opt_in", true);
+    .eq("club_id", clubId);
 
   if (fetchErr) {
     res.status(500).json({ error: "Failed to fetch players", detail: fetchErr.message });
     return;
   }
 
-  const eligible = (players ?? []).filter((p: any) => p.phone);
+  const eligible = (players ?? []).filter((p: any) =>
+    !isRetentionOnlyMode() && requiresMarketingConsent()
+      ? isTextEligible(p)
+      : !!p.phone?.trim() && p.opted_out !== true
+  );
 
   if (eligible.length === 0) {
     res.json({ sent: 0, skipped_cooldown: 0, failed: 0, errors: [] });
@@ -319,7 +342,7 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
 
   for (const player of eligible) {
     // Cooldown check
-    if (player.last_outbound_at) {
+    if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
       const elapsed = now - new Date(player.last_outbound_at).getTime();
       if (elapsed < COOLDOWN_MS) {
         skipped_cooldown++;
@@ -363,6 +386,9 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
         conversation_id,
         player_id: player.id,
         body: interpolated,
+        approved_at: new Date().toISOString(),
+        approved_by: approved_by.trim(),
+        approved_body: interpolated,
         direction: "outbound",
         sent_by: "operator",
         status: "pending",
@@ -379,25 +405,19 @@ router.post("/messages/bulk", requireClub, async (req, res) => {
 
     // sendViaTwilio handles the SMS_LIVE gate; dry-run returns { sid:"SIMULATED", simulated:true }
     try {
-      const { sid: twilio_message_sid, simulated } = await sendViaTwilio(player.phone, interpolated);
-      await supabase
-        .from("messages")
-        .update({ twilio_message_sid, simulated, status: "sent", sent_at: sentAt })
-        .eq("id", msgRow.id);
+      const { sid: twilio_message_sid, simulated } = await sendViaTwilio(player.phone, interpolated, {
+        messageId: msgRow.id,
+        source: "bulk",
+        purpose: "promotion",
+      });
     } catch (err) {
       req.log.error({ err, player_id: player.id }, "Bulk: Twilio send failed");
-      // Do NOT delete the row — it is the audit trail even on failure
-      await supabase.from("messages").update({ status: "failed" }).eq("id", msgRow.id);
+      await recordSmsDispatchFailure(err);
       failed++;
       errors.push(player.id);
       continue;
     }
 
-    // Update cooldown timestamp
-    await supabase
-      .from("players")
-      .update({ last_outbound_at: sentAt })
-      .eq("id", player.id);
     sent++;
     req.log.info({ player_id: player.id, template_id }, "Bulk SMS sent");
 
@@ -498,7 +518,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   if (isStop) {
     await supabase
       .from("players")
-      .update({ sms_opt_in: false })
+      .update({ sms_opt_in: false, opted_out: true })
       .eq("id", player.id);
 
     // Cancel all pending queued messages for this player
@@ -512,8 +532,16 @@ router.post("/messages/webhook/inbound", async (req, res) => {
         .from("messages")
         .update({ status: "skipped", error_message: "Player opted out via STOP" })
         .in("conversation_id", convs.map((c: any) => c.id))
-        .eq("status", "pending");
+        .eq("status", "pending")
+        .is("dispatch_claimed_at", null)
+        .is("dispatch_token", null);
     }
+    await supabase.from("messages")
+      .update({ status: "skipped", error_message: "Player opted out via STOP" })
+      .eq("player_id", player.id)
+      .eq("status", "pending")
+      .is("dispatch_claimed_at", null)
+      .is("dispatch_token", null);
 
     req.log.info({ player_id: player.id }, "Player opted out via STOP");
     res.setHeader("Content-Type", "text/xml");
@@ -525,7 +553,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   if (isStart) {
     await supabase
       .from("players")
-      .update({ sms_opt_in: true })
+      .update({ sms_opt_in: true, opted_out: false })
       .eq("id", player.id);
 
     req.log.info({ player_id: player.id }, "Player re-subscribed via START");
@@ -537,7 +565,9 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   // ── Session feedback reply ──
   // Check whether the most recent outbound to this player was a session_feedback request
   // that hasn't yet received a response.
-  const expectation = await findActiveExpectation(player.id, "session_feedback");
+  const expectation = isRetentionOnlyMode()
+    ? null
+    : await findActiveExpectation(player.id, "session_feedback");
 
   if (expectation) {
     const meta = expectation.metadata as { event_id: string; level: string };
@@ -693,7 +723,7 @@ router.patch("/messages/:id/draft", requireClub, async (req, res) => {
   // Cross-tenant guard: verify the message belongs to a player in this club
   const { data: existing } = await supabase
     .from("messages")
-    .select("player_id, players!inner(club_id)")
+    .select("player_id, dispatch_claimed_at, dispatch_token, players!inner(club_id)")
     .eq("id", req.params.id as string)
     .maybeSingle();
 
@@ -709,9 +739,17 @@ router.patch("/messages/:id/draft", requireClub, async (req, res) => {
 
   const { data, error } = await supabase
     .from("messages")
-    .update({ body: body.trim() })
+    .update({
+      body: body.trim(),
+      approved_at: null,
+      approved_by: null,
+      approved_body: null,
+      scheduled_send_at: null,
+    })
     .eq("id", req.params.id as string)
     .eq("status", "pending")
+    .is("dispatch_claimed_at", null)
+    .is("dispatch_token", null)
     .select("id, body, status")
     .single();
 

@@ -9,9 +9,8 @@ import { ClubSwitcher } from "./ClubSwitcher";
 //   programming  (default) — programming-agent surfaces only
 //   pulse                  — Pulse retention surfaces only (original nav)
 //   all                    — both sets visible
-type NavMode = "programming" | "pulse" | "all";
-const NAV_MODE: NavMode =
-  (import.meta.env.VITE_NAV_MODE as NavMode | undefined) ?? "programming";
+//   retention    (default) — Approvals, Players, Messages, Settings; rest parked
+import { NAV_MODE } from "@/lib/navMode";
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -85,6 +84,15 @@ function IconPrograms() {
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
       <path d="M4 6h8M4 8.5h5M4 11h6" />
+    </svg>
+  );
+}
+
+function IconApprovals() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="8" cy="8" r="6" />
+      <path d="M5.5 8.2L7.2 9.9L10.5 6.3" />
     </svg>
   );
 }
@@ -178,12 +186,27 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
       ]
     : [];
 
+  const retentionItems: NavItem[] = slug
+    ? [
+        { label: "Approvals", path: `/c/${slug}/approvals`, icon: <IconApprovals /> },
+        { label: "Players", path: `/c/${slug}/players`, icon: <IconPlayers /> },
+        {
+          label: "Messages",
+          path: `/c/${slug}/messages`,
+          icon: <IconMessages />,
+          badge: messagesBadge > 0 ? messagesBadge : undefined,
+          replyAlert: unreadReplies > 0,
+        },
+      ]
+    : [];
+
   const sharedItems: NavItem[] = slug
     ? [{ label: "Settings", path: `/c/${slug}/settings`, icon: <IconSettings /> }]
     : [];
 
   const navItems: NavItem[] =
     [
+      ...(NAV_MODE === "retention" ? retentionItems : []),
       ...(NAV_MODE === "pulse" || NAV_MODE === "all" ? pulseItems : []),
       ...(NAV_MODE === "programming" || NAV_MODE === "all" ? programmingItems : []),
       ...sharedItems,

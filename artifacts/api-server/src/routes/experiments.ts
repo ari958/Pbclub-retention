@@ -25,6 +25,7 @@ import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
 import { computeWarmScore } from "../lib/warmScore";
 import { sendViaTwilio } from "../lib/twilio";
+import { isRetentionOnlyMode } from "../lib/retentionPolicy";
 import { logger } from "../lib/logger";
 
 const router = Router();
@@ -899,7 +900,7 @@ router.get("/experiments/pooled-results", requireClub, async (req, res) => {
 
 router.get("/experiments/:id", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
-  const { id } = req.params;
+  const id = req.params.id as string;
   try {
     const { data: exp, error: expErr } = await supabase
       .from("outreach_experiments")
@@ -980,8 +981,12 @@ router.patch("/experiments/:id/participants/:pid", requireClub, async (req, res)
 // Writes contact_ledger rows. Does NOT send any messages.
 
 router.post("/experiments/:id/mark-sent", requireClub, async (req, res) => {
+  if (isRetentionOnlyMode()) {
+    res.status(423).json({ error: "Experiment dispatch bookkeeping is parked by RETENTION_ONLY_MODE" });
+    return;
+  }
   const clubId = (req as ClubScopedRequest).clubId;
-  const { id } = req.params;
+  const id = req.params.id as string;
   const { participantIds }: { participantIds: string[] } = req.body ?? {};
   if (!Array.isArray(participantIds) || participantIds.length === 0) {
     res.status(400).json({ error: "participantIds (array) required" }); return;
@@ -1070,7 +1075,7 @@ const measurementJobs = new Map<string, { status: "running" | "done" | "error"; 
 
 router.post("/experiments/:id/measure", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
-  const { id } = req.params;
+  const id = req.params.id as string;
 
   const existing = measurementJobs.get(id);
   if (existing?.status === "running") {
@@ -1176,7 +1181,7 @@ router.post("/experiments/:id/measure", requireClub, async (req, res) => {
 // ─── GET /api/experiments/:id/measure/status ─────────────────────────────────
 
 router.get("/experiments/:id/measure/status", requireClub, async (req, res) => {
-  const { id } = req.params;
+  const id = req.params.id as string;
   const job = measurementJobs.get(id);
   if (!job) { res.json({ status: "idle" }); return; }
   res.json(job);
@@ -1194,8 +1199,12 @@ router.get("/experiments/:id/measure/status", requireClub, async (req, res) => {
 const DISPATCH_HARD_CAP = 50; // code-level, not tunable from rules
 
 router.post("/experiments/:id/send", requireClub, async (req, res) => {
+  if (isRetentionOnlyMode()) {
+    res.status(423).json({ error: "Experiment dispatch is parked by RETENTION_ONLY_MODE" });
+    return;
+  }
   const clubId = (req as ClubScopedRequest).clubId;
-  const { id }  = req.params;
+  const id = req.params.id as string;
   const { approved = false, dryRun = false } = req.body ?? {};
 
   // Explicit approval required for live dispatch
@@ -1344,7 +1353,7 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
         && preconditions.no_control_leak
         && preconditions.audience_approved;
 
-      return res.json({
+      res.json({
         dry_run:    true,
         all_green:  allGreen,
         sms_live:   smsLive,
@@ -1365,6 +1374,7 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
           };
         }),
       });
+      return;
     }
 
     // ── Fault injection (development only) — used by Phase 4.3 induced-failure

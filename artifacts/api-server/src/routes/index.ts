@@ -18,6 +18,7 @@ import queueRouter from "./queue";
 import programmingRouter from "./programming";
 import consentRouter from "./consent";
 import experimentsRouter from "./experiments";
+import retentionRouter from "./retention";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(queueRouter);
 router.use(programmingRouter);
 router.use(consentRouter);
 router.use(experimentsRouter);
+router.use(retentionRouter);
 
 export default router;

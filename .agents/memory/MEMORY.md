@@ -12,7 +12,7 @@
 - [Contact ledger](contact-ledger.md) — Phase 3.4: contact_ledger table (007 migration, needs manual run); budget gate in promotion candidates builder; recency tiebreaker +0/+3/+8/+15; pool supports ~3-4 sends/clinic (not 24)
 - [Retention reframe](retention-reframe.md) — engagement/archetype gates removed; retention segmentation is the model; long-dormant 91+d is the only new hard gate; eligible pool 37→1,586; SMS-reachable 22→593
 - [SMS consent import](sms-consent-import.md) — 1,895 web-form rows; 97.6% match; 394 phone fills; 1 conflict skipped; sms_consent_records + consent_source/sms_consented_at; migration 008 needed for full run; post-import SMS-reachable 967 in pool, 98.6% cancellation coverage
-- [Level-gate policy](level-gate-policy.md) — level-gated events (admission min OR max) excluded from ALL outreach; simulated sends flagged via reasons.dispatch_simulated, never in contact_ledger
+- [Level-gate policy](level-gate-policy.md) — legacy automated outreach excludes admission-gated events; don't silently add legacy gates to the approved retention phase.
 - [Silent-failure audit](silent-failure-audit.md) — supabase-js never throws; ledger/holdout reads fail closed; dispatch_failed excluded from measurement; contact_ledger schema drifted from migration 007
 - [Phase 4.1 send path](phase41-send-path.md) — TWILIO_PHONE_NUMBER=+12015281834 (A2P approved, confirmed delivered); SMS_LIVE env var gates dispatch; experiment dispatch at POST /experiments/:id/send; migration 007 required for full flow
 - [DUPR refresh policy](dupr-refresh-policy.md) — track last check separately from rating source age, including unrated players; keep long imports heartbeat-alive and resume from saved batches.

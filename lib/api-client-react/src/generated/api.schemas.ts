@@ -8,3 +8,258 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface RetentionDraftUpdate {
+  /** @minLength 1 */
+  body: string;
+}
+
+export interface RetentionApprovalInput {
+  /**
+   * Explicit operator attribution label, not an authenticated identity
+   * @minLength 1
+   */
+  approved_by: string;
+  /**
+   * Exact stored message text reviewed; stale approval requests are rejected
+   * @minLength 1
+   */
+  expected_body: string;
+}
+
+/**
+ * Candidate ID to exact reviewed stored message text
+ */
+export type RetentionBulkApprovalInputExpectedBodies = {
+  [key: string]: string;
+};
+
+export interface RetentionBulkApprovalInput {
+  /** @minLength 1 */
+  approved_by: string;
+  /** @minItems 1 */
+  candidate_ids: string[];
+  /** Candidate ID to exact reviewed stored message text */
+  expected_bodies: RetentionBulkApprovalInputExpectedBodies;
+}
+
+export interface RetentionPauseInput {
+  enabled: boolean;
+}
+
+export interface RetentionProgram {
+  event_id: string;
+  name: string;
+  start_time: string;
+  date: string;
+  time: string;
+  signup_url: string;
+  spots_remaining?: number;
+}
+
+export type RetentionContextTrigger = {
+  event_id: string;
+  name: string;
+  date: string;
+};
+
+/**
+ * @nullable
+ */
+export type RetentionContextPromo = {
+  code?: string;
+  offer_text?: string;
+} | null;
+
+export interface RetentionContext {
+  player_first_name?: string;
+  trigger: RetentionContextTrigger;
+  next_program?: RetentionProgram | null;
+  booked_event?: RetentionProgram | null;
+  /** @minimum 0 */
+  classmates_signed_up: number;
+  already_booked: boolean;
+  /** @nullable */
+  promo?: RetentionContextPromo;
+  /** @nullable */
+  coupon_warning: string | null;
+  evaluated_at: string;
+  [key: string]: unknown;
+}
+
+export interface RetentionPlaybook {
+  key: string;
+  name: string;
+  enabled: boolean;
+  /** @nullable */
+  promo_code?: string | null;
+  /** @nullable */
+  offer_text?: string | null;
+  next_program_names: string[];
+  message_guidance?: string;
+  /**
+   * @minimum 0
+   * @maximum 100
+   */
+  holdout_pct: number;
+}
+
+export interface RetentionMessage {
+  id: string;
+  body: string;
+  status: string;
+  /** @nullable */
+  approved_at?: string | null;
+  /** @nullable */
+  approved_by?: string | null;
+  /** @nullable */
+  scheduled_send_at?: string | null;
+  /** @nullable */
+  sent_at?: string | null;
+  simulated?: boolean;
+}
+
+export type RetentionCandidateStatus =
+  (typeof RetentionCandidateStatus)[keyof typeof RetentionCandidateStatus];
+
+export const RetentionCandidateStatus = {
+  drafted: "drafted",
+  approved: "approved",
+  skipped: "skipped",
+  sent: "sent",
+} as const;
+
+export type RetentionCandidatePlayer = {
+  /** @nullable */
+  name?: string | null;
+};
+
+export interface RetentionCandidate {
+  id: string;
+  player_id: string;
+  playbook_key: string;
+  trigger_event_id: string;
+  status: RetentionCandidateStatus;
+  context: RetentionContext;
+  player?: RetentionCandidatePlayer;
+  message?: RetentionMessage | null;
+}
+
+export type RetentionReviewMode = {
+  retention_only: boolean;
+  require_marketing_consent: boolean;
+  sms_live?: boolean;
+  test_override_configured?: boolean;
+  /** @nullable */
+  kill_switch?: boolean | null;
+};
+
+export interface RetentionReview {
+  schema_ready: boolean;
+  error?: string;
+  playbooks: RetentionPlaybook[];
+  candidates: RetentionCandidate[];
+  warnings: string[];
+  mode: RetentionReviewMode;
+}
+
+export interface RetentionGenerationResult {
+  created?: number;
+  skipped?: number;
+  errors?: unknown[];
+  [key: string]: unknown;
+}
+
+export interface RetentionActionResult {
+  approved?: number;
+  candidate?: RetentionCandidate;
+  errors?: unknown[];
+  [key: string]: unknown;
+}
+
+/**
+ * Club UUID; supply either clubId or slug
+ */
+export type RetentionClubParameter = string;
+
+/**
+ * Club slug; supply either clubId or slug
+ */
+export type RetentionSlugParameter = string;
+
+export type ListRetentionApprovalsParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type GenerateRetentionDraftsParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type UpdateRetentionKillSwitchParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type EditRetentionDraftParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type ApproveRetentionDraftParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type SkipRetentionDraftParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type ApproveRetentionPlaybookDraftsParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};

@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: retention
+    description: Draft-only retention generation and explicit message approvals
 paths:
   /healthz:
     get:
@@ -24,7 +26,159 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /retention/approvals:
+    get:
+      operationId: listRetentionApprovals
+      tags: [retention]
+      summary: List playbooks, reviewable drafts, context facts and coupon warnings
+      parameters:
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      responses:
+        "200":
+          description: Review queue, including explicit missing-schema state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionReview"
+  /retention/generate:
+    post:
+      operationId: generateRetentionDrafts
+      tags: [retention]
+      summary: Generate last-seven-day drafts only; never approve or send
+      parameters:
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      responses:
+        "200":
+          description: Generation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionGenerationResult"
+  /retention/kill-switch:
+    patch:
+      operationId: updateRetentionKillSwitch
+      tags: [retention]
+      summary: Pause or resume the global club SMS stop, without approving any message
+      parameters:
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionPauseInput"
+      responses:
+        "200":
+          description: Verified stop state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionActionResult"
+  /retention/candidates/{id}:
+    patch:
+      operationId: editRetentionDraft
+      tags: [retention]
+      summary: Edit a pending draft and revoke any existing approval and schedule
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionDraftUpdate"
+      responses:
+        "200":
+          description: Updated draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionActionResult"
+  /retention/candidates/{id}/approve:
+    post:
+      operationId: approveRetentionDraft
+      tags: [retention]
+      summary: Record explicit per-message approval and schedule the next open send slot
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionApprovalInput"
+      responses:
+        "200":
+          description: Approved, not synchronously sent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionActionResult"
+  /retention/candidates/{id}/skip:
+    post:
+      operationId: skipRetentionDraft
+      tags: [retention]
+      summary: Skip without sending
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      responses:
+        "200":
+          description: Skipped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionActionResult"
+  /retention/playbooks/{key}/approve:
+    post:
+      operationId: approveRetentionPlaybookDrafts
+      tags: [retention]
+      summary: Approve only the explicit reviewed candidate IDs in one playbook
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionBulkApprovalInput"
+      responses:
+        "200":
+          description: Per-message approval results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionActionResult"
 components:
+  parameters:
+    RetentionClub:
+      name: clubId
+      in: query
+      description: Club UUID; supply either clubId or slug
+      schema: {type: string, format: uuid}
+    RetentionSlug:
+      name: slug
+      in: query
+      description: Club slug; supply either clubId or slug
+      schema: {type: string}
+    RetentionId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +187,166 @@ components:
           type: string
       required:
         - status
+    RetentionDraftUpdate:
+      type: object
+      required: [body]
+      properties:
+        body: {type: string, minLength: 1}
+    RetentionApprovalInput:
+      type: object
+      required: [approved_by, expected_body]
+      properties:
+        approved_by:
+          type: string
+          minLength: 1
+          description: Explicit operator attribution label, not an authenticated identity
+        expected_body:
+          type: string
+          minLength: 1
+          description: Exact stored message text reviewed; stale approval requests are rejected
+    RetentionBulkApprovalInput:
+      type: object
+      required: [approved_by, candidate_ids, expected_bodies]
+      properties:
+        approved_by: {type: string, minLength: 1}
+        candidate_ids:
+          type: array
+          minItems: 1
+          items: {type: string, format: uuid}
+        expected_bodies:
+          type: object
+          additionalProperties: {type: string}
+          description: Candidate ID to exact reviewed stored message text
+    RetentionPauseInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: {type: boolean}
+    RetentionProgram:
+      type: object
+      required: [event_id, name, start_time, date, time, signup_url]
+      properties:
+        event_id: {type: string}
+        name: {type: string}
+        start_time: {type: string}
+        date: {type: string}
+        time: {type: string}
+        signup_url: {type: string}
+        spots_remaining: {type: integer}
+    RetentionContext:
+      type: object
+      additionalProperties: true
+      required: [trigger, classmates_signed_up, already_booked, coupon_warning, evaluated_at]
+      properties:
+        player_first_name: {type: string}
+        trigger:
+          type: object
+          required: [event_id, name, date]
+          properties:
+            event_id: {type: string}
+            name: {type: string}
+            date: {type: string}
+        next_program:
+          anyOf:
+            - $ref: "#/components/schemas/RetentionProgram"
+            - {type: "null"}
+        booked_event:
+          anyOf:
+            - $ref: "#/components/schemas/RetentionProgram"
+            - {type: "null"}
+        classmates_signed_up: {type: integer, minimum: 0}
+        already_booked: {type: boolean}
+        promo:
+          type: [object, "null"]
+          properties:
+            code: {type: string}
+            offer_text: {type: string}
+        coupon_warning: {type: [string, "null"]}
+        evaluated_at: {type: string}
+    RetentionPlaybook:
+      type: object
+      required: [key, name, enabled, next_program_names, holdout_pct]
+      properties:
+        key: {type: string}
+        name: {type: string}
+        enabled: {type: boolean}
+        promo_code: {type: [string, "null"]}
+        offer_text: {type: [string, "null"]}
+        next_program_names:
+          type: array
+          items: {type: string}
+        message_guidance: {type: string}
+        holdout_pct: {type: number, minimum: 0, maximum: 100}
+    RetentionMessage:
+      type: object
+      required: [id, body, status]
+      properties:
+        id: {type: string}
+        body: {type: string}
+        status: {type: string}
+        approved_at: {type: [string, "null"]}
+        approved_by: {type: [string, "null"]}
+        scheduled_send_at: {type: [string, "null"]}
+        sent_at: {type: [string, "null"]}
+        simulated: {type: boolean}
+    RetentionCandidate:
+      type: object
+      required: [id, player_id, playbook_key, trigger_event_id, status, context]
+      properties:
+        id: {type: string}
+        player_id: {type: string}
+        playbook_key: {type: string}
+        trigger_event_id: {type: string}
+        status: {type: string, enum: [drafted, approved, skipped, sent]}
+        context:
+          $ref: "#/components/schemas/RetentionContext"
+        player:
+          type: object
+          properties:
+            name: {type: [string, "null"]}
+        message:
+          anyOf:
+            - $ref: "#/components/schemas/RetentionMessage"
+            - {type: "null"}
+    RetentionReview:
+      type: object
+      required: [schema_ready, playbooks, candidates, warnings, mode]
+      properties:
+        schema_ready: {type: boolean}
+        error: {type: string}
+        playbooks:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionPlaybook"
+        candidates:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionCandidate"
+        warnings:
+          type: array
+          items: {type: string}
+        mode:
+          type: object
+          required: [retention_only, require_marketing_consent]
+          properties:
+            retention_only: {type: boolean}
+            require_marketing_consent: {type: boolean}
+            sms_live: {type: boolean}
+            test_override_configured: {type: boolean}
+            kill_switch: {type: [boolean, "null"]}
+    RetentionGenerationResult:
+      type: object
+      additionalProperties: true
+      properties:
+        created: {type: integer}
+        skipped: {type: integer}
+        errors: {type: array, items: {}}
+    RetentionActionResult:
+      type: object
+      additionalProperties: true
+      properties:
+        approved: {type: integer}
+        candidate:
+          $ref: "#/components/schemas/RetentionCandidate"
+        errors: {type: array, items: {}}
 

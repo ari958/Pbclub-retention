@@ -409,6 +409,7 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
           level:        levelTag,
           session_type,
           booked_at:    bookedAt,
+          coupon_code:  signup.couponCode ?? null,
         };
 
         // Keep higher-priority status; CONFIRMED/CHECKED_IN beats INVALID

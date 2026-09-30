@@ -22,6 +22,7 @@ import { supabase } from "./supabaseClient";
 import { loadArchetypes, classifyEvent } from "./classifyEvent";
 import { logger } from "./logger";
 import { INACTIVE_SIGNUP_STATUSES } from "./signupStatus";
+import { isRetentionOnlyMode } from "./retentionPolicy";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -208,6 +209,10 @@ export async function runEvaluator(
     decisions_skipped_existing: 0,
     errors: 0,
   };
+  if (isRetentionOnlyMode()) {
+    log("[evaluator] programming evaluation parked by RETENTION_ONLY_MODE");
+    return stats;
+  }
 
   log(`[evaluator] clubId=${clubId} dryRun=${dryRun}`);
 

@@ -4,8 +4,17 @@ import { getJob } from "../lib/jobStore";
 import { generateMonthlyRecap, runMonthlyRecapBatch } from "../lib/monthlyRecap";
 import { checkPlayerMilestones, runMilestoneBatch } from "../lib/milestoneCheck";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { isRetentionOnlyMode } from "../lib/retentionPolicy";
 
 const router: IRouter = Router();
+
+router.use("/recap", (req, res, next) => {
+  if (isRetentionOnlyMode()) {
+    res.status(423).json({ error: "Legacy recap and milestone tools are parked by RETENTION_ONLY_MODE" });
+    return;
+  }
+  next();
+});
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

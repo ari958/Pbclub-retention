@@ -137,6 +137,16 @@ UPDATE clubs SET onboarded = true, platform = 'podplay' WHERE onboarded = false;
 
 ## Developer Documentation
 
+### Approved retention mode
+
+- Preserve legacy feature code; disable/park it rather than deleting it.
+- `RETENTION_ONLY_MODE` defaults true, `REQUIRE_MARKETING_CONSENT` defaults false, and `VITE_NAV_MODE=retention` selects the approvals-focused navigation.
+- Explicit per-message approval is a global dispatch requirement, not a flag that retention mode may bypass. Edits invalidate approvals; approvals must bind the operator's exact reviewed text.
+- The typed `approved_by` label is not authenticated identity. Do not describe it as staff sign-in.
+- The application database is the existing external Supabase project. Apply migration `010_retention_approvals.sql` manually there; never substitute the local Replit `DATABASE_URL`.
+- New retention tables/RPCs are service-role-only, with no anonymous/authenticated table grants. This is an exception to the older general grant note below.
+- Follow `RETENTION_ROLLOUT.md` for controlled operator-only acceptance, test-ledger semantics and ambiguous-send reconciliation. Do not declare live acceptance complete from mock tests or a screenshot.
+
 Full technical reference is maintained at `pulse-technical-docs.md` in the project root.
 Update it whenever you make significant changes: new tables, new API routes, new engines, schema changes, or ops procedure changes.
 

@@ -5,6 +5,7 @@ import { useToast } from "@/components/Toast";
 import { toTitleCase } from "@/lib/helpers";
 import type { MessageTemplate } from "@/lib/types";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
+import { RETENTION } from "@/lib/navMode";
 import { COMMON_TIMEZONES } from "@/lib/timezones";
 
 const D = {
@@ -763,8 +764,8 @@ export default function Settings() {
                   )}
                 </div>
 
-                {/* Agent config card */}
-                <div style={cardStyle}>
+                {/* Agent config card (parked in retention mode) */}
+                {!RETENTION && <div style={cardStyle}>
                   <div style={cardHeadStyle}>Agent Configuration</div>
                   <div style={{ padding: "4px 0" }}>
                     {configEntries.length === 0 ? (
@@ -811,7 +812,7 @@ export default function Settings() {
                       Sync and agent runs are scheduled nightly at your configured time. Manual triggers are available for testing but may affect PodPlay performance during business hours.
                     </span>
                   </div>
-                </div>
+                </div>}
 
                 <SyncLogPanel />
               </>
@@ -819,7 +820,7 @@ export default function Settings() {
           </div>
 
           {/* ── Monthly Recap & Milestones ── */}
-          <RecapMilestonesPanel />
+          {!RETENTION && <RecapMilestonesPanel />}
 
           {/* ── Message Templates ── */}
           <div style={cardStyle}>

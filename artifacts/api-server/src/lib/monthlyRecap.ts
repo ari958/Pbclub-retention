@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import { startJob, finishJob, appendJobLog } from "./jobStore";
 import { logger } from "./logger";
 import type { BatchResult } from "./milestoneCheck";
+import { isRetentionOnlyMode } from "./retentionPolicy";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -30,6 +31,9 @@ export async function generateMonthlyRecap(
   year: number,
   dryRun = false
 ): Promise<{ skipped: boolean; reason?: string; message_body?: string; stats?: any }> {
+  if (isRetentionOnlyMode()) {
+    return { skipped: true, reason: "Legacy monthly recap generation is parked by RETENTION_ONLY_MODE" };
+  }
   const recapKey = recapMonthKey(month, year);
 
   // 1. Fetch player
@@ -234,6 +238,9 @@ export async function runMonthlyRecapBatch(
   month: number,
   year: number
 ): Promise<BatchResult> {
+  if (isRetentionOnlyMode()) {
+    throw new Error("Legacy monthly recap generation is parked by RETENTION_ONLY_MODE");
+  }
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, `Monthly recap batch started — ${monthName(month)} ${year}`);
 

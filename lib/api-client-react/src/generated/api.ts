@@ -5,18 +5,37 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  ApproveRetentionDraftParams,
+  ApproveRetentionPlaybookDraftsParams,
+  EditRetentionDraftParams,
+  GenerateRetentionDraftsParams,
+  HealthStatus,
+  ListRetentionApprovalsParams,
+  RetentionActionResult,
+  RetentionApprovalInput,
+  RetentionBulkApprovalInput,
+  RetentionDraftUpdate,
+  RetentionGenerationResult,
+  RetentionPauseInput,
+  RetentionReview,
+  SkipRetentionDraftParams,
+  UpdateRetentionKillSwitchParams,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +118,807 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ */
+export const getListRetentionApprovalsUrl = (
+  params?: ListRetentionApprovalsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/approvals?${stringifiedParams}`
+    : `/api/retention/approvals`;
+};
+
+export const listRetentionApprovals = async (
+  params?: ListRetentionApprovalsParams,
+  options?: RequestInit,
+): Promise<RetentionReview> => {
+  return customFetch<RetentionReview>(getListRetentionApprovalsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getListRetentionApprovalsQueryKey = (
+  params?: ListRetentionApprovalsParams,
+) => {
+  return [`/api/retention/approvals`, ...(params ? [params] : [])] as const;
+};
+
+export const getListRetentionApprovalsQueryOptions = <
+  TData = Awaited<ReturnType<typeof listRetentionApprovals>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRetentionApprovalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRetentionApprovals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getListRetentionApprovalsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof listRetentionApprovals>>
+  > = ({ signal }) =>
+    listRetentionApprovals(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof listRetentionApprovals>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type ListRetentionApprovalsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof listRetentionApprovals>>
+>;
+export type ListRetentionApprovalsQueryError = ErrorType<unknown>;
+
+/**
+ * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ */
+
+export function useListRetentionApprovals<
+  TData = Awaited<ReturnType<typeof listRetentionApprovals>>,
+  TError = ErrorType<unknown>,
+>(
+  params?: ListRetentionApprovalsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof listRetentionApprovals>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getListRetentionApprovalsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Generate last-seven-day drafts only; never approve or send
+ */
+export const getGenerateRetentionDraftsUrl = (
+  params?: GenerateRetentionDraftsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/generate?${stringifiedParams}`
+    : `/api/retention/generate`;
+};
+
+export const generateRetentionDrafts = async (
+  params?: GenerateRetentionDraftsParams,
+  options?: RequestInit,
+): Promise<RetentionGenerationResult> => {
+  return customFetch<RetentionGenerationResult>(
+    getGenerateRetentionDraftsUrl(params),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getGenerateRetentionDraftsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateRetentionDrafts>>,
+    TError,
+    { params?: GenerateRetentionDraftsParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof generateRetentionDrafts>>,
+  TError,
+  { params?: GenerateRetentionDraftsParams },
+  TContext
+> => {
+  const mutationKey = ["generateRetentionDrafts"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof generateRetentionDrafts>>,
+    { params?: GenerateRetentionDraftsParams }
+  > = (props) => {
+    const { params } = props ?? {};
+
+    return generateRetentionDrafts(params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GenerateRetentionDraftsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof generateRetentionDrafts>>
+>;
+
+export type GenerateRetentionDraftsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Generate last-seven-day drafts only; never approve or send
+ */
+export const useGenerateRetentionDrafts = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof generateRetentionDrafts>>,
+    TError,
+    { params?: GenerateRetentionDraftsParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof generateRetentionDrafts>>,
+  TError,
+  { params?: GenerateRetentionDraftsParams },
+  TContext
+> => {
+  return useMutation(getGenerateRetentionDraftsMutationOptions(options));
+};
+
+/**
+ * @summary Pause or resume the global club SMS stop, without approving any message
+ */
+export const getUpdateRetentionKillSwitchUrl = (
+  params?: UpdateRetentionKillSwitchParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/kill-switch?${stringifiedParams}`
+    : `/api/retention/kill-switch`;
+};
+
+export const updateRetentionKillSwitch = async (
+  retentionPauseInput: RetentionPauseInput,
+  params?: UpdateRetentionKillSwitchParams,
+  options?: RequestInit,
+): Promise<RetentionActionResult> => {
+  return customFetch<RetentionActionResult>(
+    getUpdateRetentionKillSwitchUrl(params),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionPauseInput),
+    },
+  );
+};
+
+export const getUpdateRetentionKillSwitchMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRetentionKillSwitch>>,
+    TError,
+    {
+      data: BodyType<RetentionPauseInput>;
+      params?: UpdateRetentionKillSwitchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateRetentionKillSwitch>>,
+  TError,
+  {
+    data: BodyType<RetentionPauseInput>;
+    params?: UpdateRetentionKillSwitchParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateRetentionKillSwitch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateRetentionKillSwitch>>,
+    {
+      data: BodyType<RetentionPauseInput>;
+      params?: UpdateRetentionKillSwitchParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return updateRetentionKillSwitch(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateRetentionKillSwitchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateRetentionKillSwitch>>
+>;
+export type UpdateRetentionKillSwitchMutationBody =
+  BodyType<RetentionPauseInput>;
+export type UpdateRetentionKillSwitchMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Pause or resume the global club SMS stop, without approving any message
+ */
+export const useUpdateRetentionKillSwitch = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRetentionKillSwitch>>,
+    TError,
+    {
+      data: BodyType<RetentionPauseInput>;
+      params?: UpdateRetentionKillSwitchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateRetentionKillSwitch>>,
+  TError,
+  {
+    data: BodyType<RetentionPauseInput>;
+    params?: UpdateRetentionKillSwitchParams;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateRetentionKillSwitchMutationOptions(options));
+};
+
+/**
+ * @summary Edit a pending draft and revoke any existing approval and schedule
+ */
+export const getEditRetentionDraftUrl = (
+  id: string,
+  params?: EditRetentionDraftParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}?${stringifiedParams}`
+    : `/api/retention/candidates/${id}`;
+};
+
+export const editRetentionDraft = async (
+  id: string,
+  retentionDraftUpdate: RetentionDraftUpdate,
+  params?: EditRetentionDraftParams,
+  options?: RequestInit,
+): Promise<RetentionActionResult> => {
+  return customFetch<RetentionActionResult>(
+    getEditRetentionDraftUrl(id, params),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionDraftUpdate),
+    },
+  );
+};
+
+export const getEditRetentionDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof editRetentionDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionDraftUpdate>;
+      params?: EditRetentionDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof editRetentionDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionDraftUpdate>;
+    params?: EditRetentionDraftParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["editRetentionDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof editRetentionDraft>>,
+    {
+      id: string;
+      data: BodyType<RetentionDraftUpdate>;
+      params?: EditRetentionDraftParams;
+    }
+  > = (props) => {
+    const { id, data, params } = props ?? {};
+
+    return editRetentionDraft(id, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type EditRetentionDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof editRetentionDraft>>
+>;
+export type EditRetentionDraftMutationBody = BodyType<RetentionDraftUpdate>;
+export type EditRetentionDraftMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Edit a pending draft and revoke any existing approval and schedule
+ */
+export const useEditRetentionDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof editRetentionDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionDraftUpdate>;
+      params?: EditRetentionDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof editRetentionDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionDraftUpdate>;
+    params?: EditRetentionDraftParams;
+  },
+  TContext
+> => {
+  return useMutation(getEditRetentionDraftMutationOptions(options));
+};
+
+/**
+ * @summary Record explicit per-message approval and schedule the next open send slot
+ */
+export const getApproveRetentionDraftUrl = (
+  id: string,
+  params?: ApproveRetentionDraftParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}/approve?${stringifiedParams}`
+    : `/api/retention/candidates/${id}/approve`;
+};
+
+export const approveRetentionDraft = async (
+  id: string,
+  retentionApprovalInput: RetentionApprovalInput,
+  params?: ApproveRetentionDraftParams,
+  options?: RequestInit,
+): Promise<RetentionActionResult> => {
+  return customFetch<RetentionActionResult>(
+    getApproveRetentionDraftUrl(id, params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionApprovalInput),
+    },
+  );
+};
+
+export const getApproveRetentionDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveRetentionDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionApprovalInput>;
+      params?: ApproveRetentionDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveRetentionDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionApprovalInput>;
+    params?: ApproveRetentionDraftParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["approveRetentionDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveRetentionDraft>>,
+    {
+      id: string;
+      data: BodyType<RetentionApprovalInput>;
+      params?: ApproveRetentionDraftParams;
+    }
+  > = (props) => {
+    const { id, data, params } = props ?? {};
+
+    return approveRetentionDraft(id, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveRetentionDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveRetentionDraft>>
+>;
+export type ApproveRetentionDraftMutationBody =
+  BodyType<RetentionApprovalInput>;
+export type ApproveRetentionDraftMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Record explicit per-message approval and schedule the next open send slot
+ */
+export const useApproveRetentionDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveRetentionDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionApprovalInput>;
+      params?: ApproveRetentionDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approveRetentionDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionApprovalInput>;
+    params?: ApproveRetentionDraftParams;
+  },
+  TContext
+> => {
+  return useMutation(getApproveRetentionDraftMutationOptions(options));
+};
+
+/**
+ * @summary Skip without sending
+ */
+export const getSkipRetentionDraftUrl = (
+  id: string,
+  params?: SkipRetentionDraftParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}/skip?${stringifiedParams}`
+    : `/api/retention/candidates/${id}/skip`;
+};
+
+export const skipRetentionDraft = async (
+  id: string,
+  params?: SkipRetentionDraftParams,
+  options?: RequestInit,
+): Promise<RetentionActionResult> => {
+  return customFetch<RetentionActionResult>(
+    getSkipRetentionDraftUrl(id, params),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getSkipRetentionDraftMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof skipRetentionDraft>>,
+    TError,
+    { id: string; params?: SkipRetentionDraftParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof skipRetentionDraft>>,
+  TError,
+  { id: string; params?: SkipRetentionDraftParams },
+  TContext
+> => {
+  const mutationKey = ["skipRetentionDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof skipRetentionDraft>>,
+    { id: string; params?: SkipRetentionDraftParams }
+  > = (props) => {
+    const { id, params } = props ?? {};
+
+    return skipRetentionDraft(id, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SkipRetentionDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof skipRetentionDraft>>
+>;
+
+export type SkipRetentionDraftMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Skip without sending
+ */
+export const useSkipRetentionDraft = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof skipRetentionDraft>>,
+    TError,
+    { id: string; params?: SkipRetentionDraftParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof skipRetentionDraft>>,
+  TError,
+  { id: string; params?: SkipRetentionDraftParams },
+  TContext
+> => {
+  return useMutation(getSkipRetentionDraftMutationOptions(options));
+};
+
+/**
+ * @summary Approve only the explicit reviewed candidate IDs in one playbook
+ */
+export const getApproveRetentionPlaybookDraftsUrl = (
+  key: string,
+  params?: ApproveRetentionPlaybookDraftsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/playbooks/${key}/approve?${stringifiedParams}`
+    : `/api/retention/playbooks/${key}/approve`;
+};
+
+export const approveRetentionPlaybookDrafts = async (
+  key: string,
+  retentionBulkApprovalInput: RetentionBulkApprovalInput,
+  params?: ApproveRetentionPlaybookDraftsParams,
+  options?: RequestInit,
+): Promise<RetentionActionResult> => {
+  return customFetch<RetentionActionResult>(
+    getApproveRetentionPlaybookDraftsUrl(key, params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionBulkApprovalInput),
+    },
+  );
+};
+
+export const getApproveRetentionPlaybookDraftsMutationOptions = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>,
+    TError,
+    {
+      key: string;
+      data: BodyType<RetentionBulkApprovalInput>;
+      params?: ApproveRetentionPlaybookDraftsParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>,
+  TError,
+  {
+    key: string;
+    data: BodyType<RetentionBulkApprovalInput>;
+    params?: ApproveRetentionPlaybookDraftsParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["approveRetentionPlaybookDrafts"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>,
+    {
+      key: string;
+      data: BodyType<RetentionBulkApprovalInput>;
+      params?: ApproveRetentionPlaybookDraftsParams;
+    }
+  > = (props) => {
+    const { key, data, params } = props ?? {};
+
+    return approveRetentionPlaybookDrafts(key, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ApproveRetentionPlaybookDraftsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>
+>;
+export type ApproveRetentionPlaybookDraftsMutationBody =
+  BodyType<RetentionBulkApprovalInput>;
+export type ApproveRetentionPlaybookDraftsMutationError = ErrorType<unknown>;
+
+/**
+ * @summary Approve only the explicit reviewed candidate IDs in one playbook
+ */
+export const useApproveRetentionPlaybookDrafts = <
+  TError = ErrorType<unknown>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>,
+    TError,
+    {
+      key: string;
+      data: BodyType<RetentionBulkApprovalInput>;
+      params?: ApproveRetentionPlaybookDraftsParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof approveRetentionPlaybookDrafts>>,
+  TError,
+  {
+    key: string;
+    data: BodyType<RetentionBulkApprovalInput>;
+    params?: ApproveRetentionPlaybookDraftsParams;
+  },
+  TContext
+> => {
+  return useMutation(getApproveRetentionPlaybookDraftsMutationOptions(options));
+};

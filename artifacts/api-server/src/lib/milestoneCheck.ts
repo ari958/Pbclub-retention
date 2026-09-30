@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { supabase } from "./supabaseClient";
 import { startJob, finishJob, appendJobLog } from "./jobStore";
 import { logger } from "./logger";
+import { isRetentionOnlyMode } from "./retentionPolicy";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -32,6 +33,9 @@ export async function checkPlayerMilestones(
   playerId: string,
   dryRun = false
 ): Promise<{ checked: boolean; triggered: MilestoneType | null; reason?: string; message_body?: string; all_previews?: any[] }> {
+  if (isRetentionOnlyMode()) {
+    return { checked: false, triggered: null, reason: "Legacy milestone generation is parked by RETENTION_ONLY_MODE" };
+  }
   // 1. Fetch player
   const { data: player, error: playerErr } = await supabase
     .from("players")
@@ -329,6 +333,9 @@ function computeMilestoneDecision(
 }
 
 export async function runMilestoneBatch(): Promise<BatchResult> {
+  if (isRetentionOnlyMode()) {
+    throw new Error("Legacy milestone generation is parked by RETENTION_ONLY_MODE");
+  }
   await startJob(JOB_ID);
   await appendJobLog(JOB_ID, "Milestone batch started");
 

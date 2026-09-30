@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useNavigate, useLocation, useParams } from "react-router-dom";
 import { ToastProvider } from "./components/Toast";
 import { Component, type ReactNode, useEffect, useState } from "react";
 import { ClubProvider, useClubStatus } from "./lib/ClubContext";
@@ -11,6 +11,8 @@ import SessionFeedback from "./pages/SessionFeedback";
 import Programming from "./pages/Programming";
 import Programs from "./pages/Programs";
 import Rules from "./pages/Rules";
+import Approvals from "./pages/Approvals";
+import { RETENTION } from "./lib/navMode";
 import Onboarding from "./pages/Onboarding";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -114,6 +116,13 @@ class ErrorBoundary extends Component<
     }
     return this.props.children;
   }
+}
+
+// Parked pages: code kept, deep links redirect to Approvals in retention mode.
+function Parked({ children }: { children: ReactNode }) {
+  const { slug } = useParams();
+  if (RETENTION) return <Navigate to={`/c/${slug}/approvals`} replace />;
+  return <>{children}</>;
 }
 
 // ─── 404 ──────────────────────────────────────────────────────────────────────
@@ -281,11 +290,19 @@ export default function App() {
             <Route path="/onboarding" element={<Onboarding />} />
 
             {/* Root redirect → default club (single-club Phase 0) */}
-            <Route path="/" element={<Navigate to="/c/pb-club/dashboard" replace />} />
+            <Route path="/" element={<Navigate to={RETENTION ? "/c/pb-club/approvals" : "/c/pb-club/dashboard"} replace />} />
 
             {/* Club-scoped routes — all gated by ClubLayout */}
             <Route path="/c/:slug" element={<ClubLayout />}>
-              <Route index element={<Navigate to="dashboard" replace />} />
+              <Route index element={<Navigate to={RETENTION ? "approvals" : "dashboard"} replace />} />
+              <Route
+                path="approvals"
+                element={
+                  <ErrorBoundary pageName="Approvals">
+                    <Approvals />
+                  </ErrorBoundary>
+                }
+              />
               <Route
                 path="dashboard"
                 element={
@@ -329,33 +346,42 @@ export default function App() {
               <Route
                 path="feedback"
                 element={
-                  <ErrorBoundary pageName="Session Feedback">
-                    <SessionFeedback />
-                  </ErrorBoundary>
+                  <Parked>
+                    <ErrorBoundary pageName="Session Feedback">
+                      <SessionFeedback />
+                    </ErrorBoundary>
+                  </Parked>
                 }
               />
               <Route
                 path="programming"
                 element={
-                  <ErrorBoundary pageName="Programming">
-                    <Programming />
-                  </ErrorBoundary>
+                  <Parked>
+                    <ErrorBoundary pageName="Programming">
+                      <Programming />
+                    </ErrorBoundary>
+                  </Parked>
                 }
               />
               <Route
                 path="programs"
                 element={
-                  <ErrorBoundary pageName="Programs">
-                    <Programs />
-                  </ErrorBoundary>
+                  <Parked>
+                    <ErrorBoundary pageName="Programs">
+                      <Programs />
+                    </ErrorBoundary>
+                  </Parked>
                 }
               />
+              <Route path="experiments" element={<Parked><Navigate to="../approvals" replace /></Parked>} />
               <Route
                 path="rules"
                 element={
-                  <ErrorBoundary pageName="Rules">
-                    <Rules />
-                  </ErrorBoundary>
+                  <Parked>
+                    <ErrorBoundary pageName="Rules">
+                      <Rules />
+                    </ErrorBoundary>
+                  </Parked>
                 }
               />
             </Route>

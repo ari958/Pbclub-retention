@@ -1163,3 +1163,20 @@ Current onboarding flow is single-tenant only:
 - `POST /api/onboarding/complete` should write `onboarded=true` for the specific club being onboarded
 
 Owner work, not Phase 0. Track separately.
+
+---
+
+## Approved retention platform
+
+Source specification: `attached_assets/Pasted-Goal-refocus-the-platform-on-approved-retention-texts-N_1790805749931.txt`. Rollout and acceptance procedure: `RETENTION_ROLLOUT.md`.
+
+- Migration `artifacts/api-server/migrations/010_retention_approvals.sql` is for the existing external Supabase SQL Editor. It adds message approval/body binding/atomic claims; attendance coupon codes; test-aware, message-idempotent ledger columns; `retention_playbooks`; `retention_candidates`; and service-role-only transactional RPCs. Legacy pending unapproved rows are archived using a fixed cutoff, not deleted.
+- The seeded `ltp_followup` playbook uses `LTPNEXT25`, the exact 25% offer and three requested beginner program names, with holdout zero.
+- `retentionEngine`, `retentionContext`, `retentionCoupons`, and `retentionText` separate trigger selection, authoritative PodPlay context, coupon validation, and Claude structured-tool text writing. Nightly successful attendance sync invokes draft generation only. `syncEventAttendance.js` now stores signup `couponCode`.
+- The Approvals API is club-scoped: list, generate, edit candidate, approve candidate, skip candidate, bulk approve explicit playbook candidate IDs, and change the global kill switch. The canonical contracts are in `lib/api-spec/openapi.yaml`.
+- Individual approval includes `expected_body`; bulk approval includes an `expected_bodies` snapshot keyed by candidate ID. The RPC compares the reviewed text under row locks before approving. Changes revoke approval and schedule. Stale approval requests do not authorize newer text.
+- Shared `sendViaTwilio` is the authority for approvals, final-body/recipient matching, eligibility, dispatch claims, TCPA windows, fail-closed kill reads, promo revalidation and real-send ledger bookkeeping. Test redirects are not original-player contacts; simulations have no ledger row.
+- The `/c/:slug/approvals` page displays each message beside its code-built facts, coupon/schema warnings, review controls, operator-label attribution and global pause controls. Legacy pages are parked by navigation mode, not removed.
+- Retention-only parking covers automatic feedback replies/scheduling, recap/milestone generation, programming evaluation and experiment dispatch. Approval remains mandatory across all modes and sending paths.
+
+See the rollout guide for what must be verified before enabling live delivery. Existing unauthenticated dashboard access and unrelated dashboard dependency/type-check failures are not solved by this feature.
