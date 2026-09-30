@@ -154,6 +154,7 @@ router.get("/programming/queue", async (req, res) => {
     .select("id, event_id, event_name, event_start_time, signup_count, total_teams, evaluated_at, rule_name, checkpoint_offset_hours, approved_at")
     .eq("club_id", clubId)
     .eq("decision", "PROMOTE")
+    .gt("event_start_time", new Date().toISOString())
     .order("event_start_time", { ascending: true });
 
   if (error) { res.status(500).json({ error: error.message }); return; }
@@ -251,7 +252,8 @@ router.patch("/programming/decisions/:id/approve", async (req, res) => {
 
 // ── GET /api/programming/decisions ────────────────────────────────────────────
 //
-// Query params: clubId (uuid), limit (default 50), offset (default 0)
+// Query params: clubId (uuid), scope (current|archived), limit (default 50), offset (default 0).
+// Omit scope to retain the original all-decisions API for other consumers.
 
 router.get("/programming/decisions", async (req, res) => {
   const clubId = req.query.clubId as string;
@@ -259,11 +261,19 @@ router.get("/programming/decisions", async (req, res) => {
 
   const limit  = Math.min(parseInt(req.query.limit  as string || "50", 10), 200);
   const offset = parseInt(req.query.offset as string || "0",  10);
+  const scope = req.query.scope as string | undefined;
+  if (scope && scope !== "current" && scope !== "archived") {
+    res.status(400).json({ error: "scope must be current or archived" }); return;
+  }
 
-  const { data, error, count } = await supabase
+  let query = supabase
     .from("programming_decisions")
     .select("*", { count: "exact" })
-    .eq("club_id", clubId)
+    .eq("club_id", clubId);
+  const now = new Date().toISOString();
+  if (scope === "current") query = query.gt("event_start_time", now);
+  if (scope === "archived") query = query.lte("event_start_time", now);
+  const { data, error, count } = await query
     .order("evaluated_at", { ascending: false })
     .range(offset, offset + limit - 1);
 

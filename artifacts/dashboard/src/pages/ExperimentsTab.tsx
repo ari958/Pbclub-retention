@@ -144,6 +144,7 @@ type View = "list" | "setup" | "detail" | "results";
 export default function ExperimentsTab({ api, clubId }: Props) {
   const [view, setView] = useState<View>("list");
   const [experiments, setExperiments] = useState<Experiment[]>([]);
+  const [now, setNow] = useState(() => Date.now());
   const [selectedExp, setSelectedExp] = useState<Experiment | null>(null);
   const [participants, setParticipants] = useState<Participant[]>([]);
   const [eligibleSessions, setEligibleSessions] = useState<EligibleSession[]>([]);
@@ -195,11 +196,13 @@ export default function ExperimentsTab({ api, clubId }: Props) {
     return r.json();
   }, [api, clubId]);
 
-  const loadExperiments = useCallback(async () => {
-    setLoading(true); setError(null);
+  const loadExperiments = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
+    setError(null);
     try {
       const d = await fetch_("/experiments");
       setExperiments(d.experiments ?? []);
+      setNow(Date.now());
     } catch (e: any) { setError(e.message); }
     finally { setLoading(false); }
   }, [fetch_]);
@@ -212,6 +215,16 @@ export default function ExperimentsTab({ api, clubId }: Props) {
   }, [fetch_]);
 
   useEffect(() => { loadExperiments(); }, [loadExperiments]);
+  useEffect(() => {
+    const id = setInterval(() => { void loadExperiments(true); }, 30_000);
+    return () => clearInterval(id);
+  }, [loadExperiments]);
+  useEffect(() => {
+    if (selectedExp?.event_start && new Date(selectedExp.event_start).getTime() <= now && view === "detail") {
+      setSelectedExp(null);
+      setView("list");
+    }
+  }, [now, selectedExp, view]);
 
   // ── List view ────────────────────────────────────────────────────────────────
 
@@ -399,6 +412,9 @@ export default function ExperimentsTab({ api, clubId }: Props) {
     navigator.clipboard.writeText(msgs).catch(() => {});
   }
 
+  const currentExperiments = experiments.filter(
+    e => e.event_start && new Date(e.event_start).getTime() > now,
+  );
   const treatment = participants.filter(p => p.arm === "treatment");
   const control   = participants.filter(p => p.arm === "control");
   const unsentTreatment = treatment.filter(p => !p.vetoed && !p.sent_at);
@@ -425,19 +441,19 @@ export default function ExperimentsTab({ api, clubId }: Props) {
       <div style={{ color: TEXT, fontFamily: "monospace" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
           <div style={{ color: TEXT2, fontSize: 12 }}>
-            {experiments.length} experiment{experiments.length !== 1 ? "s" : ""}
+            {currentExperiments.length} upcoming experiment{currentExperiments.length !== 1 ? "s" : ""}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            {experiments.some(e => ["measuring","complete"].includes(e.status)) && (
+            {currentExperiments.some(e => ["measuring","complete"].includes(e.status)) && (
               <button onClick={openResults} style={btnStyle(PURPLE)}>Pooled Results</button>
             )}
             <button onClick={loadSetup} style={btnStyle(BLUE)}>+ New Experiment</button>
           </div>
         </div>
 
-        {experiments.length === 0 ? (
+        {currentExperiments.length === 0 ? (
           <div style={{ color: TEXT2, textAlign: "center", padding: "48px 0" }}>
-            No experiments yet. Create one by picking an upcoming session.
+            No upcoming experiments. Past experiments are in Archive.
           </div>
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -449,7 +465,7 @@ export default function ExperimentsTab({ api, clubId }: Props) {
               </tr>
             </thead>
             <tbody>
-              {experiments.map(e => (
+              {currentExperiments.map(e => (
                 <tr key={e.id} style={{ borderBottom: `1px solid ${BORDER}22`, cursor: "pointer" }}
                     onClick={() => openDetail(e)}>
                   <td style={{ padding: "8px 10px", color: TEXT, maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{e.name}</td>

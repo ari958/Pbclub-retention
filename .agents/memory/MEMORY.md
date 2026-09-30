@@ -16,3 +16,4 @@
 - [Silent-failure audit](silent-failure-audit.md) — supabase-js never throws; ledger/holdout reads fail closed; dispatch_failed excluded from measurement; contact_ledger schema drifted from migration 007
 - [Phase 4.1 send path](phase41-send-path.md) — TWILIO_PHONE_NUMBER=+12015281834 (A2P approved, confirmed delivered); SMS_LIVE env var gates dispatch; experiment dispatch at POST /experiments/:id/send; migration 007 required for full flow
 - [DUPR refresh policy](dupr-refresh-policy.md) — track last check separately from rating source age, including unrated players; keep long imports heartbeat-alive and resume from saved batches.
+- [Programs history policy](programs-history-policy.md) — active screens default to upcoming programs; past records belong in Archive, not deletion or rewritten experiment statuses.

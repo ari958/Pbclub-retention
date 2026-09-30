@@ -142,18 +142,25 @@ function OnboardingGuard({ children }: { children: ReactNode }) {
       return;
     }
 
-    fetch("/api/onboarding/status")
+    // A deep link must check its own club, not the first club in the database.
+    const encodedSlug = location.pathname.match(/^\/c\/([^/]+)/)?.[1]
+      ?? (location.pathname === "/" ? "pb-club" : null);
+    const query = encodedSlug ? `?slug=${encodedSlug}` : "";
+    const controller = new AbortController();
+    const api = import.meta.env.BASE_URL.replace(/\/$/, "") + "/api";
+    fetch(`${api}/onboarding/status${query}`, { signal: controller.signal })
       .then((r) => r.json())
       .then((data: { onboarded?: boolean }) => {
-        if (data.onboarded === false) {
+        if (!controller.signal.aborted && data.onboarded === false) {
           navigate("/onboarding", { replace: true });
         }
       })
       .catch(() => {
         // On any network error fall through and show the dashboard
       })
-      .finally(() => setReady(true));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+      .finally(() => { if (!controller.signal.aborted) setReady(true); });
+    return () => controller.abort();
+  }, [location.pathname, navigate]);
 
   if (!ready) {
     return (

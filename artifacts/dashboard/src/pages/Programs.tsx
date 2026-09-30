@@ -13,6 +13,7 @@ import { useState, useEffect, useCallback, Fragment } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { useClubStatus } from "@/lib/ClubContext";
 import ExperimentsTab from "./ExperimentsTab";
+import ArchivedExperiments from "./ArchivedExperiments";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -124,14 +125,14 @@ function UpcomingRiskView({ clubId }: { clubId: string }) {
   const [evaluating, setEvaluating] = useState(false);
   const [evalMsg, setEvalMsg] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const r = await fetch(`${API}/programming/upcoming-risk?clubId=${clubId}`);
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       const d = await r.json();
-      setRows(d.rows ?? []);
+      setRows((d.rows ?? []).filter((row: any) => new Date(row.event_start_time).getTime() > Date.now()));
       setUpdatedAt(d.evaluated_at ?? null);
     } catch (e: any) {
       setError(e.message);
@@ -141,6 +142,12 @@ function UpcomingRiskView({ clubId }: { clubId: string }) {
   }, [clubId]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void load(true); };
+    const id = setInterval(refresh, 60_000);
+    window.addEventListener("focus", refresh);
+    return () => { clearInterval(id); window.removeEventListener("focus", refresh); };
+  }, [load]);
 
   async function runEvaluator() {
     setEvaluating(true);
@@ -197,7 +204,7 @@ function UpcomingRiskView({ clubId }: { clubId: string }) {
           </span>
         )}
         <button
-          onClick={load}
+          onClick={() => { void load(); }}
           style={{
             background: "none", border: `1px solid ${C.border}`,
             color: C.textSub, fontSize: 11, padding: "4px 10px",
@@ -330,7 +337,7 @@ function UpcomingRiskView({ clubId }: { clubId: string }) {
 
 // ── Decision Log view ─────────────────────────────────────────────────────────
 
-function DecisionLogView({ clubId }: { clubId: string }) {
+function DecisionLogView({ clubId, archived = false }: { clubId: string; archived?: boolean }) {
   const [decisions, setDecisions] = useState<any[]>([]);
   const [total, setTotal]         = useState(0);
   const [loading, setLoading]     = useState(true);
@@ -338,12 +345,12 @@ function DecisionLogView({ clubId }: { clubId: string }) {
   const [page, setPage]           = useState(0);
   const PAGE_SIZE = 50;
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setLoading(true);
     setError(null);
     try {
       const r = await fetch(
-        `${API}/programming/decisions?clubId=${clubId}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
+        `${API}/programming/decisions?clubId=${clubId}&scope=${archived ? "archived" : "current"}&limit=${PAGE_SIZE}&offset=${page * PAGE_SIZE}`,
       );
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       const d = await r.json();
@@ -354,9 +361,13 @@ function DecisionLogView({ clubId }: { clubId: string }) {
     } finally {
       setLoading(false);
     }
-  }, [clubId, page]);
+  }, [clubId, page, archived]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const id = setInterval(() => { void load(true); }, 30_000);
+    return () => clearInterval(id);
+  }, [load]);
 
   if (loading) {
     return <div style={{ color: C.textDim, fontSize: 13, padding: "40px 0" }}>Loading decisions…</div>;
@@ -372,8 +383,8 @@ function DecisionLogView({ clubId }: { clubId: string }) {
     return (
       <EmptyState
         icon="list"
-        title="No decisions recorded yet"
-        subtitle="Run the evaluator from the Upcoming Risk tab once rules are configured."
+        title={archived ? "No past decisions" : "No decisions for upcoming programs"}
+        subtitle={archived ? "Decisions will appear here after their program starts." : "Run the evaluator from Upcoming Risk to record decisions for current programs."}
       />
     );
   }
@@ -1018,6 +1029,7 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
       if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
       const d = await r.json();
       setQueue(d.queue ?? []);
+      setSelectedRow((row: any) => row && !(d.queue ?? []).some((item: any) => item.id === row.id) ? null : row);
       setChannelStats(d.channel_stats ?? null);
     } catch (e: any) {
       setError(e.message);
@@ -1061,8 +1073,8 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
     return (
       <EmptyState
         icon="list"
-        title="No PROMOTE decisions in queue"
-        subtitle="Run the evaluator from the Upcoming Risk tab. PROMOTE decisions appear here once a clinic falls below threshold."
+        title="No upcoming promotions in queue"
+        subtitle="Past programs are in Archive. Run the evaluator from Upcoming Risk to record new promotion decisions."
       />
     );
   }
@@ -1219,12 +1231,12 @@ function PromotionQueueView({ clubId }: { clubId: string }) {
 
 // ── Shared components ─────────────────────────────────────────────────────────
 
-type Tab = "queue" | "upcoming" | "log" | "experiments";
+type Tab = "queue" | "upcoming" | "log" | "experiments" | "archive";
 
 export default function Programs() {
   const clubCtx = useClubStatus();
   const clubId  = clubCtx.status === "ready" ? clubCtx.club.id : null;
-  const [tab, setTab] = useState<Tab>("queue");
+  const [tab, setTab] = useState<Tab>("upcoming");
 
   return (
     <div style={{ display: "flex", minHeight: "100vh", background: C.bg, fontFamily: C.sans }}>
@@ -1264,7 +1276,7 @@ export default function Programs() {
           borderBottom: `1px solid ${C.border}`,
           marginBottom: 28,
         }}>
-          {(["queue", "upcoming", "log", "experiments"] as Tab[]).map((t) => (
+          {(["upcoming", "queue", "log", "experiments", "archive"] as Tab[]).map((t) => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -1284,7 +1296,8 @@ export default function Programs() {
               {t === "queue" ? "Promotion Queue"
                : t === "upcoming" ? "Upcoming Risk"
                : t === "log" ? "Decision Log"
-               : "Experiments"}
+               : t === "experiments" ? "Experiments"
+               : "Archive"}
             </button>
           ))}
         </div>
@@ -1306,8 +1319,18 @@ export default function Programs() {
           <UpcomingRiskView clubId={clubId!} />
         ) : tab === "log" ? (
           <DecisionLogView clubId={clubId!} />
-        ) : (
+        ) : tab === "experiments" ? (
           <ExperimentsTab api={API} clubId={clubId!} />
+        ) : (
+          <div>
+            <div style={{ color: C.textSub, fontSize: 13, marginBottom: 24 }}>
+              Past programs are kept here for reference. Nothing is deleted.
+            </div>
+            <h2 style={{ color: C.text, fontSize: 16, margin: "0 0 14px" }}>Past decisions</h2>
+            <DecisionLogView clubId={clubId!} archived />
+            <h2 style={{ color: C.text, fontSize: 16, margin: "32px 0 14px" }}>Past experiments</h2>
+            <ArchivedExperiments api={API} clubId={clubId!} />
+          </div>
         )}
       </main>
     </div>
