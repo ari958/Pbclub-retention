@@ -96,143 +96,142 @@ async function fetchAllSupabasePlayers(log) {
 export async function syncDuprRatings(clubId, log = console.log, isCancelled = () => false) {
   if (!clubId) throw new Error("syncDuprRatings requires clubId");
 
-  // Fetch club details for API key and base URL
-  const { data: club } = await supabase
+  // Check schema BEFORE making any upstream calls. An old installation must
+  // fail explicitly rather than silently performing another full, slow pass.
+  const { error: schemaError } = await supabase.from("players")
+    .select("dupr_checked_at").eq("club_id", clubId).limit(1);
+  if (schemaError) throw new Error(`DUPR incremental schema unavailable (apply migration 010): ${schemaError.message}`);
+  const { error: rpcError } = await supabase.rpc("apply_dupr_rating_checks", {
+    p_club_id: clubId, p_checks: [],
+  });
+  if (rpcError) throw new Error(`DUPR batch writer unavailable (apply migration 010): ${rpcError.message}`);
+
+  const { data: club, error: clubError } = await supabase
     .from("clubs")
     .select("platform_api_key, platform_subdomain")
     .eq("id", clubId)
     .maybeSingle();
+  if (clubError) throw new Error(`Could not load club for DUPR sync: ${clubError.message}`);
   if (!club?.platform_subdomain) {
     throw new Error(`Club ${clubId} has no platform_subdomain`);
   }
   const podplayBase = `https://${club.platform_subdomain}.podplay.app`;
   const apiKey = club.platform_api_key ?? process.env.PODPLAY_API_KEY;
 
-  const DELAY_MS = 250;
-  const stats = { fetched: 0, updated: 0, skipped: 0, errors: 0 };
-  let firstResponseLogged = false;
-
+  const CHECK_INTERVAL_DAYS = 14;
+  const CONCURRENCY = 4;
+  const REQUEST_SPACING_MS = 350; // At most ~3 starts/second across workers.
+  const BATCH_SIZE = 50;
+  const cutoff = new Date(Date.now() - CHECK_INTERVAL_DAYS * 86400_000).toISOString();
+  const stats = { eligible: 0, fresh: 0, fetched: 0, updated: 0, skipped: 0, errors: 0 };
   const players = [];
-  {
-    let offset = 0;
-    const PAGE = 1000;
-    while (true) {
-      const { data, error } = await supabase
-        .from("players")
-        .select("id, external_id")
-        .eq("club_id", clubId)
-        .not("external_id", "is", null)
-        .range(offset, offset + PAGE - 1);
-      if (error) {
-        log(`[dupr] ERROR fetching players (offset ${offset}): ${error.message}`);
-        break;
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("players")
+      .select("id, external_id, dupr_checked_at")
+      .eq("club_id", clubId)
+      .not("external_id", "is", null)
+      .order("id")
+      .range(offset, offset + 999);
+    if (error) throw new Error(`Could not load DUPR candidates: ${error.message}`);
+    players.push(...data);
+    if (data.length < 1000) break;
+    offset += 1000;
+  }
+
+  const eligible = players.filter(p => !p.dupr_checked_at || p.dupr_checked_at < cutoff);
+  stats.eligible = eligible.length;
+  stats.fresh = players.length - eligible.length;
+  log(`[dupr] ${eligible.length}/${players.length} players due (14-day check interval); ${stats.fresh} fresh. Up to ${CONCURRENCY} concurrent, ${REQUEST_SPACING_MS}ms between starts.`);
+
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  let nextStartAt = 0;
+  let blockedUntil = 0;
+  async function waitForSlot() {
+    // JS runs this scheduling section synchronously before the first await.
+    const startAt = Math.max(Date.now(), nextStartAt, blockedUntil);
+    nextStartAt = startAt + REQUEST_SPACING_MS;
+    if (startAt > Date.now()) await pause(startAt - Date.now());
+    // A different worker may have received a 429 while we were waiting.
+    if (blockedUntil > Date.now()) await pause(blockedUntil - Date.now());
+  }
+  async function fetchRating(p) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (await isCancelled()) throw new CancelledError();
+      await waitForSlot();
+      try {
+        const res = await fetch(`${podplayBase}/apis/v2/users/${p.external_id}/ratings`, {
+          headers: { "x-api-key": apiKey },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (res.status === 429 || res.status >= 500) {
+          let retryMs = Math.min(15_000, 1000 * 2 ** attempt);
+          const retryAfter = res.headers.get("retry-after");
+          if (retryAfter) {
+            const seconds = Number(retryAfter);
+            const parsed = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(retryAfter) - Date.now();
+            if (Number.isFinite(parsed)) retryMs = Math.max(retryMs, Math.min(60_000, parsed));
+          }
+          blockedUntil = Math.max(blockedUntil, Date.now() + retryMs);
+          if (attempt < 2) continue;
+          throw new Error(`HTTP ${res.status} after retries`);
+        }
+        if (res.status === 404) {
+          stats.skipped++;
+          return { id: p.id, checked_at: new Date().toISOString() };
+        }
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await res.json();
+        stats.fetched++;
+        const duprItem = (body.items ?? []).find(item => item.type === "DUPR");
+        const rawRating = duprItem?.doubles ?? duprItem?.singles;
+        const rating = typeof rawRating === "number" && Number.isFinite(rawRating) ? rawRating : null;
+        if (rating === null) stats.skipped++;
+        const sourceDate = duprItem?.lastUpdated;
+        return {
+          id: p.id, checked_at: new Date().toISOString(), rating,
+          rating_updated_at: rating === null ? null :
+            (sourceDate && !Number.isNaN(Date.parse(sourceDate)) ? sourceDate : new Date().toISOString()),
+        };
+      } catch (err) {
+        if (attempt === 2) throw err;
+        blockedUntil = Math.max(blockedUntil, Date.now() + Math.min(15_000, 1000 * 2 ** attempt));
       }
-      players.push(...data);
-      if (data.length < PAGE) break;
-      offset += PAGE;
     }
   }
 
-  log(`[dupr] Starting DUPR sync for ${players.length} players (250 ms delay between calls)…`);
-
-  const updates = [];
-  const seenTypes = new Set();
-  let firstDuprItemLogged = false;
-
-  for (let i = 0; i < players.length; i++) {
+  for (let start = 0; start < eligible.length; start += BATCH_SIZE) {
     if (await isCancelled()) throw new CancelledError();
-
-    const p = players[i];
-    try {
-      const res = await fetch(`${podplayBase}/apis/v2/users/${p.external_id}/ratings`, {
-        headers: { "x-api-key": apiKey },
-        signal: AbortSignal.timeout(15_000),
-      });
-
-      if (res.status === 404) {
-        stats.skipped++;
-        if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped: ${stats.skipped} rated: ${updates.length}`);
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        continue;
-      }
-
-      if (!res.ok) {
-        log(`[dupr] WARN player ${p.id} HTTP ${res.status} — skipping`);
-        stats.skipped++;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        continue;
-      }
-
-      const data = await res.json();
-      stats.fetched++;
-
-      for (const item of (data.items ?? [])) {
-        if (item.type && !seenTypes.has(item.type)) {
-          seenTypes.add(item.type);
-          log(`[dupr] New item type seen: "${item.type}" — full item: ${JSON.stringify(item)}`);
+    const batch = eligible.slice(start, start + BATCH_SIZE);
+    const checks = [];
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, batch.length) }, async () => {
+      while (cursor < batch.length) {
+        const p = batch[cursor++];
+        try {
+          const check = await fetchRating(p);
+          checks.push(check);
+        } catch (err) {
+          if (err.name === "CancelledError") throw err;
+          stats.errors++;
+          log(`[dupr] ERROR checking player ${p.id}: ${err.message}`);
         }
       }
-
-      if (!firstResponseLogged) {
-        log(`[dupr] First /ratings response: ${JSON.stringify(data)}`);
-        firstResponseLogged = true;
-      }
-
-      const duprItem = (data.items ?? []).find(item => item.type === "DUPR");
-
-      if (duprItem && !firstDuprItemLogged) {
-        log(`[dupr] First DUPR item found (player ${p.id}): ${JSON.stringify(duprItem)}`);
-        firstDuprItemLogged = true;
-      }
-
-      if (!duprItem) {
-        stats.skipped++;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        continue;
-      }
-
-      const rating = duprItem.doubles ?? duprItem.singles ?? null;
-      if (typeof rating !== "number") {
-        log(`[dupr] DUPR item for player ${p.id} has no numeric rating — fields: ${Object.keys(duprItem).join(", ")}`);
-        stats.skipped++;
-        await new Promise(r => setTimeout(r, DELAY_MS));
-        continue;
-      }
-
-      updates.push({
-        id: p.id,
-        dupr_rating: rating,
-        dupr_updated_at: duprItem.lastUpdated ?? new Date().toISOString(),
-      });
-
-      if (i % 100 === 0) log(`[dupr] Progress: ${i}/${players.length} — skipped: ${stats.skipped} rated: ${updates.length}`);
-    } catch (err) {
-      if (err.name === "CancelledError") throw err;
-      log(`[dupr] ERROR player ${p.id} (ext=${p.external_id}): ${err.message}`);
-      stats.errors++;
-    }
-
-    await new Promise(r => setTimeout(r, DELAY_MS));
-  }
-
-  log(`[dupr] Types seen across all players: ${[...seenTypes].join(", ")}`);
-  log(`[dupr] Fetch pass complete — writing ${updates.length} ratings to DB…`);
-
-  for (const u of updates) {
+    }));
     if (await isCancelled()) throw new CancelledError();
-    const { error } = await supabase
-      .from("players")
-      .update({ dupr_rating: u.dupr_rating, dupr_updated_at: u.dupr_updated_at })
-      .eq("id", u.id);
-    if (error) {
-      log(`[dupr] DB UPDATE ERROR player ${u.id}: ${error.message}`);
-      stats.errors++;
-    } else {
-      stats.updated++;
+    if (checks.length) {
+      const { data: count, error } = await supabase.rpc("apply_dupr_rating_checks", {
+        p_club_id: clubId, p_checks: checks,
+      });
+      if (error) throw new Error(`DUPR batch write failed at ${start}/${eligible.length}: ${error.message}`);
+      if (count !== checks.length) throw new Error(`DUPR batch wrote ${count}/${checks.length} rows`);
+      stats.updated += checks.filter(c => c.rating !== null).length;
     }
+    log(`[dupr] Progress: ${Math.min(start + BATCH_SIZE, eligible.length)}/${eligible.length} checked — rated: ${stats.updated}, unrated: ${stats.skipped}, errors: ${stats.errors}`);
   }
 
-  log(`[dupr] ── DUPR sync complete — fetched: ${stats.fetched} | updated: ${stats.updated} | skipped: ${stats.skipped} | errors: ${stats.errors}`);
+  log(`[dupr] Complete — due: ${stats.eligible} | fresh: ${stats.fresh} | fetched: ${stats.fetched} | rated: ${stats.updated} | unrated: ${stats.skipped} | errors: ${stats.errors}`);
   return stats;
 }
 
@@ -439,6 +438,7 @@ export async function importAllPlayers(clubId, log = console.log, isCancelled = 
     stats.duprErrors  = duprStats.errors;
   } catch (err) {
     if (err.name === "CancelledError") throw err;
+    if (err.message.includes("apply migration 010")) throw err;
     log(`[import] DUPR sync failed (non-fatal): ${err.message}`);
   }
 

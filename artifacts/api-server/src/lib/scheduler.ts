@@ -71,6 +71,12 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
   const INCREMENTAL_DAYS_EFFECTIVE = incrementalDaysOverride ?? INCREMENTAL_DAYS;
   logger.info("[scheduler] Starting nightly chain");
   await startJob(JOB_NIGHTLY);
+  // The player import (especially DUPR) can take longer than the stale-job
+  // threshold. Keep both job records alive independently of request progress.
+  const heartbeat = setInterval(() => {
+    void Promise.all([heartbeatJob(JOB_NIGHTLY), heartbeatJob(JOB_IMPORT)]);
+  }, 30_000);
+  heartbeat.unref();
   await appendJobLog(
     JOB_NIGHTLY,
     incrementalDaysOverride
@@ -206,25 +212,31 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
       await appendJobLog(JOB_NIGHTLY, `Churn score recompute error (non-fatal): ${err.message}`);
     }
 
-    // Step 6: Milestone check (non-fatal)
+    // Manual data catch-up must not queue outbound milestone messages.
     await heartbeatJob(JOB_NIGHTLY);
-    try {
-      await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
-      const result = await runMilestoneBatch();
-      const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
-      await appendJobLog(JOB_NIGHTLY, `Step 6 complete — ${statsLine}`);
-      if (result.errors?.length) {
-        await appendJobLog(JOB_NIGHTLY, `Step 6 had ${result.errors.length} non-fatal errors`);
+    if (incrementalDaysOverride !== undefined) {
+      await appendJobLog(JOB_NIGHTLY, "Step 6: milestone messages skipped (manual catch-up)");
+    } else {
+      try {
+        await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
+        const result = await runMilestoneBatch();
+        const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
+        await appendJobLog(JOB_NIGHTLY, `Step 6 complete — ${statsLine}`);
+        if (result.errors?.length) {
+          await appendJobLog(JOB_NIGHTLY, `Step 6 had ${result.errors.length} non-fatal errors`);
+        }
+      } catch (err: any) {
+        await appendJobLog(JOB_NIGHTLY, `Milestone check error (non-fatal): ${err.message}`);
       }
-    } catch (err: any) {
-      await appendJobLog(JOB_NIGHTLY, `Milestone check error (non-fatal): ${err.message}`);
     }
 
     // Step 7: Monthly recap — only on 1st of month (non-fatal)
     await heartbeatJob(JOB_NIGHTLY);
     try {
       const now = new Date();
-      if (now.getDate() === 1) {
+      if (incrementalDaysOverride !== undefined) {
+        await appendJobLog(JOB_NIGHTLY, "Step 7: recap messages skipped (manual catch-up)");
+      } else if (now.getDate() === 1) {
         const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
         const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
         await appendJobLog(JOB_NIGHTLY, `Step 7: generating monthly recaps for ${priorYear}-${priorMonth}`);
@@ -311,6 +323,8 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     await finishJob(JOB_NIGHTLY, wasCancelled ? "cancelled" : "error", undefined, err.message);
     await appendJobLog(JOB_NIGHTLY, `Nightly chain ${wasCancelled ? "cancelled" : "failed"}: ${err.message}`);
     logger.error({ err }, "[scheduler] Nightly chain ended with error");
+  } finally {
+    clearInterval(heartbeat);
   }
 }
 

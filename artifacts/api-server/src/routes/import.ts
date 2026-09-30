@@ -3,7 +3,7 @@ import { Router, type IRouter } from "express";
 import { importAllPlayers, syncDuprRatings } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
 import { importPhoneNumbers } from "../importPhoneNumbers.js";
-import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel } from "../lib/jobStore";
+import { getJob, startJob, finishJob, appendJobLog, isCancelled, requestCancel, heartbeatJob } from "../lib/jobStore";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 
@@ -54,16 +54,20 @@ router.post("/import/players", requireClub, async (req, res) => {
     startedAt: new Date().toISOString(),
   });
 
+  const heartbeat = setInterval(() => { void heartbeatJob(JOB_IMPORT_PLAYERS); }, 30_000);
+  heartbeat.unref();
   importAllPlayers(
     clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_PLAYERS, msg),
     () => isCancelled(JOB_IMPORT_PLAYERS)
   )
     .then(async (stats: Record<string, number>) => {
+      clearInterval(heartbeat);
       await finishJob(JOB_IMPORT_PLAYERS, "done", stats);
       await appendJobLog(JOB_IMPORT_PLAYERS, "Import finished successfully");
     })
     .catch(async (err: Error) => {
+      clearInterval(heartbeat);
       if (err.name === "CancelledError") {
         await finishJob(JOB_IMPORT_PLAYERS, "cancelled");
         await appendJobLog(JOB_IMPORT_PLAYERS, "Import cancelled — safe to restart");
@@ -203,16 +207,20 @@ router.post("/import/dupr", requireClub, async (req, res) => {
     startedAt: new Date().toISOString(),
   });
 
+  const heartbeat = setInterval(() => { void heartbeatJob(JOB_IMPORT_DUPR); }, 30_000);
+  heartbeat.unref();
   syncDuprRatings(
     clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_DUPR, msg),
     () => isCancelled(JOB_IMPORT_DUPR)
   )
     .then(async (stats: Record<string, number>) => {
+      clearInterval(heartbeat);
       await finishJob(JOB_IMPORT_DUPR, "done", stats);
       await appendJobLog(JOB_IMPORT_DUPR, "DUPR sync finished successfully");
     })
     .catch(async (err: Error) => {
+      clearInterval(heartbeat);
       if (err.name === "CancelledError") {
         await finishJob(JOB_IMPORT_DUPR, "cancelled");
         await appendJobLog(JOB_IMPORT_DUPR, "DUPR sync cancelled");
