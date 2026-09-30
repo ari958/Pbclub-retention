@@ -63,3 +63,17 @@ mtime_ms = 1790804636726
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/46e1fad1-8f01-4cde-8596-3cfbfdf0fb1b/73da8a1e-8cb7-43fd-a63b-39412f48a633"
 storage_version_token = "1790804654068725"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "DkPYehUkj0F_Zg9lUIrQn"
+uri = "file://FRONTEND_INVENTORY.md"
+type = "text"
+title = "Frontend inventory"
+description = "Read-only dashboard map: navigation modes, every page and route, shared features, APIs and tables, runtime errors, parked code, and mockup sandbox/deployment status."
+logical_id = "aa9dddac-59c7-49ed-80ec-667439f2b561"
+content_hash = "sha256:01f77f01c18cfb1300c03723bd131b70062a57656de4daae6777c70ba742ffcd"
+size = 45635
+mtime_ms = 1790811135224
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/aa9dddac-59c7-49ed-80ec-667439f2b561/f10aae3a-5cdb-4a13-a3c7-d0d36100010a"
+storage_version_token = "1790811151225030"
+content_type = "text/markdown"
