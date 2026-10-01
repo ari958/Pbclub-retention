@@ -161,6 +161,25 @@ function withGenerationMetadata(
   };
 }
 
+function canGenerateRetentionText(context: RetentionContext): boolean {
+  if (context.variant === "no_program") {
+    return context.next_program === null
+      && context.promo?.code === "LTPNEXT25"
+      && !!context.promo.offer_text.trim();
+  }
+  if (context.variant === "with_program") return !!context.next_program;
+  // Legacy contexts may be treated as with-program only when that program exists.
+  return !!context.next_program;
+}
+
+function contextGenerationBlockReason(context: RetentionContext): string {
+  if (context.variant === "no_program"
+    && (context.promo?.code !== "LTPNEXT25" || !context.promo.offer_text.trim())) {
+    return "coupon_not_verified";
+  }
+  return "context_incomplete";
+}
+
 function failureContext(
   player: { name?: string | null },
   trigger: VerifiedRetentionTrigger,
@@ -430,26 +449,10 @@ export async function generateRetentionDrafts(
   }
   if (!eligible.length) return result;
 
-  const eventIds = [...new Set(eligible.map((c) => c.trigger.event_id).filter(Boolean))];
-  const classRows = eventIds.length ? await pageAll<any>((from, to) => supabase.from("attendances")
-    .select("event_id,player_id,players!inner(club_id)").eq("players.club_id", clubId)
-    .in("event_id", eventIds).range(from, to)) : [];
-  const classPlayers = new Map<string, Set<string>>();
-  for (const row of classRows) {
-    const list = classPlayers.get(row.event_id) ?? new Set<string>();
-    list.add(row.player_id);
-    classPlayers.set(row.event_id, list);
-  }
-  const classPlayerIds = [...new Set(classRows.map((row: any) => row.player_id))];
-  const classRoster = classPlayerIds.length ? await pageAll<any>((from, to) => supabase.from("players")
-    .select("id,external_id").eq("club_id", clubId).in("id", classPlayerIds).range(from, to)) : [];
-  const externalIds = new Map([...players, ...classRoster].map((player) => [player.id, player.external_id]));
   const socialEventsCache = new Map<string, Promise<any[]>>();
   const socialSignupsCache = new Map<string, Promise<string[]>>();
   await withConcurrency(eligible, CONCURRENCY, async ({ playerId, trigger, verifiedDate, verifiedName }) => {
     const player = playerMap.get(playerId)!;
-    const classmatesExternalIds = [...(classPlayers.get(trigger.event_id) ?? [])]
-      .filter((id) => id !== playerId).map((id) => externalIds.get(id)).filter(Boolean) as string[];
     const verifiedTrigger = { date: verifiedDate, name: verifiedName, start_time: "" };
     const intendedSendAt = intendedRetentionSendAt();
     let candidateContext: RetentionContext | null = null;
@@ -462,12 +465,13 @@ export async function generateRetentionDrafts(
       const context = await buildRetentionContext({
         clubId, player, playbook,
         trigger: { event_id: trigger.event_id, name: verifiedName, date: verifiedDate },
-        classmatesExternalIds, socialEventsCache, socialSignupsCache, clubCache, couponCache,
+        classmatesExternalIds: () => loadClassmatesExternalIds(clubId, trigger.event_id, playerId),
+        socialEventsCache, socialSignupsCache, clubCache, couponCache,
       });
       candidateContext = withGenerationMetadata(context, verifiedTrigger, lookbackDays, intendedSendAt);
-      if (!context.next_program) {
-        reason = "no_next_program";
-        const errors = ["No matching next program with open spots was found"];
+      if (!canGenerateRetentionText(candidateContext)) {
+        reason = contextGenerationBlockReason(candidateContext);
+        const errors = [candidateContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"];
         candidateContext = { ...candidateContext, reason, errors };
       } else {
         const textResult = await writeRetentionText(candidateContext, playbook);
@@ -521,7 +525,9 @@ export async function generateRetentionDrafts(
         reason,
         errors: candidateContext.errors?.length ? candidateContext.errors : [reason === "no_next_program"
           ? "No matching next program with open spots was found"
-          : "Retention context could not be built"],
+          : reason === "coupon_not_verified"
+            ? candidateContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"
+            : "Retention context could not be built"],
       };
     }
     candidateContext.trigger.event_id = String(trigger.event_id);
@@ -653,13 +659,12 @@ export async function regenerateRetentionCandidate(
         const coupon = await validateRetentionCoupon(clubId, playbook.promo_code);
         couponCache.set(`${clubId}:${playbook.promo_code}`, Promise.resolve(coupon));
       }
-      const classmatesExternalIds = await loadClassmatesExternalIds(clubId, candidate.trigger_event_id, candidate.player_id);
       const context = await buildRetentionContext({
         clubId,
         player,
         playbook,
         trigger,
-        classmatesExternalIds,
+        classmatesExternalIds: () => loadClassmatesExternalIds(clubId, candidate.trigger_event_id, candidate.player_id),
         socialEventsCache: new Map<string, Promise<any[]>>(),
         socialSignupsCache: new Map<string, Promise<string[]>>(),
         clubCache,
@@ -672,13 +677,13 @@ export async function regenerateRetentionCandidate(
         intendedSendAt,
       );
       generatedContext = newContext;
-      if (!context.next_program) {
+      if (!canGenerateRetentionText(newContext)) {
         newStatus = "needs_context";
-        reason = "no_next_program";
+        reason = contextGenerationBlockReason(newContext);
         newContext = {
           ...newContext,
           reason,
-          errors: ["No matching next program with open spots was found"],
+          errors: [newContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"],
         };
       } else {
         const textResult = await writeRetentionText(newContext, playbook);

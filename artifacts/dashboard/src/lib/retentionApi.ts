@@ -11,6 +11,9 @@ export interface ProgramFact { event_id: string; name: string; start_time: strin
 export interface Candidate {
   id: string; playbook_key: string; player_id: string; trigger_event_id: string; status: CandidateStatus;
   context: {
+    variant?: "with_program" | "no_program";
+    booking_url?: string;
+    forbidden_program_names?: string[];
     player_first_name?: string | null;
     trigger?: { event_id?: string; name?: string; date?: string } | null;
     next_program?: (ProgramFact & { spots_remaining: number | null }) | null;

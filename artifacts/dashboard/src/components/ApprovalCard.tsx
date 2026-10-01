@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { canApprove } from "@/lib/approvalGuards";
 import type { Candidate } from "@/lib/retentionApi";
+import { approvalVariantPresentation } from "@/lib/approvalVariant";
 
 const D = { card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", green: "#2ea043", greenBg: "rgba(46,160,67,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -53,6 +54,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
     if (c.status !== "drafted" && c.status !== "manual_edit") setEditing(false);
   }, [c.status]);
   const x = c.context;
+  const variant = approvalVariantPresentation(x.variant);
   const body = c.status === "manual_edit"
     ? x.generated_preview ?? c.message?.body ?? ""
     : c.message?.body ?? "";
@@ -72,6 +74,9 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         <span style={{ fontWeight: 600, fontSize: 13, color: D.text }}>{playerName}</span>
         <span style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, border: `1px solid ${D.border}`, color: STATUS_COLOR[c.status] }} data-testid={`status-candidate-${c.id}`}>
           {c.status === "sent" && c.message?.simulated ? "sent (simulated)" : c.status.replace("_", " ")}
+        </span>
+        <span data-testid={`variant-candidate-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
+          {variant.label}
         </span>
         {x.stale === true && (
           <span data-testid={`badge-stale-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
@@ -116,15 +121,22 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Stored context facts</div>
           <Fact k="First name" v={x.player_first_name ?? "unavailable"} />
           <Fact k="Trigger" v={x.trigger ? `${x.trigger.name ?? "Unknown event"} on ${x.trigger.date ?? "date unavailable"}` : "unavailable"} />
-          <Fact k="Next program" v={np ? `${np.name}, ${np.date} ${np.time}` : "none found"} />
-          {np && <Fact k="Spots left" v={np.spots_remaining ?? "unknown"} />}
-          {np && <Fact k="Signup link" v={<span style={{ fontFamily: mono, fontSize: 11 }}>{np.signup_url}</span>} />}
-          <Fact k="Classmates signed up" v={`${x.classmates_signed_up ?? "unknown"} (count only)`} />
-          <Fact k="Already booked" v={x.already_booked == null ? "unknown" : x.already_booked ? "yes" : "no"} />
+          <Fact k="Next program" v={variant.kind === "no_program" ? "No suggestion" : np ? `${np.name}, ${np.date} ${np.time}` : "none found"} />
+          {variant.kind === "no_program" && (
+            <Fact k="Booking URL" v={x.booking_url
+              ? <a href={x.booking_url} target="_blank" rel="noopener noreferrer" style={{ color: D.accent }}>{x.booking_url}</a>
+              : "unavailable"} />
+          )}
+          {variant.kind !== "no_program" && np && <Fact k="Spots left" v={np.spots_remaining ?? "unknown"} />}
+          {variant.kind !== "no_program" && np && <Fact k="Signup link" v={<span style={{ fontFamily: mono, fontSize: 11 }}>{np.signup_url}</span>} />}
+          <Fact k="Classmates signed up" v={variant.kind === "no_program" ? "not applicable" : `${x.classmates_signed_up ?? "unknown"} (count only)`} />
+          <Fact k="Already booked" v={variant.kind === "no_program" || x.already_booked == null ? "unknown" : x.already_booked ? "yes" : "no"} />
           {x.booked_event && <Fact k="Booked event" v={`${x.booked_event.name}, ${x.booked_event.date} ${x.booked_event.time}`} />}
           <Fact k="Promo" v={x.promo ? `${x.promo.code} - ${x.promo.offer_text}` : "none"} />
           {x.coupon_warning && <Fact k="Coupon warning" v={x.coupon_warning} warn />}
-          {x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
+          {variant.kind === "no_program"
+            ? <Fact k="Date references" v="No dates/day references" />
+            : x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
           {(x.send_date_et || x.send_date) && <Fact k="Intended send date (ET)" v={x.send_date_et ?? x.send_date!} />}
           <Fact k="Evaluated" v={fmt(x.evaluated_at)} />
         </div>

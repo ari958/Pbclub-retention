@@ -28,6 +28,7 @@ export * from "./retentionClubParameter";
 export * from "./retentionContext";
 export * from "./retentionContextPromo";
 export * from "./retentionContextTrigger";
+export * from "./retentionContextVariant";
 export * from "./retentionCouponCheck";
 export * from "./retentionDraftUpdate";
 export * from "./retentionGeneratedDraft";

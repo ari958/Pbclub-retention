@@ -57,6 +57,17 @@ export interface RetentionProgram {
   spots_remaining?: number;
 }
 
+/**
+ * Generation variant. Optional only for legacy contexts.
+ */
+export type RetentionContextVariant =
+  (typeof RetentionContextVariant)[keyof typeof RetentionContextVariant];
+
+export const RetentionContextVariant = {
+  with_program: "with_program",
+  no_program: "no_program",
+} as const;
+
 export type RetentionContextTrigger = {
   event_id: string;
   name: string;
@@ -71,10 +82,19 @@ export type RetentionContextPromo = {
   offer_text?: string;
 } | null;
 
+/**
+ * Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.
+ */
 export interface RetentionContext {
+  /** Generation variant. Optional only for legacy contexts. */
+  variant?: RetentionContextVariant;
   player_first_name?: string;
   trigger?: RetentionContextTrigger;
   next_program?: RetentionProgram | null;
+  /** Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts. */
+  booking_url?: "https://pbclub.podplay.app";
+  /** Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts. */
+  forbidden_program_names?: string[];
   booked_event?: RetentionProgram | null;
   /** @minimum 0 */
   classmates_signed_up?: number;
@@ -96,7 +116,10 @@ export interface RetentionContext {
   /** Lookup failures; entries may be strings or structured error objects. */
   errors?: unknown[];
   validation_errors?: string[];
-  /** @nullable */
+  /**
+   * Timing provenance retained in context; no_program message text must omit it.
+   * @nullable
+   */
   date_phrase?: string | null;
   /** @nullable */
   send_date?: string | null;

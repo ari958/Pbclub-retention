@@ -25,7 +25,7 @@ Do not automatically substitute a similarly named, higher-level program when the
 
 **Why:** Title normalization fixes case, dash, and whitespace differences; it cannot establish that a different program is appropriate for a new player. The live audit found a higher-level title with an extra word, not a formatting mismatch.
 
-**How to apply:** Preserve the configured program choices, mark missing matches as needing context, and obtain an operator decision before adding semantic aliases or changing the recommended programs.
+**How to apply:** Preserve the configured program choices. After a successful live no-match, use the user-approved generic thank-you/offer fallback without a program suggestion; lookup failures still need context. Obtain an operator decision before adding semantic aliases or changing recommended programs.
 
 Preserve the original batch's lookback provenance when reprocessing legacy drafts. Missing per-candidate metadata is not evidence that the batch used the current production default.
 

@@ -1,6 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_MODEL } from "./anthropicConfig";
 import { retentionWeekday } from "./retentionDates";
+import {
+  RETENTION_LTP_VERIFIED_OFFER_TEXT,
+  RETENTION_NO_PROGRAM_BOOKING_URL,
+} from "./retentionTypes";
 import type { RetentionContext, RetentionPlaybook } from "./retentionTypes";
 
 const VOICE_RULES = `You are a retention agent for a pickleball club. Write like a knowledgeable person at the front desk who knows the players personally: casual but not sloppy, warm but not gushing.
@@ -11,7 +15,8 @@ Follow every existing SMS voice rule:
 - Never use these words: self-selected, on-ramp, complement, tailored, curated, leverage, holistic, robust, seamless, journey, pathway, optimal, utilize, ensure, facilitate, elevate, enhance, unlock, actionable, align, framework, iterate, pivot, level up, deep dive, moving forward, circle back, touch base, value add, synergy, bandwidth.
 - Never use these phrases: "Hope this finds you well", "Just checking in", "I wanted to reach out", "Don't hesitate to reach out", "Feel free to", "Excited to share", "We've noticed", "We see that you", "We observed", "Based on your history", "We wanted to make sure", "Looking forward to hearing from you".
 - Only reference facts in the supplied context. Do not infer prior interactions, player type, motivation, or unstated timing. Never reveal surveillance or say what the system knows. Never validate or assign the player's level.
-- Mention only the supplied next program and facts; do not invent familiarity, event details, urgency, or signup claims. Use a provided signup link naturally when appropriate.`;
+- For with_program contexts, mention only the supplied next program and facts; do not invent familiarity, event details, urgency, or signup claims. Use its provided signup link naturally when appropriate.
+- For no_program contexts, do not mention any specific program or event, date, day, time, classmate, or program suggestion. Generic wording in the verified offer (including the word "program") and a generic booking-page call to action are allowed.`;
 
 export class RetentionTextValidationError extends Error {
   constructor(readonly validation_errors: string[]) {
@@ -21,11 +26,145 @@ export class RetentionTextValidationError extends Error {
 }
 
 const TIME_REFERENCE_RE = /\b(?:yesterday|today|tomorrow|tonight|now|soon|later|upcoming|future|this\s+(?:morning|afternoon|evening|day|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|next\s+(?:day|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|last\s+(?:night|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|sunday|monday|tuesday|wednesday|thursday|friday|saturday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}(?:st|nd|rd|th)|\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\/\d{1,2}|\d+\s+days?\s+(?:from\s+now|later|away)|(?:in|within)\s+(?:a\s+few|\d+)\s+days?|morning|afternoon|evening)\b/i;
+const NO_PROGRAM_EXTRA_TIME_RE = /\b(?:in|within|after)\s+(?:a\s+couple(?:\s+of)?|couple(?:\s+of)?|a\s+few|few|several|a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\b|\b(?:spring|summer|fall|autumn|winter|noon|midnight)\b|\b\d{4}-\d{1,2}-\d{1,2}\b|\bnext\s+time\b/i;
+const NO_PROGRAM_SUGGESTION_RE = /\b(?:(?:(?:you should|you could|you might|you may|why not|consider|we recommend|i recommend|we suggest|i suggest)\s+(?:try|join|attend|take|play|sign up for|register for|book|check out|trying|joining|attending|taking|playing|signing up for|registering for|booking|checking out)\s+(?:(?:a|an|the|another|our|your|next|upcoming)\s+)?(?:beginner\s+|intermediate\s+|advanced\s+)?(?:programs?|events?|activities?))|(?:try|join|attend|take|play|sign up for|register for|check out)\s+(?:(?:a|an|the|another|our|your)\s+)?(?:beginner\s+|intermediate\s+|advanced\s+)?(?:class(?:es)?|programs?|events?|activities?|sessions?|lessons?|clinics?|open\s+play|drills?|guided\s+play))\b/i;
+const NO_PROGRAM_CLASSMATE_RE = /\b(?:classmates?|class(?:es)?|peers?|friends?|fellow players|other (?:players|members|people|participants)|members|participants|people from your class|people you met|players you know|everyone|your group)\b/i;
+const NO_PROGRAM_LTP_REFERENCE_RE = /\bLTP\b|\bLearn\s+to\s+Play\b/i;
+const NO_PROGRAM_WEEKDAY_ABBREVIATION_RE = /\b(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i;
+const NO_PROGRAM_ACTIVITY_RE = /\b(?:beginner\s+|intermediate\s+|advanced\s+)?(?:class(?:es)?|lessons?|clinics?|open\s+play|drills?|guided\s+play|sessions?|round\s+robins?|leagues?|tournaments?|camps?|courses?|workshops?|practices?)\b/i;
+const NO_PROGRAM_RETURN_SUGGESTION_RE = /\b(?:when(?:ever)?|before|after|until|again|recently|previously|see you|look(?:ing)? forward to|come back|coming back|return(?:ing)? to|back on (?:the )?court|next time|ready to get back)\b/i;
+const PROMOTION_PERCENT_RE = /\b(\d+(?:\.\d+)?)\s*(?:%|percent\b)/gi;
+const PROMOTION_MONEY_RE = /\$\s*(\d+(?:\.\d{1,2})?)|\b(\d+(?:\.\d{1,2})?)\s+(?:dollars?|bucks?)\b/gi;
+const PROMOTION_NUMBER_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[\\s-]+(?:and|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand)){0,3}";
+const PROMOTION_WORD_PERCENT_RE = new RegExp(`\\b(${PROMOTION_NUMBER_WORD})\\s+percent\\b`, "gi");
+const PROMOTION_WORD_MONEY_RE = new RegExp(`\\b(${PROMOTION_NUMBER_WORD})\\s+(?:dollars?|bucks?)\\b`, "gi");
+const PROMOTION_BENEFIT_RE = /\b(?:free|freebies?|complimentary|bonus|gift(?:\s+cards?)?|rewards?|perks?|credits?|benefits?|unlimited|priority|exclusive|guaranteed|waived?|no[\s-]+charge|no[\s-]+cost|cashback|cash\s+back|rebates?)\b/gi;
+
+function retentionVariant(context: RetentionContext): "with_program" | "no_program" | null {
+  if (context.variant) return context.variant;
+  return context.next_program ? "with_program" : null;
+}
+
+function normalizeProgramName(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase()
+    .replace(/[\u2010-\u2015_-]/g, " ")
+    .replace(/[^\p{L}\p{N}%]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsProgramName(text: string, name: string): boolean {
+  const normalizedText = ` ${normalizeProgramName(text)} `;
+  const normalizedName = normalizeProgramName(name);
+  return !!normalizedName && normalizedText.includes(` ${normalizedName} `);
+}
+
+function textAfterRequiredOpener(text: string, context: RetentionContext): string {
+  const opener = `Hi ${context.player_first_name.trim()}, it's PB Club.`;
+  return text.startsWith(opener) ? text.slice(opener.length) : text;
+}
+
+function unsupportedPromotionClaims(text: string, verifiedOffer: string): boolean {
+  const exceedsVerifiedClaimCount = (
+    claims: RegExpMatchArray[],
+    verifiedClaims: RegExpMatchArray[],
+    normalize: (match: RegExpMatchArray) => string,
+  ): boolean => {
+    const remaining = new Map<string, number>();
+    for (const match of verifiedClaims) {
+      const key = normalize(match);
+      remaining.set(key, (remaining.get(key) ?? 0) + 1);
+    }
+    for (const match of claims) {
+      const key = normalize(match);
+      const count = remaining.get(key) ?? 0;
+      if (!count) return true;
+      remaining.set(key, count - 1);
+    }
+    return false;
+  };
+  if (exceedsVerifiedClaimCount(
+    [...text.matchAll(PROMOTION_PERCENT_RE)],
+    [...verifiedOffer.matchAll(PROMOTION_PERCENT_RE)],
+    (match) => String(Number(match[1])),
+  )) return true;
+
+  const wordNumberToValue = (number: string): number => {
+    const units: Record<string, number> = {
+      zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+      ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+      seventeen: 17, eighteen: 18, nineteen: 19,
+    };
+    const tens: Record<string, number> = {
+      twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+    };
+    let total = 0;
+    let current = 0;
+    for (const part of number.toLocaleLowerCase().replace(/-/g, " ").split(/\s+/)) {
+      if (part === "and") continue;
+      if (part in units) current += units[part];
+      else if (part in tens) current += tens[part];
+      else if (part === "hundred") current = (current || 1) * 100;
+      else if (part === "thousand") {
+        total += (current || 1) * 1000;
+        current = 0;
+      }
+    }
+    return total + current;
+  };
+  if (exceedsVerifiedClaimCount(
+    [...text.matchAll(PROMOTION_WORD_PERCENT_RE)],
+    [...verifiedOffer.matchAll(PROMOTION_WORD_PERCENT_RE)],
+    (match) => String(wordNumberToValue(match[1])),
+  )) return true;
+
+  const normalizeMoney = (value: string) => Number(value.replace(/,/g, ""));
+  if (exceedsVerifiedClaimCount(
+    [...text.matchAll(PROMOTION_MONEY_RE)],
+    [...verifiedOffer.matchAll(PROMOTION_MONEY_RE)],
+    (match) => String(normalizeMoney(match[1] ?? match[2])),
+  )) return true;
+  if (exceedsVerifiedClaimCount(
+    [...text.matchAll(PROMOTION_WORD_MONEY_RE)],
+    [...verifiedOffer.matchAll(PROMOTION_WORD_MONEY_RE)],
+    (match) => String(wordNumberToValue(match[1])),
+  )) return true;
+
+  return exceedsVerifiedClaimCount(
+    [...text.matchAll(PROMOTION_BENEFIT_RE)],
+    [...verifiedOffer.matchAll(PROMOTION_BENEFIT_RE)],
+    (match) => match[0].toLocaleLowerCase().replace(/[\s-]+/g, " "),
+  );
+}
+
+function hasUnresolvedLiveLookupError(
+  diagnostics: unknown,
+  inLookupScope = false,
+  inTextGenerationScope = false,
+): boolean {
+  if (!diagnostics || typeof diagnostics !== "object") return false;
+  if (Array.isArray(diagnostics)) {
+    return diagnostics.some((entry) =>
+      hasUnresolvedLiveLookupError(entry, inLookupScope, inTextGenerationScope),
+    );
+  }
+  const record = diagnostics as Record<string, unknown>;
+  if (!inTextGenerationScope && inLookupScope && record.status === "error") return true;
+  return Object.entries(record).some(([key, value]) => {
+    const textGenerationScope = inTextGenerationScope || /text[\s_-]*generation/i.test(key);
+    const lookupScope = !textGenerationScope && (inLookupScope || /lookup/i.test(key));
+    return hasUnresolvedLiveLookupError(value, lookupScope, textGenerationScope);
+  });
+}
 
 function validateUrls(text: string, context: RetentionContext): string[] {
   const errors: string[] = [];
+  const variant = retentionVariant(context);
+  const allowedUrls = variant === "no_program"
+    ? [RETENTION_NO_PROGRAM_BOOKING_URL]
+    : [context.next_program?.signup_url, context.booked_event?.signup_url];
   const knownUrls = new Set(
-    [context.next_program?.signup_url, context.booked_event?.signup_url].filter(Boolean)
+    allowedUrls.filter(Boolean)
       .map((url) => String(url).replace(/[),.;!?]+$/g, "")),
   );
   const urls = text.match(/(?:https?:\/\/|www\.)[^\s<>"']+|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s<>"']*)?/gi) ?? [];
@@ -36,13 +175,20 @@ function validateUrls(text: string, context: RetentionContext): string[] {
   return errors;
 }
 
-function validateLtpText(text: string, context: RetentionContext): string[] {
+function validateCommonLtpText(text: string, context: RetentionContext): string[] {
   const errors: string[] = [];
   const opener = `Hi ${context.player_first_name.trim()}, it's PB Club.`;
   if (!text.startsWith(opener)) errors.push(`Message must open exactly with "${opener}"`);
   if (/[\u2013\u2014]/u.test(text)) errors.push("Message must not contain em or en dashes");
-  if (!text.includes("LTPNEXT25")) errors.push("Message must include LTPNEXT25 exactly");
+  if (!/(?<![\p{L}\p{N}_])LTPNEXT25(?![\p{L}\p{N}_])/u.test(text)) {
+    errors.push("Message must include LTPNEXT25 as an exact token");
+  }
+  if ([...text].length > 320) errors.push("Message must be 320 Unicode characters or fewer");
+  return errors;
+}
 
+function validateWithProgramLtpText(text: string, context: RetentionContext): string[] {
+  const errors: string[] = [];
   const next = context.next_program;
   if (!next) {
     errors.push("A next program is required");
@@ -65,7 +211,60 @@ function validateLtpText(text: string, context: RetentionContext): string[] {
     if (!text.toLocaleLowerCase().includes(programDay.toLocaleLowerCase())) errors.push("Message must include the next program's day");
     if (!text.includes(next.signup_url)) errors.push("Message must include the next program's signup link");
   }
-  if ([...text].length > 320) errors.push("Message must be 320 Unicode characters or fewer");
+  return errors;
+}
+
+function validateNoProgramLtpText(text: string, context: RetentionContext): string[] {
+  const errors: string[] = [];
+  const scannedText = textAfterRequiredOpener(text, context);
+  if (context.next_program) errors.push("A no_program context must not include a next program");
+  if (context.booking_url !== RETENTION_NO_PROGRAM_BOOKING_URL) {
+    errors.push("No-program context must provide the exact approved booking-page URL");
+  }
+  if (
+    !context.promo
+    || context.promo.code !== "LTPNEXT25"
+    || context.promo.offer_text !== RETENTION_LTP_VERIFIED_OFFER_TEXT
+  ) {
+    errors.push("No-program text requires the canonical offer backed by verified LTPNEXT25 benefits");
+  } else {
+    const normalizedText = text.replace(/\s+/g, " ").toLocaleLowerCase();
+    const normalizedOffer = context.promo.offer_text.replace(/\s+/g, " ").trim().toLocaleLowerCase();
+    if (!normalizedText.includes(normalizedOffer)) errors.push("Message must include the verified offer text");
+  }
+  if (!/\bthank(?:s| you)\b/i.test(text)) errors.push("Message must include an actual thank-you");
+  if (!text.includes(RETENTION_NO_PROGRAM_BOOKING_URL)) {
+    errors.push("Message must include the exact approved booking-page URL");
+  }
+  if (
+    TIME_REFERENCE_RE.test(scannedText)
+    || NO_PROGRAM_EXTRA_TIME_RE.test(scannedText)
+    || NO_PROGRAM_RETURN_SUGGESTION_RE.test(scannedText)
+  ) {
+    errors.push("No-program message must not include date, day, time, or return-timing references");
+  }
+  if (NO_PROGRAM_WEEKDAY_ABBREVIATION_RE.test(scannedText)) {
+    errors.push("No-program message must not include weekday abbreviations");
+  }
+  if (NO_PROGRAM_SUGGESTION_RE.test(scannedText)) errors.push("No-program message must not suggest an activity or program");
+  if (NO_PROGRAM_CLASSMATE_RE.test(scannedText)) errors.push("No-program message must not reference classmates or other players");
+  if (NO_PROGRAM_LTP_REFERENCE_RE.test(scannedText)) errors.push("No-program message must not name the Learn to Play program");
+  if (NO_PROGRAM_ACTIVITY_RE.test(scannedText)) {
+    errors.push("No-program message must not mention a specific program or activity type");
+  }
+  if (!Array.isArray(context.forbidden_program_names)) {
+    errors.push("No-program context must provide forbidden program names");
+  }
+  const forbiddenNames = [
+    context.trigger?.name,
+    ...(context.forbidden_program_names ?? []),
+  ].filter((name): name is string => typeof name === "string" && !!name.trim());
+  if (forbiddenNames.some((name) => containsProgramName(scannedText, name))) {
+    errors.push("No-program message must not mention a specific program or event name");
+  }
+  if (context.promo && unsupportedPromotionClaims(text, context.promo.offer_text)) {
+    errors.push("No-program message includes promotion claims beyond the verified offer");
+  }
   return errors;
 }
 
@@ -76,9 +275,16 @@ export function validateRetentionTextBody(
 ): string {
   const text = body.trim();
   if (!text) throw new RetentionTextValidationError(["Claude did not return a non-empty retention text body"]);
+  if (context.reason === "context_lookup_failed" || hasUnresolvedLiveLookupError(context.diagnostics)) {
+    throw new RetentionTextValidationError(["Live retention context lookups are unresolved"]);
+  }
   const errors = validateUrls(text, context);
   if (playbook.key === "ltp_followup") {
-    errors.push(...validateLtpText(text, context));
+    const variant = retentionVariant(context);
+    errors.push(...validateCommonLtpText(text, context));
+    if (variant === "with_program") errors.push(...validateWithProgramLtpText(text, context));
+    else if (variant === "no_program") errors.push(...validateNoProgramLtpText(text, context));
+    else errors.push("LTP context must specify a variant or include a legacy next program");
     if (!context.promo && /(?:\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:discount|promo(?:tion)?|coupon|free|complimentary|save|savings|offer)\b)/i.test(text)) {
       errors.push("Message includes an unverified promotion");
     }
@@ -96,6 +302,37 @@ export interface RetentionTextResult {
   body: string | null;
   validation_errors: string[];
   generated_preview: string | null;
+}
+
+function projectRetentionTextFacts(context: RetentionContext): Record<string, unknown> {
+  if (retentionVariant(context) === "no_program") {
+    const verifiedPromo = context.promo?.code === "LTPNEXT25"
+      && context.promo.offer_text === RETENTION_LTP_VERIFIED_OFFER_TEXT
+      ? { code: context.promo.code, offer_text: context.promo.offer_text }
+      : null;
+    return {
+      player_first_name: context.player_first_name,
+      promo: verifiedPromo,
+      booking_url: context.booking_url,
+    };
+  }
+  const nextProgram = context.next_program;
+  return {
+    player_first_name: context.player_first_name,
+    trigger: { name: context.trigger.name, date: context.trigger.date },
+    next_program: nextProgram ? {
+      name: nextProgram.name,
+      signup_url: nextProgram.signup_url,
+    } : null,
+    next_program_day: context.next_program_day
+      ?? (nextProgram ? retentionWeekday(nextProgram.date) : undefined),
+    date_phrase: context.date_phrase,
+    already_booked: context.already_booked,
+    ...(context.already_booked && context.booked_event
+      ? { booked_event: { name: context.booked_event.name } }
+      : {}),
+    promo: context.promo ? { code: context.promo.code, offer_text: context.promo.offer_text } : null,
+  };
 }
 
 export async function writeRetentionText(
@@ -119,6 +356,11 @@ export async function writeRetentionText(
   };
   const validationErrors: string[] = [];
   let generatedPreview: string | null = null;
+  const variant = retentionVariant(context);
+  const promptContext = projectRetentionTextFacts(context);
+  const guidance = variant === "no_program"
+    ? ""
+    : `\n\nPlaybook guidance:\n${playbook.message_guidance ?? "No additional guidance."}`;
   // Initial attempt plus at most two feedback retries.
   for (let attempt = 0; attempt < 3; attempt++) {
     const correction = validationErrors.length
@@ -130,12 +372,14 @@ export async function writeRetentionText(
       system: `${VOICE_RULES}
 Write only the message body. Use only supplied context facts. Never invent facts.
 ${playbook.key === "ltp_followup"
-    ? `For this Learn to Play follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include LTPNEXT25 exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`
+    ? retentionVariant(context) === "no_program"
+        ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include an actual thank-you, the exact verified promo code and promo.offer_text, and this exact URL: ${RETENTION_NO_PROGRAM_BOOKING_URL}. Do not mention any specific program or event. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not include date_phrase or any date, day, time, classmate, other-player reference, suggestion to attend/join/try a specific activity or program, or specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes and stay within 320 Unicode characters.`
+      : `For this Learn to Play follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include LTPNEXT25 exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`
     : `If already_booked, thank the player and say "see you at [booked event name]" without mentioning an offer.`}
-Respect the playbook guidance.`,
+      ${variant === "no_program" ? "No generic playbook guidance applies to this variant." : "Respect the playbook guidance."}`,
       messages: [{
         role: "user",
-        content: `Context JSON:\n${JSON.stringify(context)}\n\nPlaybook guidance:\n${playbook.message_guidance ?? "No additional guidance."}${correction}`,
+        content: `Context JSON:\n${JSON.stringify(promptContext)}${guidance}${correction}`,
       }],
       tools: [{ name: "write_retention_text", description: "Return the SMS body only.", input_schema: schema }],
       tool_choice: { type: "tool", name: "write_retention_text" },

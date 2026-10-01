@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { RetentionTextValidationError, validateRetentionTextBody } from "../retentionText.js";
+import { RetentionTextValidationError, validateRetentionTextBody, writeRetentionText } from "../retentionText.js";
 import type { RetentionContext, RetentionPlaybook } from "../retentionTypes.js";
 
 const playbook: RetentionPlaybook = {
@@ -23,10 +23,23 @@ const context: RetentionContext = {
 };
 
 const validBody = "Hi Sam, it's PB Club. You were at Learn to Play yesterday. Beginner Clinic is on Friday, and you can sign up with LTPNEXT25 here: https://pb.podplay.app/community/events/evt-2";
+const noProgramContext: RetentionContext = {
+  ...context,
+  variant: "no_program",
+  next_program: null,
+  next_program_day: undefined,
+  booking_url: "https://pbclub.podplay.app",
+  forbidden_program_names: ["Learn to Play Clinic", "Beginner Clinic", "Community Open Play"],
+  classmates_signed_up: 0,
+  promo: { code: "LTPNEXT25", offer_text: "25% off your next program" },
+  coupon_warning: null,
+};
+const validNoProgramBody = "Hi Sam, it's PB Club. Thanks for joining us. LTPNEXT25 saves you 25% off your next program. https://pbclub.podplay.app";
 
 test("accepts a complete LTP body with the exact opener, date phrase, program, day, coupon, and signup link", () => {
   assert.equal(validateRetentionTextBody(validBody, context, playbook), validBody);
 });
+
 
 test("requires the exact opener and supplied date phrase", () => {
   for (const body of [
@@ -66,6 +79,8 @@ test("allows only the date phrase and required program weekday as time reference
 test("requires the exact coupon, program name, program day, and signup URL", () => {
   for (const body of [
     validBody.replace("LTPNEXT25", "LTPNEXT 25"),
+    validBody.replace("LTPNEXT25", "LTPNEXT25X"),
+    validBody.replace("LTPNEXT25", "XLTPNEXT25"),
     validBody.replace("Beginner Clinic", "Clinic"),
     validBody.replace("Friday", "Saturday"),
     validBody.replace(context.next_program!.signup_url, "https://evil.example/event"),
@@ -102,4 +117,289 @@ test("requires a next program rather than silently accepting an empty context", 
     () => validateRetentionTextBody(validBody, { ...context, next_program: null }, playbook),
     RetentionTextValidationError,
   );
+});
+
+test("accepts a verified no-program thank-you, exact offer, and approved booking-page URL", () => {
+  assert.equal(
+    validateRetentionTextBody(validNoProgramBody, noProgramContext, playbook),
+    validNoProgramBody,
+  );
+});
+
+test("allows generic booking-page CTA and generic use of the verified program offer", () => {
+  const genericBookingBody = "Hi Sam, it's PB Club. Thanks for joining us. You can use LTPNEXT25 for 25% off your next program. You should book here: https://pbclub.podplay.app";
+  assert.equal(
+    validateRetentionTextBody(genericBookingBody, noProgramContext, playbook),
+    genericBookingBody,
+  );
+  const directBookingBody = genericBookingBody.replace("You should book here", "Book here");
+  assert.equal(validateRetentionTextBody(directBookingBody, noProgramContext, playbook), directBookingBody);
+});
+
+test("does not scan a required first-name opener as a date or program reference", () => {
+  for (const firstName of ["Summer", "May", "Friday"]) {
+    const namedContext = { ...noProgramContext, player_first_name: firstName };
+    const body = validNoProgramBody.replace("Hi Sam,", `Hi ${firstName},`);
+    assert.equal(validateRetentionTextBody(body, namedContext, playbook), body);
+  }
+});
+
+test("no-program text excludes program names, dates, weekdays, time references, classmates, and suggestions", () => {
+  for (const body of [
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for Learn to Play Clinic."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for Beginner Clinic."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming Friday."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming on Sept 20."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming at 7:30 PM."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks, your classmates are here."),
+    validNoProgramBody.replace("Thanks for joining us.", "You should try Beginner Clinic."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks, we suggest joining another class."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming yesterday."),
+    validNoProgramBody.replace("Thanks for joining us.", "Join beginner lessons."),
+    validNoProgramBody.replace("Thanks for joining us.", "See you in two days."),
+    validNoProgramBody.replace("Thanks for joining us.", "Come at 7pm."),
+    validNoProgramBody.replace("Thanks for joining us.", "You'll be ready to get back on court soon."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for joining us, book when you're ready."),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks for joining us, book whenever you'd like."),
+  ]) {
+    assert.throws(
+      () => validateRetentionTextBody(body, noProgramContext, playbook),
+      RetentionTextValidationError,
+    );
+  }
+  for (const weekday of ["Mon", "Tue", "Tues", "Wed", "Thu", "Thur", "Thurs", "Fri", "Sat", "Sun"]) {
+    const body = validNoProgramBody.replace("Thanks for joining us.", `Thanks for joining us ${weekday}.`);
+    assert.throws(
+      () => validateRetentionTextBody(body, noProgramContext, playbook),
+      RetentionTextValidationError,
+      `rejects the abbreviated weekday ${weekday}`,
+    );
+  }
+  assert.throws(
+    () => validateRetentionTextBody(
+      validNoProgramBody.replace("Thanks for joining us.", "Try the drills."),
+      noProgramContext,
+      playbook,
+    ),
+    (error: unknown) => error instanceof RetentionTextValidationError
+      && error.validation_errors.some((item) => item.includes("specific program or activity type")),
+  );
+});
+
+test("no-program text cannot add unverified amounts or extra offer benefits", () => {
+  for (const extraClaim of [
+    "plus $10 credit",
+    "plus ten dollars",
+    "plus 50% off",
+    "plus fifty percent off",
+    "plus 25% off memberships",
+    "plus a free clinic",
+    "with priority booking",
+  ]) {
+    const body = `${validNoProgramBody} ${extraClaim}`;
+    assert.throws(
+      () => validateRetentionTextBody(body, noProgramContext, playbook),
+      RetentionTextValidationError,
+      `rejects unsupported promotion claim: ${extraClaim}`,
+    );
+  }
+});
+
+test("unresolved live lookups block text validation for either variant, but text-only failures remain editable", () => {
+  const noProgramFailures: RetentionContext[] = [
+    { ...noProgramContext, reason: "context_lookup_failed" },
+    {
+      ...noProgramContext,
+      diagnostics: { lookups: { next_program: { status: "error" } } },
+    },
+    {
+      ...noProgramContext,
+      diagnostics: { already_returned_lookup: { status: "error" } },
+    },
+  ];
+  for (const failedContext of noProgramFailures) {
+    assert.throws(
+      () => validateRetentionTextBody(validNoProgramBody, failedContext, playbook),
+      (error: unknown) => error instanceof RetentionTextValidationError
+        && error.validation_errors.some((item) => item.includes("Live retention context lookups")),
+    );
+  }
+  assert.throws(
+    () => validateRetentionTextBody(validBody, {
+      ...context,
+      variant: "with_program",
+      diagnostics: { lookups: { already_booked: { status: "error" } } },
+    }, playbook),
+    RetentionTextValidationError,
+    "also blocks with_program when a live lookup is unresolved",
+  );
+  for (const reason of ["text_validation_failed", "manual_edit"]) {
+    const editedContext = {
+      ...noProgramContext,
+      reason,
+      validation_errors: ["Previous message validation failed"],
+    };
+    assert.equal(validateRetentionTextBody(validNoProgramBody, editedContext, playbook), validNoProgramBody);
+  }
+  const generationFailedContext = {
+    ...noProgramContext,
+    reason: "text_validation_failed",
+    validation_errors: ["Previous generation failed"],
+    diagnostics: {
+      text_generation_failed: {
+        status: "error",
+        associated_lookup_error: { status: "error" },
+      },
+    },
+  };
+  assert.equal(
+    validateRetentionTextBody(validNoProgramBody, generationFailedContext, playbook),
+    validNoProgramBody,
+    "a text-generation diagnostic failure alone does not block manual text resolution",
+  );
+});
+
+test("no-program text requires the actual thank-you, verified offer, exact URL, and forbids other links", () => {
+  for (const body of [
+    validNoProgramBody.replace("Thanks for joining us.", "Hello Sam."),
+    validNoProgramBody.replace("25% off your next program", "50% off your next program"),
+    validNoProgramBody.replace("https://pbclub.podplay.app", "https://evil.example/booking"),
+    `${validNoProgramBody} https://evil.example/extra`,
+  ]) {
+    assert.throws(
+      () => validateRetentionTextBody(body, noProgramContext, playbook),
+      RetentionTextValidationError,
+    );
+  }
+  assert.throws(
+    () => validateRetentionTextBody(validNoProgramBody, { ...noProgramContext, promo: null }, playbook),
+    RetentionTextValidationError,
+    "does not allow a generic offer when coupon verification failed",
+  );
+});
+
+test("variant-specific URL allowlists and legacy variant fallback fail closed", () => {
+  assert.throws(
+    () => validateRetentionTextBody(
+      validNoProgramBody.replace("https://pbclub.podplay.app", context.next_program!.signup_url),
+      noProgramContext,
+      playbook,
+    ),
+    RetentionTextValidationError,
+  );
+  assert.throws(
+    () => validateRetentionTextBody(validNoProgramBody, { ...noProgramContext, variant: undefined }, playbook),
+    RetentionTextValidationError,
+    "does not infer no_program from an incomplete legacy context",
+  );
+});
+
+test("no-program contexts retain the common opener, code, dash, and 320-character requirements", () => {
+  for (const body of [
+    validNoProgramBody.replace("Hi Sam, it's PB Club.", "Hi Sam."),
+    validNoProgramBody.replace("LTPNEXT25", "LTPNEXT 25"),
+    validNoProgramBody.replace("LTPNEXT25", "LTPNEXT25X"),
+    validNoProgramBody.replace("LTPNEXT25", "XLTPNEXT25"),
+    validNoProgramBody.replace("Thanks for joining us.", "Thanks — for joining us."),
+    `${validNoProgramBody}${"🙂".repeat(321)}`,
+  ]) {
+    assert.throws(
+      () => validateRetentionTextBody(body, noProgramContext, playbook),
+      RetentionTextValidationError,
+    );
+  }
+  assert.throws(
+    () => validateRetentionTextBody(validNoProgramBody, {
+      ...noProgramContext,
+      promo: { code: "LTPNEXT25", offer_text: "50% off your next program" },
+    }, playbook),
+    RetentionTextValidationError,
+    "does not accept arbitrary operator copy as verified no_program offer text",
+  );
+});
+
+test("text writer gives an initial attempt and exactly two validation-feedback retries", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "test-only-key";
+  let calls = 0;
+  let firstRequest: any;
+  globalThis.fetch = (async (_input, init) => {
+    calls++;
+    if (!firstRequest) firstRequest = JSON.parse(String(init?.body));
+    const body = calls < 3 ? validNoProgramBody.replace("Thanks for joining us.", "Hello Sam.") : validNoProgramBody;
+    return new Response(JSON.stringify({
+      id: `msg-${calls}`,
+      type: "message",
+      role: "assistant",
+      model: "test-model",
+      content: [{ type: "tool_use", id: `tool-${calls}`, name: "write_retention_text", input: { body } }],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const conflictingPlaybook = {
+      ...playbook,
+      message_guidance: "Mention Beginner Clinic and tell the player to come back next Friday.",
+    };
+    const result = await writeRetentionText(noProgramContext, conflictingPlaybook);
+    assert.equal(calls, 3);
+    assert.equal(result.body, validNoProgramBody);
+    assert.deepEqual(result.validation_errors, []);
+    assert.equal(result.generated_preview, null);
+    assert.deepEqual(JSON.parse(firstRequest.messages[0].content.match(/^Context JSON:\n([^\n]+)/)![1]), {
+      player_first_name: "Sam",
+      promo: { code: "LTPNEXT25", offer_text: "25% off your next program" },
+      booking_url: "https://pbclub.podplay.app",
+    });
+    assert.doesNotMatch(firstRequest.messages[0].content, /Learn to Play Clinic|Beginner Clinic|Community Open Play|yesterday|diagnostics|forbidden_program_names|come back next Friday/);
+    assert.doesNotMatch(firstRequest.system, /Learn to Play Clinic|Beginner Clinic|Community Open Play|come back next Friday/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalApiKey;
+  }
+});
+
+test("with-program prompt projection retains only relevant verified facts and guidance", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalApiKey = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "test-only-key";
+  let requestBody: any;
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({
+      id: "msg-with-program",
+      type: "message",
+      role: "assistant",
+      model: "test-model",
+      content: [{ type: "tool_use", id: "tool-with-program", name: "write_retention_text", input: { body: validBody } }],
+      stop_reason: "tool_use",
+      stop_sequence: null,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }) as typeof fetch;
+  try {
+    const withProgramContext = { ...context, variant: "with_program" as const };
+    const withGuidance = { ...playbook, message_guidance: "Use the approved conversational style." };
+    const result = await writeRetentionText(withProgramContext, withGuidance);
+    assert.equal(result.body, validBody);
+    assert.deepEqual(JSON.parse(requestBody.messages[0].content.match(/^Context JSON:\n([^\n]+)/)![1]), {
+      player_first_name: "Sam",
+      trigger: { name: "Learn to Play Clinic", date: "2026-09-28" },
+      next_program: { name: "Beginner Clinic", signup_url: "https://pb.podplay.app/community/events/evt-2" },
+      next_program_day: "Friday",
+      date_phrase: "yesterday",
+      already_booked: false,
+      promo: null,
+    });
+    assert.match(requestBody.messages[0].content, /Use the approved conversational style/);
+    assert.doesNotMatch(requestBody.messages[0].content, /classmates_signed_up|diagnostics|forbidden_program_names|start_time|spots_remaining/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = originalApiKey;
+  }
 });

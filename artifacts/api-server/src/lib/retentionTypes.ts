@@ -1,3 +1,6 @@
+export const RETENTION_NO_PROGRAM_BOOKING_URL = "https://pbclub.podplay.app";
+export const RETENTION_LTP_VERIFIED_OFFER_TEXT = "25% off your next program";
+
 export interface RetentionPlaybook {
   key: string;
   name: string;
@@ -20,9 +23,13 @@ export interface RetentionNextProgram {
 }
 
 export interface RetentionContext {
+  /** Omitted only on legacy contexts; infer with_program only when next_program exists. */
+  variant?: "with_program" | "no_program";
   trigger: { event_id: string; name: string; date: string };
   player_first_name: string;
   next_program: RetentionNextProgram | null;
+  booking_url?: string;
+  forbidden_program_names?: string[];
   classmates_signed_up: number;
   already_booked: boolean;
   booked_event: {

@@ -119,86 +119,111 @@ export const ListRetentionApprovalsResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(
-            listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin,
-          )
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(
-            listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax,
-          )
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),
@@ -416,86 +441,113 @@ export const GenerateRetentionDraftsResponse = zod.object({
           .describe(
             "Exact persisted draft body; null when context, validation, or already-returned checks block drafting",
           ),
-        context: zod.object({
-          player_first_name: zod.string().optional(),
-          trigger: zod
-            .object({
-              event_id: zod.string(),
-              name: zod.string(),
-              date: zod.string(),
-            })
-            .optional(),
-          next_program: zod
-            .union([
-              zod.object({
+        context: zod
+          .object({
+            variant: zod
+              .enum(["with_program", "no_program"])
+              .optional()
+              .describe(
+                "Generation variant. Optional only for legacy contexts.",
+              ),
+            player_first_name: zod.string().optional(),
+            trigger: zod
+              .object({
                 event_id: zod.string(),
                 name: zod.string(),
-                start_time: zod.string(),
                 date: zod.string(),
-                time: zod.string(),
-                signup_url: zod.string(),
-                spots_remaining: zod.number().optional(),
-              }),
-              zod.null(),
-            ])
-            .optional(),
-          booked_event: zod
-            .union([
-              zod.object({
-                event_id: zod.string(),
-                name: zod.string(),
-                start_time: zod.string(),
-                date: zod.string(),
-                time: zod.string(),
-                signup_url: zod.string(),
-                spots_remaining: zod.number().optional(),
-              }),
-              zod.null(),
-            ])
-            .optional(),
-          classmates_signed_up: zod
-            .number()
-            .min(
-              generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin,
-            )
-            .optional(),
-          already_booked: zod.boolean().optional(),
-          promo: zod
-            .object({
-              code: zod.string().optional(),
-              offer_text: zod.string().optional(),
-            })
-            .nullish(),
-          coupon_warning: zod.string().nullish(),
-          evaluated_at: zod.string().optional(),
-          stale: zod
-            .boolean()
-            .optional()
-            .describe(
-              "True when the candidate was generated with a test lookback longer than the production default.",
-            ),
-          lookback_days: zod
-            .number()
-            .min(1)
-            .max(
-              generateRetentionDraftsResponseDraftsItemContextLookbackDaysMax,
-            )
-            .optional(),
-          reason: zod.string().nullish(),
-          errors: zod
-            .array(zod.unknown())
-            .optional()
-            .describe(
-              "Lookup failures; entries may be strings or structured error objects.",
-            ),
-          validation_errors: zod.array(zod.string()).optional(),
-          date_phrase: zod.string().nullish(),
-          send_date: zod.string().nullish(),
-          send_date_et: zod.string().nullish(),
-          next_program_day: zod.string().nullish(),
-          generated_preview: zod.string().nullish(),
-          diagnostics: zod.unknown().optional(),
-        }),
+              })
+              .optional(),
+            next_program: zod
+              .union([
+                zod.object({
+                  event_id: zod.string(),
+                  name: zod.string(),
+                  start_time: zod.string(),
+                  date: zod.string(),
+                  time: zod.string(),
+                  signup_url: zod.string(),
+                  spots_remaining: zod.number().optional(),
+                }),
+                zod.null(),
+              ])
+              .optional(),
+            booking_url: zod
+              .literal("https://pbclub.podplay.app")
+              .optional()
+              .describe(
+                "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+              ),
+            forbidden_program_names: zod
+              .array(zod.string())
+              .optional()
+              .describe(
+                "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+              ),
+            booked_event: zod
+              .union([
+                zod.object({
+                  event_id: zod.string(),
+                  name: zod.string(),
+                  start_time: zod.string(),
+                  date: zod.string(),
+                  time: zod.string(),
+                  signup_url: zod.string(),
+                  spots_remaining: zod.number().optional(),
+                }),
+                zod.null(),
+              ])
+              .optional(),
+            classmates_signed_up: zod
+              .number()
+              .min(
+                generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin,
+              )
+              .optional(),
+            already_booked: zod.boolean().optional(),
+            promo: zod
+              .object({
+                code: zod.string().optional(),
+                offer_text: zod.string().optional(),
+              })
+              .nullish(),
+            coupon_warning: zod.string().nullish(),
+            evaluated_at: zod.string().optional(),
+            stale: zod
+              .boolean()
+              .optional()
+              .describe(
+                "True when the candidate was generated with a test lookback longer than the production default.",
+              ),
+            lookback_days: zod
+              .number()
+              .min(1)
+              .max(
+                generateRetentionDraftsResponseDraftsItemContextLookbackDaysMax,
+              )
+              .optional(),
+            reason: zod.string().nullish(),
+            errors: zod
+              .array(zod.unknown())
+              .optional()
+              .describe(
+                "Lookup failures; entries may be strings or structured error objects.",
+              ),
+            validation_errors: zod.array(zod.string()).optional(),
+            date_phrase: zod
+              .string()
+              .nullish()
+              .describe(
+                "Timing provenance retained in context; no_program message text must omit it.",
+              ),
+            send_date: zod.string().nullish(),
+            send_date_et: zod.string().nullish(),
+            next_program_day: zod.string().nullish(),
+            generated_preview: zod.string().nullish(),
+            diagnostics: zod.unknown().optional(),
+          })
+          .describe(
+            "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+          ),
         validation_errors: zod.array(zod.string()).optional(),
       }),
     )
@@ -541,84 +593,111 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(
-            updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin,
-          )
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(updateRetentionKillSwitchResponseCandidateContextLookbackDaysMax)
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              updateRetentionKillSwitchResponseCandidateContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),
@@ -687,82 +766,109 @@ export const EditRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(editRetentionDraftResponseCandidateContextClassmatesSignedUpMin)
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(editRetentionDraftResponseCandidateContextLookbackDaysMax)
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              editRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(editRetentionDraftResponseCandidateContextLookbackDaysMax)
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),
@@ -842,84 +948,109 @@ export const ApproveRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(
-            approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
-          )
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(approveRetentionDraftResponseCandidateContextLookbackDaysMax)
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(approveRetentionDraftResponseCandidateContextLookbackDaysMax)
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),
@@ -974,82 +1105,107 @@ export const RegenerateRetentionDraftResponse = zod.object({
   status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
   reason: zod.string().nullable(),
   body: zod.string().nullable(),
-  context: zod.object({
-    player_first_name: zod.string().optional(),
-    trigger: zod
-      .object({
-        event_id: zod.string(),
-        name: zod.string(),
-        date: zod.string(),
-      })
-      .optional(),
-    next_program: zod
-      .union([
-        zod.object({
+  context: zod
+    .object({
+      variant: zod
+        .enum(["with_program", "no_program"])
+        .optional()
+        .describe("Generation variant. Optional only for legacy contexts."),
+      player_first_name: zod.string().optional(),
+      trigger: zod
+        .object({
           event_id: zod.string(),
           name: zod.string(),
-          start_time: zod.string(),
           date: zod.string(),
-          time: zod.string(),
-          signup_url: zod.string(),
-          spots_remaining: zod.number().optional(),
-        }),
-        zod.null(),
-      ])
-      .optional(),
-    booked_event: zod
-      .union([
-        zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          start_time: zod.string(),
-          date: zod.string(),
-          time: zod.string(),
-          signup_url: zod.string(),
-          spots_remaining: zod.number().optional(),
-        }),
-        zod.null(),
-      ])
-      .optional(),
-    classmates_signed_up: zod
-      .number()
-      .min(regenerateRetentionDraftResponseContextClassmatesSignedUpMin)
-      .optional(),
-    already_booked: zod.boolean().optional(),
-    promo: zod
-      .object({
-        code: zod.string().optional(),
-        offer_text: zod.string().optional(),
-      })
-      .nullish(),
-    coupon_warning: zod.string().nullish(),
-    evaluated_at: zod.string().optional(),
-    stale: zod
-      .boolean()
-      .optional()
-      .describe(
-        "True when the candidate was generated with a test lookback longer than the production default.",
-      ),
-    lookback_days: zod
-      .number()
-      .min(1)
-      .max(regenerateRetentionDraftResponseContextLookbackDaysMax)
-      .optional(),
-    reason: zod.string().nullish(),
-    errors: zod
-      .array(zod.unknown())
-      .optional()
-      .describe(
-        "Lookup failures; entries may be strings or structured error objects.",
-      ),
-    validation_errors: zod.array(zod.string()).optional(),
-    date_phrase: zod.string().nullish(),
-    send_date: zod.string().nullish(),
-    send_date_et: zod.string().nullish(),
-    next_program_day: zod.string().nullish(),
-    generated_preview: zod.string().nullish(),
-    diagnostics: zod.unknown().optional(),
-  }),
+        })
+        .optional(),
+      next_program: zod
+        .union([
+          zod.object({
+            event_id: zod.string(),
+            name: zod.string(),
+            start_time: zod.string(),
+            date: zod.string(),
+            time: zod.string(),
+            signup_url: zod.string(),
+            spots_remaining: zod.number().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+      booking_url: zod
+        .literal("https://pbclub.podplay.app")
+        .optional()
+        .describe(
+          "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+        ),
+      forbidden_program_names: zod
+        .array(zod.string())
+        .optional()
+        .describe(
+          "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+        ),
+      booked_event: zod
+        .union([
+          zod.object({
+            event_id: zod.string(),
+            name: zod.string(),
+            start_time: zod.string(),
+            date: zod.string(),
+            time: zod.string(),
+            signup_url: zod.string(),
+            spots_remaining: zod.number().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+      classmates_signed_up: zod
+        .number()
+        .min(regenerateRetentionDraftResponseContextClassmatesSignedUpMin)
+        .optional(),
+      already_booked: zod.boolean().optional(),
+      promo: zod
+        .object({
+          code: zod.string().optional(),
+          offer_text: zod.string().optional(),
+        })
+        .nullish(),
+      coupon_warning: zod.string().nullish(),
+      evaluated_at: zod.string().optional(),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when the candidate was generated with a test lookback longer than the production default.",
+        ),
+      lookback_days: zod
+        .number()
+        .min(1)
+        .max(regenerateRetentionDraftResponseContextLookbackDaysMax)
+        .optional(),
+      reason: zod.string().nullish(),
+      errors: zod
+        .array(zod.unknown())
+        .optional()
+        .describe(
+          "Lookup failures; entries may be strings or structured error objects.",
+        ),
+      validation_errors: zod.array(zod.string()).optional(),
+      date_phrase: zod
+        .string()
+        .nullish()
+        .describe(
+          "Timing provenance retained in context; no_program message text must omit it.",
+        ),
+      send_date: zod.string().nullish(),
+      send_date_et: zod.string().nullish(),
+      next_program_day: zod.string().nullish(),
+      generated_preview: zod.string().nullish(),
+      diagnostics: zod.unknown().optional(),
+    })
+    .describe(
+      "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+    ),
   validation_errors: zod.array(zod.string()).optional(),
 });
 
@@ -1092,82 +1248,109 @@ export const SkipRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin)
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(skipRetentionDraftResponseCandidateContextLookbackDaysMax)
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(skipRetentionDraftResponseCandidateContextLookbackDaysMax)
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),
@@ -1240,86 +1423,111 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
-      context: zod.object({
-        player_first_name: zod.string().optional(),
-        trigger: zod
-          .object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          })
-          .optional(),
-        next_program: zod
-          .union([
-            zod.object({
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
               event_id: zod.string(),
               name: zod.string(),
-              start_time: zod.string(),
               date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        booked_event: zod
-          .union([
-            zod.object({
-              event_id: zod.string(),
-              name: zod.string(),
-              start_time: zod.string(),
-              date: zod.string(),
-              time: zod.string(),
-              signup_url: zod.string(),
-              spots_remaining: zod.number().optional(),
-            }),
-            zod.null(),
-          ])
-          .optional(),
-        classmates_signed_up: zod
-          .number()
-          .min(
-            approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin,
-          )
-          .optional(),
-        already_booked: zod.boolean().optional(),
-        promo: zod
-          .object({
-            code: zod.string().optional(),
-            offer_text: zod.string().optional(),
-          })
-          .nullish(),
-        coupon_warning: zod.string().nullish(),
-        evaluated_at: zod.string().optional(),
-        stale: zod
-          .boolean()
-          .optional()
-          .describe(
-            "True when the candidate was generated with a test lookback longer than the production default.",
-          ),
-        lookback_days: zod
-          .number()
-          .min(1)
-          .max(
-            approveRetentionPlaybookDraftsResponseCandidateContextLookbackDaysMax,
-          )
-          .optional(),
-        reason: zod.string().nullish(),
-        errors: zod
-          .array(zod.unknown())
-          .optional()
-          .describe(
-            "Lookup failures; entries may be strings or structured error objects.",
-          ),
-        validation_errors: zod.array(zod.string()).optional(),
-        date_phrase: zod.string().nullish(),
-        send_date: zod.string().nullish(),
-        send_date_et: zod.string().nullish(),
-        next_program_day: zod.string().nullish(),
-        generated_preview: zod.string().nullish(),
-        diagnostics: zod.unknown().optional(),
-      }),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              approveRetentionPlaybookDraftsResponseCandidateContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context; no_program message text must omit it.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
       player: zod
         .object({
           name: zod.string().nullish(),

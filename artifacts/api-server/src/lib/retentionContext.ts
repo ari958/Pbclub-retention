@@ -1,6 +1,10 @@
 import { supabase } from "./supabaseClient";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { toEtDate } from "./retentionDates";
+import {
+  RETENTION_LTP_VERIFIED_OFFER_TEXT,
+  RETENTION_NO_PROGRAM_BOOKING_URL,
+} from "./retentionTypes";
 import type { RetentionContext, RetentionNextProgram, RetentionPlaybook } from "./retentionTypes";
 
 export const normalizeRetentionName = (value: string) =>
@@ -29,7 +33,7 @@ interface LiveSignup {
 export type RetentionContextFailureReason = "no_next_program" | "context_lookup_failed";
 
 export interface RetentionLookupDiagnostics {
-  status: "pending" | "ok" | "error" | "skipped" | "no_match";
+  status: "pending" | "ok" | "error" | "skipped" | "no_match" | "not_applicable";
   errors: string[];
 }
 
@@ -110,8 +114,17 @@ export function countConfirmedRetentionSignups(signups: LiveSignup[]): number {
 }
 
 export function calculateRetentionOpenSpots(totalTeams: unknown, signups: LiveSignup[]): number | null {
+  if (
+    totalTeams === null
+    || totalTeams === undefined
+    || typeof totalTeams === "boolean"
+    || (typeof totalTeams === "string" && !totalTeams.trim())
+    || (typeof totalTeams !== "number" && typeof totalTeams !== "string")
+  ) {
+    return null;
+  }
   const capacity = Number(totalTeams);
-  if (!Number.isFinite(capacity) || capacity <= 0) return null;
+  if (!Number.isInteger(capacity) || capacity < 0) return null;
   return capacity - countConfirmedRetentionSignups(signups);
 }
 
@@ -120,6 +133,7 @@ const isActiveRetentionSignup = (signup: LiveSignup) =>
 
 interface UpcomingEventsResult {
   events: LiveEvent[];
+  rawEventNames: string[];
   requestUrls: string[];
   rawEventCount: number;
   inWindowEventCount: number;
@@ -130,6 +144,7 @@ interface UpcomingEventsResult {
 interface UpcomingEventsCacheEntry {
   promise: Promise<UpcomingEventsResult>;
   window: RetentionEventWindow;
+  rawEventNames: string[];
   requestUrls: string[];
   rawEventCount: number;
   inWindowEventCount: number;
@@ -217,7 +232,7 @@ export async function buildRetentionContext(args: {
   player: { id: string; name: string; external_id: string | null };
   playbook: RetentionPlaybook;
   trigger: { event_id: string; name: string; date: string };
-  classmatesExternalIds: string[];
+  classmatesExternalIds: string[] | (() => Promise<string[]>);
   socialEventsCache: Map<string, Promise<any[]>>;
   socialSignupsCache: Map<string, Promise<string[]>>;
   clubCache: Map<string, Promise<RetentionLiveClub>>;
@@ -347,43 +362,78 @@ export async function buildRetentionContext(args: {
       date: eventDate, time: timeET(event.startTime),
       signup_url: `${live.base}/community/events/${event.id}`, spots_remaining: spots,
     };
-    const activeIds = new Set(signups
-      .filter(isActiveRetentionSignup)
-      .map((signup) => signup.owner?.id ?? "")
-      .filter(Boolean));
-    classmates_signed_up = [...new Set(classmatesExternalIds)].filter((id) => activeIds.has(id)).length;
     break;
+  }
+
+  if (!next_program && diagnostics.upcoming.filter_causes.missing_total_teams_event_ids.length) {
+    const message = "A matching next program has missing or invalid capacity, so availability could not be verified";
+    diagnostics.lookups.next_program.status = "error";
+    diagnostics.lookups.next_program.errors.push(message);
+    throw new RetentionContextError("context_lookup_failed", [message], diagnostics);
   }
 
   if (next_program) {
     diagnostics.lookups.next_program.status = "ok";
-    diagnostics.lookups.classmate.status = "ok";
+    try {
+      const externalIds = typeof classmatesExternalIds === "function"
+        ? await classmatesExternalIds()
+        : classmatesExternalIds;
+      const signups = signupsByEvent.get(next_program.event_id) ?? [];
+      const activeIds = new Set(signups
+        .filter(isActiveRetentionSignup)
+        .map((signup) => signup.owner?.id ?? "")
+        .filter(Boolean));
+      classmates_signed_up = [...new Set(externalIds)].filter((id) => activeIds.has(id)).length;
+      diagnostics.lookups.classmate.status = "ok";
+    } catch (error) {
+      const message = `Classmate lookup failed: ${safeErrorMessage(error)}`;
+      diagnostics.lookups.classmate.status = "error";
+      diagnostics.lookups.classmate.errors.push(message);
+      throw new RetentionContextError("context_lookup_failed", [message], diagnostics);
+    }
   } else {
     diagnostics.lookups.next_program.status = "no_match";
-    diagnostics.lookups.classmate.status = "skipped";
-    const errors = [
-      `No configured next program with open spots was found in the ${RETENTION_UPCOMING_DAYS}-day upcoming events window`,
-    ];
-    throw new RetentionContextError("no_next_program", errors, diagnostics);
+    diagnostics.lookups.classmate.status = "not_applicable";
   }
 
+  const variant = next_program ? "with_program" : "no_program";
+  const isNoProgramLtp = variant === "no_program" && playbook.key === "ltp_followup";
+  const couponCode = isNoProgramLtp ? "LTPNEXT25" : playbook.promo_code;
+  const offerText = isNoProgramLtp ? RETENTION_LTP_VERIFIED_OFFER_TEXT : playbook.offer_text;
   let promo: RetentionContext["promo"] = null;
   let coupon_warning: string | null = null;
-  if (playbook.promo_code && playbook.offer_text) {
-    const couponKey = `${clubId}:${playbook.promo_code}`;
+  if (couponCode && (isNoProgramLtp || offerText)) {
+    const couponKey = `${clubId}:${couponCode}`;
     let couponPromise = couponCache.get(couponKey);
     if (!couponPromise) {
-      couponPromise = validateRetentionCoupon(clubId, playbook.promo_code);
+      couponPromise = validateRetentionCoupon(clubId, couponCode);
       couponCache.set(couponKey, couponPromise);
     }
-    const coupon = await couponPromise;
-    if (coupon.valid && !bookedEvent) promo = { code: playbook.promo_code, offer_text: playbook.offer_text };
-    else coupon_warning = coupon.warning;
+    try {
+      const coupon = await couponPromise;
+      if (coupon.valid && (!bookedEvent || !next_program)) {
+        promo = { code: couponCode, offer_text: offerText! };
+      } else coupon_warning = coupon.warning;
+    } catch (error) {
+      coupon_warning = `Could not verify coupon ${couponCode}: ${safeErrorMessage(error)}`;
+    }
   }
+  const forbiddenProgramNames = variant === "no_program"
+    ? [...new Set([
+      trigger.name,
+      ...playbook.next_program_names,
+      ...upcoming.rawEventNames,
+    ].map((name) => name.trim()).filter(Boolean))]
+    : undefined;
   return {
+    variant,
     trigger,
     player_first_name: player.name.trim().split(/\s+/)[0],
     next_program,
+    ...(variant === "no_program" ? {
+      booking_url: RETENTION_NO_PROGRAM_BOOKING_URL,
+      forbidden_program_names: forbiddenProgramNames,
+    } : {}),
     classmates_signed_up,
     already_booked: !!bookedEvent,
     booked_event: bookedEvent,
@@ -458,6 +508,7 @@ async function loadRetentionUpcomingEvents(args: {
     const mutableEntry: UpcomingEventsCacheEntry = {
       promise: Promise.resolve(null as unknown as UpcomingEventsResult),
       window,
+      rawEventNames: [],
       requestUrls,
       rawEventCount: 0,
       inWindowEventCount: 0,
@@ -485,11 +536,16 @@ async function loadRetentionUpcomingEvents(args: {
         }
         const items = payload.items as LiveEvent[];
         if (items.some((event) =>
-          !event || typeof event.id !== "string" || typeof event.name !== "string" || typeof event.startTime !== "string",
+          !event
+          || typeof event.id !== "string"
+          || typeof event.name !== "string"
+          || typeof event.startTime !== "string"
+          || !Number.isFinite(Date.parse(event.startTime)),
         )) {
-          throw new Error(`PodPlay GET /events page ${page} included an event without id, name, or startTime`);
+          throw new Error(`PodPlay GET /events page ${page} included an event without a valid id, name, or startTime`);
         }
         rawEvents.push(...items);
+        mutableEntry.rawEventNames = rawEvents.map((event) => event.name);
         mutableEntry.rawEventCount = rawEvents.length;
         mutableEntry.inWindowEventCount = rawEvents
           .filter((event) => isRetentionEventWithinWindow(event.startTime, window)).length;
@@ -511,6 +567,7 @@ async function loadRetentionUpcomingEvents(args: {
         .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime));
       return {
         events: publishedInWindow,
+        rawEventNames: [...mutableEntry.rawEventNames],
         requestUrls: [...requestUrls],
         rawEventCount: rawEvents.length,
         inWindowEventCount: inWindow.length,

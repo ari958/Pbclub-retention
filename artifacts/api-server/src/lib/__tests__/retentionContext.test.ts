@@ -9,6 +9,7 @@ import {
   RetentionContextError,
 } from "../retentionContext.js";
 import { getTextEligibilitySkipReason, isTextEligible } from "../retentionPolicy.js";
+import { RETENTION_NO_PROGRAM_BOOKING_URL } from "../retentionTypes.js";
 import {
   calendarDayDistance,
   addCalendarDays,
@@ -286,21 +287,130 @@ async function testRetentionContextBuild(): Promise<void> {
     status: "PUBLISHED",
     totalTeams: 12,
   }]);
-  let noProgramError: unknown;
-  await withMockFetch(noMatchTest.fetch, async () => {
+  let classmateLookupCalled = false;
+  const overclaimedNoMatchArgs = {
+    ...noMatchTest.args,
+    playbook: { ...testPlaybook, offer_text: "50% off your next program" },
+    classmatesExternalIds: async () => {
+      classmateLookupCalled = true;
+      return [];
+    },
+  };
+  const noProgramContext = await withMockFetch(noMatchTest.fetch, () => buildRetentionContext(overclaimedNoMatchArgs));
+  assert(noProgramContext.variant === "no_program", "a successful live no-match returns a no_program context");
+  assert(noProgramContext.next_program === null, "no_program context has no next program");
+  assert(noProgramContext.booking_url === RETENTION_NO_PROGRAM_BOOKING_URL, "no_program context provides the approved booking page");
+  assert(noProgramContext.promo?.code === "LTPNEXT25", "no_program retains only the verified coupon offer");
+  assert(
+    noProgramContext.promo?.offer_text === "25% off your next program",
+    "no_program offer text comes from verified LTPNEXT25 benefits, not the operator's claimed 50%",
+  );
+  assert(!classmateLookupCalled, "no-match does not perform the dependent classmate lookup");
+  assert(
+    (noProgramContext.diagnostics as any).upcoming.filter_causes.matching_event_count === 0,
+    "records why no next program matched",
+  );
+  assert(
+    (noProgramContext.diagnostics as any).lookups.classmate.status === "not_applicable",
+    "records the omitted classmate lookup as not applicable",
+  );
+  assert(!!noProgramContext.forbidden_program_names?.includes("Learn to Play Clinic"), "forbids mentioning the live trigger name");
+  assert(!!noProgramContext.forbidden_program_names?.includes("Community Open Play"), "forbids mentioning live event names");
+  assert(!!noProgramContext.forbidden_program_names?.includes("Beginner 60&60 Clinic"), "also forbids configured next-program names");
+
+  const invalidStartTimeTest = makeContextArgs([{
+    id: "invalid-time",
+    name: "Community Open Play",
+    startTime: "not-a-valid-date",
+    status: "PUBLISHED",
+    totalTeams: 12,
+  }]);
+  let invalidStartTimeError: unknown;
+  await withMockFetch(invalidStartTimeTest.fetch, async () => {
     try {
-      await buildRetentionContext(noMatchTest.args);
+      await buildRetentionContext(invalidStartTimeTest.args);
     } catch (error) {
-      noProgramError = error;
+      invalidStartTimeError = error;
     }
   });
-  assert(noProgramError instanceof RetentionContextError, "no next program throws a typed context error");
-  const noProgramContextError = noProgramError as RetentionContextError;
-  assert(noProgramContextError.reason === "no_next_program", "reports no_next_program as the typed reason");
-  assert(noProgramContextError.errors.length > 0, "includes a clear error for missing next program context");
+  assert(invalidStartTimeError instanceof RetentionContextError, "an invalid live event time fails context lookup");
   assert(
-    noProgramContextError.diagnostics.upcoming.filter_causes.matching_event_count === 0,
-    "records why no next program matched",
+    (invalidStartTimeError as RetentionContextError).reason === "context_lookup_failed",
+    "an invalid live event time cannot fall through to no_program",
+  );
+
+  const unknownCapacityTest = makeContextArgs([{
+    id: "unknown-capacity",
+    name: "Beginner 60&60 Clinic",
+    startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "PUBLISHED",
+  }]);
+  let unknownCapacityError: unknown;
+  await withMockFetch(unknownCapacityTest.fetch, async () => {
+    try {
+      await buildRetentionContext(unknownCapacityTest.args);
+    } catch (error) {
+      unknownCapacityError = error;
+    }
+  });
+  assert(unknownCapacityError instanceof RetentionContextError, "missing capacity is indeterminate, not a successful no-match");
+  assert(
+    (unknownCapacityError as RetentionContextError).diagnostics.lookups.next_program.status === "error",
+    "missing capacity is recorded as a failed next-program verification",
+  );
+
+  const fullProgramTest = makeContextArgs([{
+    id: "full-program",
+    name: "Beginner 60&60 Clinic",
+    startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "PUBLISHED",
+    totalTeams: 1,
+  }]);
+  const fullProgramContext = await withMockFetch(fullProgramTest.fetch, () => buildRetentionContext(fullProgramTest.args));
+  assert(fullProgramContext.variant === "no_program", "a matching event with known zero open spots is not an uncertain lookup");
+  assert((fullProgramContext.diagnostics as any).upcoming.filter_causes.full_event_ids.includes("full-program"), "records a known-full event");
+
+  const laterOpenProgramTest = makeContextArgs([
+    {
+      id: "unknown-before-open",
+      name: "Beginner 60&60 Clinic",
+      startTime: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      status: "PUBLISHED",
+    },
+    {
+      id: "verified-later-open",
+      name: "Beginner 60&60 Clinic",
+      startTime: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      status: "PUBLISHED",
+      totalTeams: 4,
+    },
+  ]);
+  const laterOpenContext = await withMockFetch(laterOpenProgramTest.fetch, () => buildRetentionContext(laterOpenProgramTest.args));
+  assert(
+    laterOpenContext.next_program?.event_id === "verified-later-open",
+    "preserves the later fully verified open matching program despite an earlier unknown capacity",
+  );
+
+  const configuredOfferWithProgramTest = makeContextArgs([{
+    id: "configured-offer-program",
+    name: "Beginner 60&60 Clinic",
+    startTime: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "PUBLISHED",
+    totalTeams: 4,
+  }]);
+  const configuredOfferWithProgramArgs = {
+    ...configuredOfferWithProgramTest.args,
+    player: { ...testPlayer, external_id: "not-currently-booked" },
+    playbook: { ...testPlaybook, offer_text: "50% off your next program" },
+  };
+  const configuredOfferWithProgramContext = await withMockFetch(
+    configuredOfferWithProgramTest.fetch,
+    () => buildRetentionContext(configuredOfferWithProgramArgs),
+  );
+  assert(configuredOfferWithProgramContext.variant === "with_program", "open verified events retain the with_program variant");
+  assert(
+    configuredOfferWithProgramContext.promo?.offer_text === "50% off your next program",
+    "preserves configured offer semantics for with_program contexts",
   );
 
   const eventFailureTest = makeContextArgs([], { eventStatus: 503 });

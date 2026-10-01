@@ -293,7 +293,12 @@ components:
     RetentionContext:
       type: object
       additionalProperties: true
+      description: Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.
       properties:
+        variant:
+          type: string
+          enum: [with_program, no_program]
+          description: Generation variant. Optional only for legacy contexts.
         player_first_name: {type: string}
         trigger:
           type: object
@@ -306,6 +311,14 @@ components:
           anyOf:
             - $ref: "#/components/schemas/RetentionProgram"
             - {type: "null"}
+        booking_url:
+          type: string
+          const: "https://pbclub.podplay.app"
+          description: Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.
+        forbidden_program_names:
+          type: array
+          items: {type: string}
+          description: Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.
         booked_event:
           anyOf:
             - $ref: "#/components/schemas/RetentionProgram"
@@ -331,7 +344,9 @@ components:
         validation_errors:
           type: array
           items: {type: string}
-        date_phrase: {type: [string, "null"]}
+        date_phrase:
+          type: [string, "null"]
+          description: Timing provenance retained in context; no_program message text must omit it.
         send_date: {type: [string, "null"]}
         send_date_et: {type: [string, "null"]}
         next_program_day: {type: [string, "null"]}

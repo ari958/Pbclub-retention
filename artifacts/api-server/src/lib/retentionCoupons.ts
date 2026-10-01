@@ -7,6 +7,33 @@ export interface RetentionCouponValidation {
   ends_at?: string | null;
 }
 
+const LTP_PROGRAM_BOOKING_TYPES = new Set(["EVENT_CLASS", "EVENT_EVENT"]);
+
+function getLtpBenefitWarning(coupon: any): string | null {
+  if (coupon.discountType !== "PERCENT_OFF") {
+    return "Coupon LTPNEXT25 does not have a verified percentage discount";
+  }
+  if (typeof coupon.value !== "number" || coupon.value !== 25) {
+    return "Coupon LTPNEXT25 is not verified as a 25% discount";
+  }
+
+  const eligibleTypes = coupon.eligibleTypes;
+  if (
+    typeof coupon.eligibleType !== "string"
+    || !LTP_PROGRAM_BOOKING_TYPES.has(coupon.eligibleType)
+    || !Array.isArray(eligibleTypes)
+    || eligibleTypes.length === 0
+    || eligibleTypes.some((type: unknown) => typeof type !== "string" || !LTP_PROGRAM_BOOKING_TYPES.has(type))
+    || !eligibleTypes.includes(coupon.eligibleType)
+    || !Array.isArray(coupon.eligibleEventIds)
+    || coupon.eligibleEventIds.length > 0
+  ) {
+    return "Coupon LTPNEXT25 applicability is not verified for generic program bookings";
+  }
+
+  return null;
+}
+
 /** Read-only, fail-closed check against the club's live PodPlay coupons. */
 export async function validateRetentionCoupon(
   clubId: string,
@@ -44,14 +71,19 @@ export async function validateRetentionCoupon(
         const starts = coupon.startDate ?? coupon.start_date;
         const startDate = typeof starts === "string" && /^\d{4}-\d{2}-\d{2}/.test(starts) ? starts.slice(0, 10) : null;
         const endDate = typeof ends_at === "string" && /^\d{4}-\d{2}-\d{2}/.test(ends_at) ? ends_at.slice(0, 10) : null;
-        const valid = coupon.active === true
+        const dateValid = coupon.active === true
           && (!starts || !!startDate)
           && (!ends_at || !!endDate)
           && (!endDate || endDate >= today)
           && (!startDate || startDate <= today);
+        const benefitWarning = code === "LTPNEXT25" ? getLtpBenefitWarning(coupon) : null;
+        const warnings = [
+          ...(!dateValid ? [`Coupon ${code} is inactive or outside its valid date range`] : []),
+          ...(benefitWarning ? [benefitWarning] : []),
+        ];
         return {
-          valid,
-          warning: valid ? null : `Coupon ${code} is inactive or outside its valid date range`,
+          valid: dateValid && !benefitWarning,
+          warning: warnings.length ? warnings.join("; ") : null,
           checked_at,
           ends_at,
         };
