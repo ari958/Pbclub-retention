@@ -1,0 +1,1565 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Learn to Play guarded retry — October 1, 2026</title><style>body{font:16px/1.55 system-ui,sans-serif;background:#f6f7f9;color:#17212c;margin:0}main{max-width:1050px;margin:auto;padding:36px 24px}h1{line-height:1.2}section{background:white;border:1px solid #d8dde3;border-radius:10px;padding:24px;margin:24px 0}blockquote{border-left:4px solid #9e731e;padding:16px 20px;margin:18px 0;background:#fff8e9;white-space:pre-wrap;overflow-wrap:anywhere}pre{font:13px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#eef1f5;padding:18px;border-radius:6px}table{border-collapse:collapse;width:100%;background:white}th,td{text-align:left;padding:10px;border:1px solid #d8dde3}summary{cursor:pointer;font-weight:600}.notice{background:#fff8e9;padding:18px;border:1px solid #dcc797}a{color:#165c96}</style></head><body><main><h1>Learn to Play guarded context retry</h1><p>October 1, 2026 · PB Club · One eight-candidate batch · HTTP 200 · About 93 seconds</p><p class="notice"><b>Drafts only.</b> No approvals, scheduling, dispatch, sends, or sending-setting changes. Both originally skipped already_returned rows are unchanged. Existing candidate/message IDs and the original 30-day lookback with stale=true were preserved. All eight messages remain pending, and all six approval/scheduling/sent/dispatch-claim fields are null.</p><h2>Actual batch PodPlay calls</h2><p><b>130 total:</b> 1 shared event-listing call, 124 signup calls, 4 trigger-event calls, 1 coupon call. <b>0 HTTP 429s. 0 retries.</b> No candidate failures.</p><p>All eight drafts selected <b>with_program</b>: the live lookup found 30 &amp; 30 Beginner Drills &amp; Guided Play on Sunday, October 4, 2026 at 10:30 AM ET, with 4 spots remaining at lookup time. The verified offer is LTPNEXT25 for 25% off the next program. Each candidate has 0 classmates signed up, already_booked=false, no context errors, and no validation errors. Intended send date metadata is 2026-10-01, but no message is scheduled.</p><h2>All final statuses and reasons</h2><table><thead><tr><th>Player</th><th>Status</th><th>Reason</th><th>Variant</th></tr></thead><tbody><tr><td>Bernard Canonigo</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Wolfgang Hall</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Monique Courts</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Joel Mcintosh</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Diana Kekhman</td><td>skipped</td><td>already_returned</td><td>not selected</td></tr><tr><td>Changnan Peng</td><td>skipped</td><td>already_returned</td><td>not selected</td></tr><tr><td>Ke Shi</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Ethan Forde</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Meaghan Wright</td><td>drafted</td><td>null</td><td>with_program</td></tr><tr><td>Joe Stephenson</td><td>drafted</td><td>null</td><td>with_program</td></tr></tbody></table><h2>Every saved draft: exact text and full context</h2><section><h2>Bernard Canonigo</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 242 Unicode characters</p><blockquote>Hi Bernard, it's PB Club. Sunday's a great next step, and you can use LTPNEXT25 for 25% off 30 &amp; 30 Beginner Drills &amp; Guided Play on Sunday. Grab your spot here: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-27&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a0cf3f-eb53-7ccf-bde8-c10846d33e0c&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;Sunday&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;a14d5c44-ce6f-474e-8a0d-f6dfd3b4b3fb&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:16:54.918Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Bernard&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;dfc6cfa8-a879-499a-8f35-cd1fbf26b1b6&quot;,
+  &quot;message_id&quot;: &quot;4a1c6369-1598-4bcd-86a5-5ac188bf76d7&quot;,
+  &quot;player_id&quot;: &quot;a14d5c44-ce6f-474e-8a0d-f6dfd3b4b3fb&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a0cf3f-eb53-7ccf-bde8-c10846d33e0c&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:00.508885+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;4a1c6369-1598-4bcd-86a5-5ac188bf76d7&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Wolfgang Hall</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 280 Unicode characters</p><blockquote>Hi Wolfgang, it's PB Club. Our 30 &amp; 30 Beginner Drills &amp; Guided Play runs Sundays and is a great next step after your Learn to Play Clinic Sunday. Use code LTPNEXT25 for 25% off and grab your spot at https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-27&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a0cf3f-eb53-7ccf-bde8-c10846d33e0c&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;Sunday&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;6b8dda24-d08d-4a12-88a6-e9ad1b348bf2&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:00.770Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Wolfgang&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;b37184e2-fa23-412e-a0d8-9287f719d65f&quot;,
+  &quot;message_id&quot;: &quot;9e5d5c51-4ae7-4c9a-8079-252706ceb4c7&quot;,
+  &quot;player_id&quot;: &quot;6b8dda24-d08d-4a12-88a6-e9ad1b348bf2&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a0cf3f-eb53-7ccf-bde8-c10846d33e0c&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:05.341578+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;9e5d5c51-4ae7-4c9a-8079-252706ceb4c7&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Monique Courts</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 288 Unicode characters</p><blockquote>Hi Monique, it's PB Club. You've got 25% off your next program with code LTPNEXT25, and our Sunday 30 &amp; 30 Beginner Drills &amp; Guided Play is a great next step after joining us on Sept 22. Grab your spot here: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-22&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a03f56-c72e-7bb8-8aed-6cb7b412f8bf&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 22&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;57912c11-f708-4e7f-81d1-4f3d8b9d7225&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:05.660Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Monique&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;59ab40dc-4dd8-4a38-862d-971766ac471e&quot;,
+  &quot;message_id&quot;: &quot;919f4bc7-44c1-4ac4-bb0d-e2c4a60b42ef&quot;,
+  &quot;player_id&quot;: &quot;57912c11-f708-4e7f-81d1-4f3d8b9d7225&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a03f56-c72e-7bb8-8aed-6cb7b412f8bf&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:08.171412+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;919f4bc7-44c1-4ac4-bb0d-e2c4a60b42ef&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Joel Mcintosh</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 266 Unicode characters</p><blockquote>Hi Joel, it's PB Club. Since you joined us on Sept 22, you can save 25% off your next program with code LTPNEXT25 when you sign up for Sunday's 30 &amp; 30 Beginner Drills &amp; Guided Play at https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c.</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-22&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a03f56-c72e-7bb8-8aed-6cb7b412f8bf&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 22&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;63b24011-7d8f-4a88-b147-688978fc9ccf&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:08.469Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Joel&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;8165c985-c43b-4157-bdf1-fd5b62a9d5ef&quot;,
+  &quot;message_id&quot;: &quot;b8be2d1d-b565-4903-9349-85522d8697c2&quot;,
+  &quot;player_id&quot;: &quot;63b24011-7d8f-4a88-b147-688978fc9ccf&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a03f56-c72e-7bb8-8aed-6cb7b412f8bf&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:14.279198+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;b8be2d1d-b565-4903-9349-85522d8697c2&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Ke Shi</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 276 Unicode characters</p><blockquote>Hi Ke, it's PB Club. You've got 25% off your next program with code LTPNEXT25, and a great next step is our Sunday 30 &amp; 30 Beginner Drills &amp; Guided Play after joining us on Sept 20. Sign up here: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-20&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a0a767-6c3c-7446-b1d9-fc2bceb739de&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 20&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;82c595cc-96d3-4eb5-b40b-40219932816b&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:14.600Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Ke&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;afec6e1f-8068-4cc5-aafd-3b95787fadce&quot;,
+  &quot;message_id&quot;: &quot;36f60a30-5c02-433c-bbed-238077472b7f&quot;,
+  &quot;player_id&quot;: &quot;82c595cc-96d3-4eb5-b40b-40219932816b&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a0a767-6c3c-7446-b1d9-fc2bceb739de&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:16.951294+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;36f60a30-5c02-433c-bbed-238077472b7f&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Ethan Forde</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 282 Unicode characters</p><blockquote>Hi Ethan, it's PB Club. You've got 25% off your next program with code LTPNEXT25, and our Sunday 30 &amp; 30 Beginner Drills &amp; Guided Play is a great next step after joining us on Sept 1. Grab a spot here: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-01&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 1&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;c513c6a3-1424-4eb3-a556-527d99559fef&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:17.216Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Ethan&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;c10131d1-b6c7-4021-98a2-ca5ea046304c&quot;,
+  &quot;message_id&quot;: &quot;dc31720d-2f27-4fa8-a889-20ec95791b2f&quot;,
+  &quot;player_id&quot;: &quot;c513c6a3-1424-4eb3-a556-527d99559fef&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:19.595502+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;dc31720d-2f27-4fa8-a889-20ec95791b2f&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Meaghan Wright</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 288 Unicode characters</p><blockquote>Hi Meaghan, it's PB Club. You've got 25% off your next program with code LTPNEXT25, and our Sunday 30 &amp; 30 Beginner Drills &amp; Guided Play is a great next step after your clinic on Sept 1. Grab your spot here: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-01&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 1&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;e38ec24d-294a-4e4c-b4a7-b39de14cc3e9&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:19.815Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Meaghan&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;4eb753b2-c9ef-4acf-b674-557ada19b5f7&quot;,
+  &quot;message_id&quot;: &quot;fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc&quot;,
+  &quot;player_id&quot;: &quot;e38ec24d-294a-4e4c-b4a7-b39de14cc3e9&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:22.304795+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Joe Stephenson</h2><p>Final status: <b>drafted</b> · Reason: null · Variant: <b>with_program</b> · 245 Unicode characters</p><blockquote>Hi Joe, it's PB Club. Glad you joined us on Sept 1 and use LTPNEXT25 for 25% off 30 &amp; 30 Beginner Drills &amp; Guided Play, our Sunday program that's a great next step: https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c</blockquote><h3>Full persisted context</h3><pre>{
+  &quot;promo&quot;: {
+    &quot;code&quot;: &quot;LTPNEXT25&quot;,
+    &quot;offer_text&quot;: &quot;25% off your next program&quot;
+  },
+  &quot;stale&quot;: true,
+  &quot;errors&quot;: [],
+  &quot;reason&quot;: null,
+  &quot;trigger&quot;: {
+    &quot;date&quot;: &quot;2026-09-01&quot;,
+    &quot;name&quot;: &quot;Learn to Play Clinic&quot;,
+    &quot;event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;
+  },
+  &quot;variant&quot;: &quot;with_program&quot;,
+  &quot;date_phrase&quot;: &quot;on Sept 1&quot;,
+  &quot;diagnostics&quot;: {
+    &quot;lookups&quot;: {
+      &quot;classmate&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;next_program&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      },
+      &quot;already_booked&quot;: {
+        &quot;errors&quot;: [],
+        &quot;status&quot;: &quot;ok&quot;
+      }
+    },
+    &quot;upcoming&quot;: {
+      &quot;requests&quot;: [
+        {
+          &quot;url&quot;: &quot;https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T19%3A15%3A55.365Z&amp;endTime=2026-10-15T19%3A15%3A55.365Z&amp;page=1&amp;ipp=500&quot;,
+          &quot;page&quot;: 1,
+          &quot;method&quot;: &quot;GET&quot;
+        }
+      ],
+      &quot;window_end&quot;: &quot;2026-10-15T19:15:55.365Z&quot;,
+      &quot;window_start&quot;: &quot;2026-10-01T19:15:55.365Z&quot;,
+      &quot;filter_causes&quot;: {
+        &quot;full_event_ids&quot;: [],
+        &quot;matching_event_count&quot;: 3,
+        &quot;outside_client_window_count&quot;: 0,
+        &quot;missing_total_teams_event_ids&quot;: [],
+        &quot;unpublished_or_canceled_count&quot;: 3
+      },
+      &quot;raw_event_count&quot;: 127,
+      &quot;in_window_event_count&quot;: 127,
+      &quot;matched_next_program_names&quot;: [
+        &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;
+      ],
+      &quot;unmatched_next_program_names&quot;: [
+        &quot;Beginner 60&amp;60 Clinic&quot;,
+        &quot;Path to Advanced Beginner&quot;
+      ],
+      &quot;published_in_window_event_count&quot;: 124
+    },
+    &quot;player_id&quot;: &quot;c1e26321-027c-4ff4-a934-85106fd9a7e2&quot;
+  },
+  &quot;booked_event&quot;: null,
+  &quot;evaluated_at&quot;: &quot;2026-10-01T19:17:22.490Z&quot;,
+  &quot;next_program&quot;: {
+    &quot;date&quot;: &quot;2026-10-04&quot;,
+    &quot;name&quot;: &quot;30 &amp; 30 Beginner Drills &amp; Guided Play&quot;,
+    &quot;time&quot;: &quot;10:30 AM&quot;,
+    &quot;event_id&quot;: &quot;01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;signup_url&quot;: &quot;https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c&quot;,
+    &quot;start_time&quot;: &quot;2026-10-04T14:30:00.000Z&quot;,
+    &quot;spots_remaining&quot;: 4
+  },
+  &quot;send_date_et&quot;: &quot;2026-10-01&quot;,
+  &quot;lookback_days&quot;: 30,
+  &quot;already_booked&quot;: false,
+  &quot;coupon_warning&quot;: null,
+  &quot;next_program_day&quot;: &quot;Sunday&quot;,
+  &quot;player_first_name&quot;: &quot;Joe&quot;,
+  &quot;validation_errors&quot;: [],
+  &quot;classmates_signed_up&quot;: 0
+}</pre><details><summary>Candidate, message identity and safety evidence</summary><pre>{
+  &quot;candidate_id&quot;: &quot;5285f595-334b-4e39-bc2e-64885df00913&quot;,
+  &quot;message_id&quot;: &quot;b4174321-c6a1-48b7-bed8-d81aeb72247f&quot;,
+  &quot;player_id&quot;: &quot;c1e26321-027c-4ff4-a934-85106fd9a7e2&quot;,
+  &quot;playbook_key&quot;: &quot;ltp_followup&quot;,
+  &quot;trigger_event_id&quot;: &quot;01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;,
+  &quot;updated_at&quot;: &quot;2026-10-01T19:17:27.274465+00:00&quot;,
+  &quot;message_safety&quot;: {
+    &quot;id&quot;: &quot;b4174321-c6a1-48b7-bed8-d81aeb72247f&quot;,
+    &quot;status&quot;: &quot;pending&quot;,
+    &quot;approved_at&quot;: null,
+    &quot;approved_by&quot;: null,
+    &quot;approved_body&quot;: null,
+    &quot;scheduled_send_at&quot;: null,
+    &quot;sent_at&quot;: null,
+    &quot;dispatch_claimed_at&quot;: null
+  }
+}</pre></details></section><section><h2>Complete batch transport telemetry</h2><pre>{
+  &quot;total_calls&quot;: 130,
+  &quot;listing_calls&quot;: 1,
+  &quot;signup_calls&quot;: 124,
+  &quot;trigger_calls&quot;: 4,
+  &quot;coupon_calls&quot;: 1,
+  &quot;rate_limit_count&quot;: 0,
+  &quot;retries&quot;: [],
+  &quot;statuses&quot;: [
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf3f-eb53-7ccf-bde8-c10846d33e0c&quot;,
+      &quot;category&quot;: &quot;trigger&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/coupons&quot;,
+      &quot;category&quot;: &quot;coupons&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events&quot;,
+      &quot;category&quot;: &quot;listing&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f81e-531a-7441-9ee5-6801b1e0c601/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf15-1cad-7ccf-bdcf-a8ae65da2dc4/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f79c-38c9-777a-9163-3bd036880dcf/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0e9fa-bd48-7779-8c6e-1aab941cbfae/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0ed96-bf22-7114-a47e-c3fc48ac6805/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b09a-0e6b-777f-ba38-cf1e9362d3b0/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b001-7ff2-a4b9-8b267a8fb679/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-a9ff-7ff2-a4c5-e817f61c1e47/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b08e-434e-777f-ba2e-197840a04ab3/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-6845-7ff2-a4d1-c4611723ad68/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-1ab7-7ff2-a4dc-ceab28860daf/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0eedc-e928-7114-a51d-bfc7c1f2ad06/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-51b2-7ff2-a4f3-4328bd24b991/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b519-4c23-7ff2-a4ff-06033a9e95ab/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b51a-3091-7ff2-a505-845e3284c291/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d2-8c34-755a-9305-fb9339a45042/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d0-b04f-755a-9302-44e879e096fe/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d2-1d3f-755a-9304-084a70143417/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d4-0347-755a-9308-e1e08aacde27/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d3-a5a0-755a-9307-9e4c47e7db3e/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cfe3-b08e-7ccf-be59-76d65f3fb335/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf43-96c0-7ccf-bdf4-d4ee6a333dd8/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019eb7f7-86c2-7550-8662-25f448cdc480/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d0-1402-755a-92fe-b81643674ce6/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8df-eb43-7441-9f47-5ead6c127e0c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8e1-00fd-7441-9f48-f89afce56c12/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d4-ee3f-755a-930c-942bf6b63dbc/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019fec2e-7f7d-7cc2-a4cd-2faecce47433/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019fec2f-82eb-7667-a0b2-c081182890b2/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f311-db46-777a-8eda-e5eb9a5c667c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-50b5-7ff2-a4e8-61f508f33a0d/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b03e-7ff2-a4b9-fbd538aa83e5/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-aa3c-7ff2-a4c6-5dcc40154596/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-687b-7ff2-a4d2-303740b9c354/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-1af7-7ff2-a4dd-3a1b032c9056/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-51f0-7ff2-a4f3-b787de87b260/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c381-7fc1-7ff2-ab33-4e0d999226d3/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d5-e8c8-7441-9f35-c6a9ac86e651/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf45-a3bc-7ccf-bdf8-2eee01b223ae/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c033-5126-7ff2-a975-173613b2b948/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8cb-9ff5-7441-9f2d-ff4be72695f7/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d1-96fa-7441-9f31-033175448e06/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d5-1ba4-7441-9f32-7b2f01bb494c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-50f5-7ff2-a4e8-d07b6c0eb26e/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b07e-7ff2-a4ba-6b6d2d61efab/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-abe2-7ff2-a4c6-cd6afdba594b/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-68b7-7ff2-a4d2-a6848bd9342a/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-1b33-7ff2-a4dd-afa3bc4796fe/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5250-7ff2-a4f4-2228e77f2924/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d6-62c7-7441-9f36-6ddab8044d17/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b51b-09aa-7ff2-a50b-eb69347fa282/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b4e3-8474-7ff2-a4a1-d8f12ad18c31/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-512d-7ff2-a4e9-4123a88a549e/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b4c9-7ff2-a4ba-d992bb2044a0/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-ac63-7ff2-a4c7-3dd6f76f4820/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7253-7ff2-a4d3-1624221b9fce/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-1b6c-7ff2-a4de-19c268ee902f/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5287-7ff2-a4f4-9670ed57e4b7/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8de-dae3-7441-9f42-acc071c59d72/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8dd-d8e9-7441-9f3e-5a6f0297ade6/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d9-c15f-7441-9f3a-ebe9eba968f2/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8dc-cdd6-7441-9f3d-31b05591e28c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-5163-7ff2-a4e9-b56995f59472/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b54e-7ff2-a4bb-53160f28426e/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-ac9e-7ff2-a4c7-a8a3606c3a6a/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7411-7ff2-a4d3-800e0113e57f/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-206f-7ff2-a4de-8dadbe1b5676/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-52c3-7ff2-a4f5-0436d558c0f8/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8c0-6560-7441-9f25-d628ddb5d659/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d7-1455-7441-9f37-c3da3221b218/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf15-1cff-7ccf-bdd0-687650da11ec/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8d7-4d78-7441-9f39-b296ce9be58f/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-519e-7ff2-a4ea-23e5d0871ddd/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b7bd-7ff2-a4bb-d4d02cb3b18b/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-acf1-7ff2-a4c8-1fa284832f92/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7454-7ff2-a4d3-f28a35774be7/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-aa78-7ff2-a4e0-3600857c9037/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5cf1-7ff2-a4f5-7342ef587610/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b519-4c8a-7ff2-a500-174204ec1f5f/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b51a-30f7-7ff2-a506-969424204016/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a04471-9439-7884-a219-4f9adefa2bf5/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a04476-38dc-7884-a21b-c8f8cf9c5a7a/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf43-96fe-7ccf-bdf5-64265af60d52/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019eb7f7-96bb-7550-8663-6385ea385901/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f2d0-1dc7-755a-92ff-bc199d0b8abf/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a04471-b655-7884-a219-b1d6b72efb1c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a04476-a901-7884-a21c-9a960e8b7d9b/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a00059-9742-7ccf-a658-6fe33cc40e53/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019fec2e-805c-7667-a0af-ba41b0790ad8/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/019fec2f-837c-7667-a0b3-19fe181b40cc/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f311-dbb2-777a-8edb-e2097d1eb882/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-51d7-7ff2-a4ea-975309ae65e9/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b807-7ff2-a4bc-436d2b0ff088/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-ad36-7ff2-a4c8-89e8b078bcbc/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7495-7ff2-a4d4-61ca6750fec9/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-aac1-7ff2-a4e0-a2f5a4132fdd/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5d2a-7ff2-a4f5-e5200e536adf/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c381-8009-7ff2-ab33-bc6c15b5c436/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c031-c2e9-7ff2-a970-fcb641017ac2/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0cf45-a3ea-7ccf-bdf8-99915ce9c54c/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c033-5194-7ff2-a975-d4a69af8fcc6/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0c047-eda6-7ff2-a986-6d1ab7fc4b50/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-56f2-7ff2-a4eb-0488a01bc8a2/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b84d-7ff2-a4bc-b6a5da798757/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-b56b-7ff2-a4c8-f9a84477a120/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7c16-7ff2-a4d4-d3136814bc11/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-aafc-7ff2-a4e1-116bb316ab66/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5d78-7ff2-a4f6-56173dc534ad/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b51b-09e8-7ff2-a50c-4bee15b150b5/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b4e3-a839-7ff2-a4a3-03324693239a/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-5cb9-7ff2-a4eb-71bd75159e6d/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b8f6-7ff2-a4bd-26a62a51d430/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-b83b-7ff2-a4c9-6aeda1de921a/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7c56-7ff2-a4d5-477a0224d39e/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-af46-7ff2-a4e1-86b98246e51d/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b511-5db3-7ff2-a4f6-c412c765f065/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0f8de-db28-7441-9f43-1b85284a2243/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b510-5cfa-7ff2-a4eb-e2ddc479fcb4/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b509-b93a-7ff2-a4bd-901ea490b3e9/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50c-b9c1-7ff2-a4ca-9d0584eae179/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50d-7f0f-7ff2-a4d5-b78f63ec2ac1/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0b50f-af80-7ff2-a4e1-f681248e4677/signups&quot;,
+      &quot;category&quot;: &quot;signups&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a03f56-c72e-7bb8-8aed-6cb7b412f8bf&quot;,
+      &quot;category&quot;: &quot;trigger&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a0a767-6c3c-7446-b1d9-fc2bceb739de&quot;,
+      &quot;category&quot;: &quot;trigger&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    },
+    {
+      &quot;path&quot;: &quot;/apis/v2/events/01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d&quot;,
+      &quot;category&quot;: &quot;trigger&quot;,
+      &quot;attempt&quot;: 1,
+      &quot;status&quot;: 200
+    }
+  ]
+}</pre><h3>Unchanged sending mode</h3><pre>{
+  &quot;retention_only&quot;: true,
+  &quot;require_marketing_consent&quot;: false,
+  &quot;sms_live&quot;: false,
+  &quot;test_override_configured&quot;: true,
+  &quot;kill_switch&quot;: true
+}</pre><h3>Per-candidate write/request failures</h3><pre>[]</pre></section></main></body></html>

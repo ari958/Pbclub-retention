@@ -91,3 +91,17 @@ mtime_ms = 1790821382085
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/2025aa12-026f-47f7-970d-5ff359f0641c/1c8ebdf1-0c87-42aa-a87e-d4c8dd293a2c"
 storage_version_token = "1790821382713538"
 content_type = "text/plain"
+
+[[outputs]]
+id = "awN0S3X5H8Ieh16LmewNe"
+uri = "file://reports/ltp-guarded-context-retry-2026-10-01.html"
+type = "html"
+title = "Guarded LTP retry: full draft and context report"
+description = "All 10 final statuses, exact text and full persisted context for all 8 drafts, 130-call transport audit, and proof that approval/send fields remain empty."
+logical_id = "a26f391e-f96f-4c91-804e-0cbcf1ae9161"
+content_hash = "sha256:005c338796f48e79a63bb58136854856d5d0f0665c031e8a9c0e691cbb029f09"
+size = 68857
+mtime_ms = 1790882369784
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/a26f391e-f96f-4c91-804e-0cbcf1ae9161/cf4e46b0-30db-4b3d-9699-687ab760510d"
+storage_version_token = "1790882370640944"
+content_type = "text/html"
