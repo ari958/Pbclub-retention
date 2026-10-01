@@ -18,3 +18,4 @@
 - [DUPR refresh policy](dupr-refresh-policy.md) — track last check separately from rating source age, including unrated players; keep long imports heartbeat-alive and resume from saved batches.
 - [Programs history policy](programs-history-policy.md) — active screens default to upcoming programs; past records belong in Archive, not deletion or rewritten experiment statuses.
 - [Retention interface policy](retention-interface-policy.md) — approval-only workflow is intentional; preserve legacy features without restoring hidden requests or send bypasses.
+- [PodPlay context rate limits](podplay-context-rate-limits.md) — sequential candidate rebuilds can still hit signup-read limits; pace/share batch reads and fail closed on 429.

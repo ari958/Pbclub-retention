@@ -26,3 +26,9 @@ Do not automatically substitute a similarly named, higher-level program when the
 **Why:** Title normalization fixes case, dash, and whitespace differences; it cannot establish that a different program is appropriate for a new player. The live audit found a higher-level title with an extra word, not a formatting mismatch.
 
 **How to apply:** Preserve the configured program choices, mark missing matches as needing context, and obtain an operator decision before adding semantic aliases or changing the recommended programs.
+
+Preserve the original batch's lookback provenance when reprocessing legacy drafts. Missing per-candidate metadata is not evidence that the batch used the current production default.
+
+**Why:** Legacy drafts predated lookback metadata. Defaulting those rows to three days during regeneration incorrectly removed their known longer-window test flags.
+
+**How to apply:** Use the documented batch response or explicit operator input for the source window, rather than inventing it from the current default. Keep provenance-only corrections separate from message, approval, and send fields.
