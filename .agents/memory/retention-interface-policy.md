@@ -27,6 +27,12 @@ Do not automatically substitute a similarly named, higher-level program when the
 
 **How to apply:** Preserve the configured program choices. After a successful live no-match, use the user-approved generic thank-you/offer fallback without a program suggestion; lookup failures still need context. Obtain an operator decision before adding semantic aliases or changing recommended programs.
 
+The no-program fallback still acknowledges attendance at Learn to Play with the supplied date phrase. It is not a generic club-membership thank-you.
+
+**Why:** The user corrected the generic fallback because it lost the reason for the outreach. “No program” means no next-program suggestion, not removal of the verified past attendance fact.
+
+**How to apply:** Preserve the specific attendance thank-you and its verified timing when refining the fallback. The exception does not authorize other program suggestions, dates, or classmates.
+
 Preserve the original batch's lookback provenance when reprocessing legacy drafts. Missing per-candidate metadata is not evidence that the batch used the current production default.
 
 **Why:** Legacy drafts predated lookback metadata. Defaulting those rows to three days during regeneration incorrectly removed their known longer-window test flags.

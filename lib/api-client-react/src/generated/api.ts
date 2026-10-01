@@ -34,7 +34,16 @@ import type {
   RetentionGenerationResult,
   RetentionPauseInput,
   RetentionRegenerateResult,
+  RetentionRetryContextBatchInput,
+  RetentionRetryContextEnvelope,
+  RetentionRetryContextSingleInput,
   RetentionReview,
+  RetryRetentionContext400,
+  RetryRetentionContext503,
+  RetryRetentionContextBatch400,
+  RetryRetentionContextBatch503,
+  RetryRetentionContextBatchParams,
+  RetryRetentionContextParams,
   SkipRetentionDraftParams,
   UpdateRetentionKillSwitchParams,
 } from "./api.schemas";
@@ -822,6 +831,263 @@ export const useRegenerateRetentionDraft = <
   TContext
 > => {
   return useMutation(getRegenerateRetentionDraftMutationOptions(options));
+};
+
+/**
+ * Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+ * @summary Retry PodPlay context lookup for eligible needs-context candidates only
+ */
+export const getRetryRetentionContextBatchUrl = (
+  params?: RetryRetentionContextBatchParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/retry-context?${stringifiedParams}`
+    : `/api/retention/retry-context`;
+};
+
+export const retryRetentionContextBatch = async (
+  retentionRetryContextBatchInput: RetentionRetryContextBatchInput,
+  params?: RetryRetentionContextBatchParams,
+  options?: RequestInit,
+): Promise<RetentionRetryContextEnvelope> => {
+  return customFetch<RetentionRetryContextEnvelope>(
+    getRetryRetentionContextBatchUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionRetryContextBatchInput),
+    },
+  );
+};
+
+export const getRetryRetentionContextBatchMutationOptions = <
+  TError = ErrorType<
+    RetryRetentionContextBatch400 | RetryRetentionContextBatch503
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryRetentionContextBatch>>,
+    TError,
+    {
+      data: BodyType<RetentionRetryContextBatchInput>;
+      params?: RetryRetentionContextBatchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof retryRetentionContextBatch>>,
+  TError,
+  {
+    data: BodyType<RetentionRetryContextBatchInput>;
+    params?: RetryRetentionContextBatchParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["retryRetentionContextBatch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof retryRetentionContextBatch>>,
+    {
+      data: BodyType<RetentionRetryContextBatchInput>;
+      params?: RetryRetentionContextBatchParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return retryRetentionContextBatch(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RetryRetentionContextBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof retryRetentionContextBatch>>
+>;
+export type RetryRetentionContextBatchMutationBody =
+  BodyType<RetentionRetryContextBatchInput>;
+export type RetryRetentionContextBatchMutationError = ErrorType<
+  RetryRetentionContextBatch400 | RetryRetentionContextBatch503
+>;
+
+/**
+ * @summary Retry PodPlay context lookup for eligible needs-context candidates only
+ */
+export const useRetryRetentionContextBatch = <
+  TError = ErrorType<
+    RetryRetentionContextBatch400 | RetryRetentionContextBatch503
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryRetentionContextBatch>>,
+    TError,
+    {
+      data: BodyType<RetentionRetryContextBatchInput>;
+      params?: RetryRetentionContextBatchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof retryRetentionContextBatch>>,
+  TError,
+  {
+    data: BodyType<RetentionRetryContextBatchInput>;
+    params?: RetryRetentionContextBatchParams;
+  },
+  TContext
+> => {
+  return useMutation(getRetryRetentionContextBatchMutationOptions(options));
+};
+
+/**
+ * Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+ * @summary Retry PodPlay context lookup for one eligible needs-context candidate
+ */
+export const getRetryRetentionContextUrl = (
+  id: string,
+  params?: RetryRetentionContextParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}/retry-context?${stringifiedParams}`
+    : `/api/retention/candidates/${id}/retry-context`;
+};
+
+export const retryRetentionContext = async (
+  id: string,
+  retentionRetryContextSingleInput: RetentionRetryContextSingleInput,
+  params?: RetryRetentionContextParams,
+  options?: RequestInit,
+): Promise<RetentionRetryContextEnvelope> => {
+  return customFetch<RetentionRetryContextEnvelope>(
+    getRetryRetentionContextUrl(id, params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionRetryContextSingleInput),
+    },
+  );
+};
+
+export const getRetryRetentionContextMutationOptions = <
+  TError = ErrorType<RetryRetentionContext400 | RetryRetentionContext503>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryRetentionContext>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionRetryContextSingleInput>;
+      params?: RetryRetentionContextParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof retryRetentionContext>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionRetryContextSingleInput>;
+    params?: RetryRetentionContextParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["retryRetentionContext"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof retryRetentionContext>>,
+    {
+      id: string;
+      data: BodyType<RetentionRetryContextSingleInput>;
+      params?: RetryRetentionContextParams;
+    }
+  > = (props) => {
+    const { id, data, params } = props ?? {};
+
+    return retryRetentionContext(id, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RetryRetentionContextMutationResult = NonNullable<
+  Awaited<ReturnType<typeof retryRetentionContext>>
+>;
+export type RetryRetentionContextMutationBody =
+  BodyType<RetentionRetryContextSingleInput>;
+export type RetryRetentionContextMutationError = ErrorType<
+  RetryRetentionContext400 | RetryRetentionContext503
+>;
+
+/**
+ * @summary Retry PodPlay context lookup for one eligible needs-context candidate
+ */
+export const useRetryRetentionContext = <
+  TError = ErrorType<RetryRetentionContext400 | RetryRetentionContext503>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof retryRetentionContext>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionRetryContextSingleInput>;
+      params?: RetryRetentionContextParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof retryRetentionContext>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionRetryContextSingleInput>;
+    params?: RetryRetentionContextParams;
+  },
+  TContext
+> => {
+  return useMutation(getRetryRetentionContextMutationOptions(options));
 };
 
 /**

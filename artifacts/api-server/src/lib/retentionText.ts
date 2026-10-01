@@ -16,7 +16,7 @@ Follow every existing SMS voice rule:
 - Never use these phrases: "Hope this finds you well", "Just checking in", "I wanted to reach out", "Don't hesitate to reach out", "Feel free to", "Excited to share", "We've noticed", "We see that you", "We observed", "Based on your history", "We wanted to make sure", "Looking forward to hearing from you".
 - Only reference facts in the supplied context. Do not infer prior interactions, player type, motivation, or unstated timing. Never reveal surveillance or say what the system knows. Never validate or assign the player's level.
 - For with_program contexts, mention only the supplied next program and facts; do not invent familiarity, event details, urgency, or signup claims. Use its provided signup link naturally when appropriate.
-- For no_program contexts, do not mention any specific program or event, date, day, time, classmate, or program suggestion. Generic wording in the verified offer (including the word "program") and a generic booking-page call to action are allowed.`;
+- For no_program contexts, mention only the required Learn to Play attendance fact with its supplied date_phrase. Do not mention another program or event, date, day, time, classmate, or program suggestion. Generic wording in the verified offer (including the word "program") and a generic booking-page call to action are allowed.`;
 
 export class RetentionTextValidationError extends Error {
   constructor(readonly validation_errors: string[]) {
@@ -62,6 +62,14 @@ function containsProgramName(text: string, name: string): boolean {
 function textAfterRequiredOpener(text: string, context: RetentionContext): string {
   const opener = `Hi ${context.player_first_name.trim()}, it's PB Club.`;
   return text.startsWith(opener) ? text.slice(opener.length) : text;
+}
+
+function noProgramAttendancePattern(datePhrase: string): RegExp {
+  const escapedDatePhrase = datePhrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(
+    `\\b(?:[Tt]hanks|[Tt]hank you) for (?:coming to|attending) Learn to Play ${escapedDatePhrase}(?![\\p{L}\\p{N}_])`,
+    "u",
+  );
 }
 
 function unsupportedPromotionClaims(text: string, verifiedOffer: string): boolean {
@@ -183,6 +191,7 @@ function validateCommonLtpText(text: string, context: RetentionContext): string[
   if (!/(?<![\p{L}\p{N}_])LTPNEXT25(?![\p{L}\p{N}_])/u.test(text)) {
     errors.push("Message must include LTPNEXT25 as an exact token");
   }
+  if (/ - /u.test(text)) errors.push('Message must not contain a spaced hyphen (" - ")');
   if ([...text].length > 320) errors.push("Message must be 320 Unicode characters or fewer");
   return errors;
 }
@@ -216,7 +225,17 @@ function validateWithProgramLtpText(text: string, context: RetentionContext): st
 
 function validateNoProgramLtpText(text: string, context: RetentionContext): string[] {
   const errors: string[] = [];
-  const scannedText = textAfterRequiredOpener(text, context);
+  let scannedText = textAfterRequiredOpener(text, context);
+  if (!context.date_phrase) {
+    errors.push("No-program text requires the supplied date_phrase");
+  } else {
+    const attendancePattern = noProgramAttendancePattern(context.date_phrase);
+    if (!attendancePattern.test(scannedText)) {
+      errors.push("Message must thank the player for coming to or attending Learn to Play with date_phrase verbatim");
+    } else {
+      scannedText = scannedText.replace(attendancePattern, " ");
+    }
+  }
   if (context.next_program) errors.push("A no_program context must not include a next program");
   if (context.booking_url !== RETENTION_NO_PROGRAM_BOOKING_URL) {
     errors.push("No-program context must provide the exact approved booking-page URL");
@@ -232,9 +251,11 @@ function validateNoProgramLtpText(text: string, context: RetentionContext): stri
     const normalizedOffer = context.promo.offer_text.replace(/\s+/g, " ").trim().toLocaleLowerCase();
     if (!normalizedText.includes(normalizedOffer)) errors.push("Message must include the verified offer text");
   }
-  if (!/\bthank(?:s| you)\b/i.test(text)) errors.push("Message must include an actual thank-you");
   if (!text.includes(RETENTION_NO_PROGRAM_BOOKING_URL)) {
     errors.push("Message must include the exact approved booking-page URL");
+  }
+  if (/\bthank(?:s| you)?\b/i.test(scannedText)) {
+    errors.push("No-program message must not include generic or additional thanking");
   }
   if (
     TIME_REFERENCE_RE.test(scannedText)
@@ -312,6 +333,8 @@ function projectRetentionTextFacts(context: RetentionContext): Record<string, un
       : null;
     return {
       player_first_name: context.player_first_name,
+      attendance: { program: "Learn to Play", attended: true },
+      date_phrase: context.date_phrase,
       promo: verifiedPromo,
       booking_url: context.booking_url,
     };
@@ -373,7 +396,7 @@ export async function writeRetentionText(
 Write only the message body. Use only supplied context facts. Never invent facts.
 ${playbook.key === "ltp_followup"
     ? retentionVariant(context) === "no_program"
-        ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include an actual thank-you, the exact verified promo code and promo.offer_text, and this exact URL: ${RETENTION_NO_PROGRAM_BOOKING_URL}. Do not mention any specific program or event. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not include date_phrase or any date, day, time, classmate, other-player reference, suggestion to attend/join/try a specific activity or program, or specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes and stay within 320 Unicode characters.`
+        ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Thank the player for coming to or attending Learn to Play, using the exact words "Learn to Play" and date_phrase verbatim. This is the only attendance or program reference allowed; do not mention any other program or event, date, day, time, classmate, or other-player reference. Do not add generic thanks for joining or being part of the club. Include the exact verified promo code and promo.offer_text, and this exact URL: ${RETENTION_NO_PROGRAM_BOOKING_URL}. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not suggest attending/joining/trying a specific activity or program, or name a specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes or spaced hyphens (" - ") and stay within 320 Unicode characters.`
       : `For this Learn to Play follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include LTPNEXT25 exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`
     : `If already_booked, thank the player and say "see you at [booked event name]" without mentioning an offer.`}
       ${variant === "no_program" ? "No generic playbook guidance applies to this variant." : "Respect the playbook guidance."}`,

@@ -16,6 +16,7 @@ import {
   hasNonLtpAttendanceAfterTrigger,
 } from "./retentionDates";
 import type { RetentionCandidate, RetentionContext, RetentionPlaybook } from "./retentionTypes";
+import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./retentionPodplayBatch";
 
 export type RetentionSkipReason =
   | "no_phone"
@@ -90,7 +91,7 @@ function intendedRetentionSendAt(): Date {
 }
 
 function tableMissing(message: string) {
-  return /retention_(playbooks|candidates|create_draft|create_candidate|update_candidate|regenerate_draft|manual_edit_candidate|schema_ready)|does not exist|schema cache|could not find the table|could not find the function/i.test(message);
+  return /retention_(playbooks|candidates|create_draft|create_candidate|update_candidate|regenerate_draft|retry_context|manual_edit_candidate|schema_ready)|does not exist|schema cache|could not find the table|could not find the function/i.test(message);
 }
 
 async function pageAll<T>(queryFactory: (from: number, to: number) => any): Promise<T[]> {
@@ -569,43 +570,139 @@ export async function regenerateRetentionCandidate(
   clubId: string,
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
+  return rebuildRetentionCandidate(clubId, candidateId, "regenerate");
+}
+
+interface RetentionRebuildBatch {
+  client: RetentionPodplayBatchClient;
+  clubCache: Map<string, Promise<RetentionLiveClub>>;
+  couponCache: Map<string, Promise<RetentionCouponValidation>>;
+  triggerCache: Map<string, Promise<VerifiedRetentionTrigger>>;
+  eventsCache: Map<string, Promise<any[]>>;
+  signupsCache: Map<string, Promise<string[]>>;
+}
+
+export function canRetryRetentionContext(candidate: Pick<RetentionCandidate, "status" | "context">): boolean {
+  return candidate.status === "needs_context"
+    && ["context_lookup_failed", "no_next_program"].includes(String(candidate.context?.reason ?? ""));
+}
+
+export interface RetentionContextRetryBatchResult {
+  schema_ready: true;
+  results: RetentionRegenerationResult[];
+  failures: { candidate_id: string; error: string; http_status: number }[];
+  podplay: RetentionPodplayTelemetry;
+}
+
+const activeContextRetries = new Set<string>();
+
+/** Eligibility and schema are checked before any PodPlay or model request. */
+export async function retryRetentionContextBatch(
+  clubId: string,
+  candidateIds: string[],
+): Promise<RetentionContextRetryBatchResult> {
+  if (!candidateIds.length || candidateIds.length > 50 || new Set(candidateIds).size !== candidateIds.length) {
+    throw Object.assign(new Error("Provide 1–50 distinct candidate IDs"), { status: 400 });
+  }
+  if (activeContextRetries.has(clubId)) {
+    throw Object.assign(new Error("A context retry batch is already running for this club"), { status: 409 });
+  }
+  activeContextRetries.add(clubId);
+  try {
+    const { data: ready, error: readinessError } = await supabase.rpc("retention_context_retry_ready");
+    if (readinessError || ready !== true) {
+      throw Object.assign(new Error("Apply retention migration 012 in the existing Supabase SQL Editor before retrying context"), { status: 503 });
+    }
+    const { data: candidates, error } = await supabase.from("retention_candidates")
+      .select("id,status,context").eq("club_id", clubId).in("id", candidateIds);
+    if (error) throw new Error(error.message);
+    if (candidates?.length !== candidateIds.length || candidates.some((candidate: any) => !canRetryRetentionContext(candidate))) {
+      throw Object.assign(new Error("Every requested candidate must still need context with reason context_lookup_failed or no_next_program"), { status: 409 });
+    }
+    const batch: RetentionRebuildBatch = {
+      client: new RetentionPodplayBatchClient(),
+      clubCache: new Map(),
+      couponCache: new Map(),
+      triggerCache: new Map(),
+      eventsCache: new Map(),
+      signupsCache: new Map(),
+    };
+    const result: RetentionContextRetryBatchResult = {
+      schema_ready: true, results: [], failures: [], podplay: batch.client.telemetry,
+    };
+    for (const id of candidateIds) {
+      try {
+        result.results.push(await rebuildRetentionCandidate(clubId, id, "retry_context", batch));
+      } catch (error: any) {
+        result.failures.push({ candidate_id: id, error: errorMessage(error), http_status: error.status ?? 500 });
+      }
+    }
+    return result;
+  } finally {
+    activeContextRetries.delete(clubId);
+  }
+}
+
+async function rebuildRetentionCandidate(
+  clubId: string,
+  candidateId: string,
+  operation: "regenerate" | "retry_context",
+  batch?: RetentionRebuildBatch,
+): Promise<RetentionRegenerationResult> {
   const { data: candidateRow, error: candidateError } = await supabase.from("retention_candidates")
     .select("*").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
   if (candidateError) throw new Error(candidateError.message);
   if (!candidateRow) throw Object.assign(new Error("Retention candidate not found"), { status: 404 });
   const candidate = candidateRow as RetentionCandidate;
-  if (candidate.status !== "drafted") {
+  if (operation === "retry_context" && !canRetryRetentionContext(candidate)) {
+    throw Object.assign(new Error("Only eligible needs_context candidates can retry context"), { status: 409 });
+  }
+  if (operation === "regenerate" && candidate.status !== "drafted") {
     throw Object.assign(new Error("Only candidates that are still drafted can be regenerated"), { status: 409 });
   }
   const [{ data: player, error: playerError }, { data: playbook, error: playbookError }, { data: message, error: messageError }] = await Promise.all([
     supabase.from("players").select("id,name,external_id,club_id").eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle(),
     supabase.from("retention_playbooks").select("*").eq("key", candidate.playbook_key).maybeSingle(),
     candidate.message_id
-      ? supabase.from("messages").select("id,body,status,approved_at,scheduled_send_at,dispatch_claimed_at").eq("id", candidate.message_id).maybeSingle()
+      ? supabase.from("messages").select("id,body,status,approved_at,approved_by,approved_body,scheduled_send_at,dispatch_claimed_at,sent_at").eq("id", candidate.message_id).maybeSingle()
       : Promise.resolve({ data: null, error: null }),
   ]);
   if (playerError) throw new Error(playerError.message);
   if (playbookError) throw new Error(playbookError.message);
   if (messageError) throw new Error(messageError.message);
   if (!player || !playbook) throw Object.assign(new Error("Candidate player or playbook was not found"), { status: 409 });
-  if (!candidate.message_id || !message) throw Object.assign(new Error("Draft message is missing and cannot be regenerated safely"), { status: 409 });
-  if (message.status !== "pending" || message.approved_at || message.scheduled_send_at || message.dispatch_claimed_at) {
+  if (playbook.enabled !== true) throw Object.assign(new Error("Candidate playbook is not enabled"), { status: 409 });
+  if ((operation === "regenerate" && !candidate.message_id) || (candidate.message_id && !message)) {
+    throw Object.assign(new Error("Draft message is missing and cannot be regenerated safely"), { status: 409 });
+  }
+  if (message && (message.status !== "pending" || message.approved_at != null || message.approved_by != null
+    || message.approved_body != null || message.scheduled_send_at != null || message.dispatch_claimed_at != null
+    || message.sent_at != null)) {
     throw Object.assign(new Error("Draft is approved, scheduled, processed, or claimed and cannot be regenerated"), { status: 409 });
   }
 
   const previousContext = candidate.context as RetentionContext;
   const triggerDate = previousContext?.trigger?.date;
   if (!triggerDate) throw Object.assign(new Error("Candidate context is missing the Learn to Play trigger date"), { status: 409 });
-  const trigger = { event_id: candidate.trigger_event_id, name: previousContext.trigger.name, date: triggerDate };
+  let trigger = { event_id: candidate.trigger_event_id, name: previousContext.trigger.name, date: triggerDate };
   const lookbackDays = normalizeRetentionLookbackDays(Number(previousContext.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS));
   let laterNonLtpAttendance: { date: string; program_name: string | null }[] = [];
   let attendanceFailure: ReturnType<typeof contextFailure> | null = null;
   try {
+    if (batch) {
+      const verified = await verifyRetentionTriggerEvent(
+        clubId, candidate.trigger_event_id, batch.clubCache, batch.triggerCache, batch.client,
+      );
+      if (!isLearnToPlayName(verified.name) || !isRetentionTriggerDate(verified.date, toEtDate(new Date()), lookbackDays)) {
+        throw new Error("The live trigger is not Learn to Play within the candidate's original lookback window");
+      }
+      trigger = { event_id: candidate.trigger_event_id, name: verified.name, date: verified.date };
+    }
     const { data: attendance, error: attendanceError } = await supabase.from("attendances")
       .select("program_name,attended_at").eq("player_id", candidate.player_id);
     if (attendanceError) throw new Error(attendanceError.message);
     laterNonLtpAttendance = (attendance ?? []).filter((row: any) =>
-      !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > triggerDate,
+      !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > trigger.date,
     ).map((row: any) => ({ date: toEtDate(String(row.attended_at)), program_name: row.program_name ?? null }));
   } catch (error) {
     attendanceFailure = contextFailure(error);
@@ -651,13 +748,17 @@ export async function regenerateRetentionCandidate(
       validation_errors: [],
     };
   } else {
-    const clubCache = new Map<string, Promise<RetentionLiveClub>>();
-    const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
+    const clubCache = batch?.clubCache ?? new Map<string, Promise<RetentionLiveClub>>();
+    const couponCache = batch?.couponCache ?? new Map<string, Promise<RetentionCouponValidation>>();
     let generatedContext: RetentionContext | null = null;
     try {
       if (playbook.promo_code) {
-        const coupon = await validateRetentionCoupon(clubId, playbook.promo_code);
-        couponCache.set(`${clubId}:${playbook.promo_code}`, Promise.resolve(coupon));
+        const key = `${clubId}:${playbook.promo_code}`;
+        if (!couponCache.has(key)) {
+          couponCache.set(key, validateRetentionCoupon(clubId, playbook.promo_code, batch?.client.fetch));
+        }
+        const coupon = await couponCache.get(key);
+        if (batch && coupon?.lookup_failed) throw new Error(coupon.warning ?? "Live coupon lookup failed");
       }
       const context = await buildRetentionContext({
         clubId,
@@ -665,10 +766,11 @@ export async function regenerateRetentionCandidate(
         playbook,
         trigger,
         classmatesExternalIds: () => loadClassmatesExternalIds(clubId, candidate.trigger_event_id, candidate.player_id),
-        socialEventsCache: new Map<string, Promise<any[]>>(),
-        socialSignupsCache: new Map<string, Promise<string[]>>(),
+        socialEventsCache: batch?.eventsCache ?? new Map<string, Promise<any[]>>(),
+        socialSignupsCache: batch?.signupsCache ?? new Map<string, Promise<string[]>>(),
         clubCache,
         couponCache,
+        batchClient: batch?.client,
       });
       newContext = withGenerationMetadata(
         context,
@@ -737,16 +839,18 @@ export async function regenerateRetentionCandidate(
     }
   }
 
-  const { data: updated, error: updateError } = await supabase.rpc("retention_regenerate_draft", {
+  const { data: updated, error: updateError } = await supabase.rpc(
+    operation === "retry_context" ? "retention_retry_context" : "retention_regenerate_draft", {
     p_id: candidate.id,
     p_club_id: clubId,
-    p_expected_body: message.body,
+    p_expected_body: message?.body ?? null,
     p_expected_context: candidate.context,
     p_expected_updated_at: candidate.updated_at,
     p_new_body: body,
     p_new_context: newContext,
     p_new_status: newStatus,
     p_error: reason ? `${reason}: ${(newContext.errors ?? []).join("; ")}` : null,
+    ...(operation === "retry_context" ? { p_expected_message_id: candidate.message_id } : {}),
   });
   if (updateError) throw Object.assign(new Error(updateError.message), {
     status: /changed since|only drafted|processed|claimed|approved|scheduled/i.test(updateError.message) ? 409 : undefined,

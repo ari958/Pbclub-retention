@@ -39,7 +39,7 @@ export interface Candidate {
   message: { id: string; body: string; status: string; approved_at: string | null; approved_by: string | null; scheduled_send_at: string | null; sent_at: string | null; simulated?: boolean | null } | null;
 }
 export interface ApprovalsResponse {
-  schema_ready: boolean; playbooks: Playbook[]; candidates: Candidate[]; warnings: string[];
+  schema_ready: boolean; retry_context_ready: boolean; playbooks: Playbook[]; candidates: Candidate[]; warnings: string[];
   mode: { retention_only: boolean; require_marketing_consent: boolean; kill_switch?: boolean | null; sms_live?: boolean; test_override_configured?: boolean }; error?: string;
   counts?: { all: number; drafted: number; approved: number; skipped: number; sent: number; needs_context?: number; manual_edit?: number };
 }
@@ -54,6 +54,21 @@ export interface RegenerateResult {
   body: string | null;
   context: Candidate["context"];
   validation_errors?: string[];
+}
+export interface PodplayRetryTelemetry {
+  total_calls: number;
+  listing_calls: number;
+  signup_calls: number;
+  trigger_calls: number;
+  coupon_calls: number;
+  rate_limit_count: number;
+  retries: Array<{ path: string; attempt: number; retry_number: number; wait_ms: number; status: number }>;
+}
+export interface RetryContextEnvelope {
+  schema_ready: boolean;
+  results: RegenerateResult[];
+  failures?: Array<{ candidate_id: string; error: string; http_status: number }>;
+  podplay: PodplayRetryTelemetry;
 }
 export interface BulkResult { approved?: number; approved_count?: number; errors?: string[] }
 
@@ -80,6 +95,10 @@ export const retentionApi = {
   list: (s: string, status: ApprovalListStatus) => call<ApprovalsResponse>(s, approvalListPath(status)),
   generate: (s: string, lookbackDays: number = DEFAULT_LOOKBACK_DAYS) => call<GenerateResult>(s, "/api/retention/generate", "POST", { lookback_days: lookbackDays }),
   regenerate: (s: string, id: string) => call<RegenerateResult>(s, `/api/retention/candidates/${id}/regenerate`, "POST"),
+  retryContext: (s: string, id: string) =>
+    call<RetryContextEnvelope>(s, `/api/retention/candidates/${id}/retry-context`, "POST", {}),
+  retryContextBatch: (s: string, candidate_ids: string[]) =>
+    call<RetryContextEnvelope>(s, "/api/retention/retry-context", "POST", { candidate_ids }),
   edit: (s: string, id: string, body: string) => call<unknown>(s, `/api/retention/candidates/${id}`, "PATCH", { body }),
   approve: (s: string, id: string, approved_by: string, expected_body: string) =>
     call<unknown>(s, `/api/retention/candidates/${id}/approve`, "POST", { approved_by, expected_body }),

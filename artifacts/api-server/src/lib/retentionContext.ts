@@ -6,6 +6,10 @@ import {
   RETENTION_NO_PROGRAM_BOOKING_URL,
 } from "./retentionTypes";
 import type { RetentionContext, RetentionNextProgram, RetentionPlaybook } from "./retentionTypes";
+import {
+  defaultRetentionPodplayBatchClient,
+  type RetentionPodplayBatchClient,
+} from "./retentionPodplayBatch";
 
 export const normalizeRetentionName = (value: string) =>
   value.normalize("NFKC").toLowerCase().replace(/[\u2010-\u2015_-]/g, " ").replace(/\s+/g, " ").trim();
@@ -83,8 +87,7 @@ export class RetentionContextError extends Error {
 
 export const RETENTION_UPCOMING_DAYS = 14;
 const PAGE_SIZE = 100;
-const SIGNUP_BATCH_SIZE = 3;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const LISTING_PAGE_SIZE = 500;
 
 export interface RetentionEventWindow {
   start: Date;
@@ -202,15 +205,16 @@ export async function verifyRetentionTriggerEvent(
   eventId: string,
   clubCache: Map<string, Promise<RetentionLiveClub>>,
   eventCache: Map<string, Promise<VerifiedRetentionTrigger>>,
+  batchClient: RetentionPodplayBatchClient = defaultRetentionPodplayBatchClient,
 ): Promise<VerifiedRetentionTrigger> {
   const key = `${clubId}:${eventId}`;
   let pending = eventCache.get(key);
   if (!pending) {
     pending = (async () => {
       const club = await loadLiveClubCached(clubId, clubCache);
-      const response = await fetch(`${club.base}/apis/v2/events/${encodeURIComponent(eventId)}`, {
+      const response = await batchClient.fetch(`${club.base}/apis/v2/events/${encodeURIComponent(eventId)}`, {
         headers: { "x-api-key": club.apiKey },
-        signal: AbortSignal.timeout(12_000),
+        requestTimeoutMs: 12_000,
       });
       if (!response.ok) throw new Error(`PodPlay GET /events/${eventId} returned ${response.status}`);
       const payload = await response.json() as any;
@@ -237,8 +241,13 @@ export async function buildRetentionContext(args: {
   socialSignupsCache: Map<string, Promise<string[]>>;
   clubCache: Map<string, Promise<RetentionLiveClub>>;
   couponCache: Map<string, Promise<RetentionCouponValidation>>;
+  batchClient?: RetentionPodplayBatchClient;
 }): Promise<RetentionContext> {
-  const { clubId, player, playbook, trigger, classmatesExternalIds, socialEventsCache, socialSignupsCache, clubCache, couponCache } = args;
+  const {
+    clubId, player, playbook, trigger, classmatesExternalIds,
+    socialEventsCache, socialSignupsCache, clubCache, couponCache,
+  } = args;
+  const batchClient = args.batchClient ?? defaultRetentionPodplayBatchClient;
   const diagnostics: RetentionContextDiagnostics = {
     player_id: player.id,
     upcoming: {
@@ -294,6 +303,7 @@ export async function buildRetentionContext(args: {
       clubId,
       live,
       cache: socialEventsCache,
+      batchClient,
     });
     copyUpcomingDiagnostics(diagnostics, upcoming);
   } catch (error) {
@@ -308,6 +318,7 @@ export async function buildRetentionContext(args: {
       upcoming.events,
       live,
       socialSignupsCache,
+      batchClient,
     );
   } catch (error) {
     const message = `Live signup lookup failed: ${safeErrorMessage(error)}`;
@@ -406,16 +417,24 @@ export async function buildRetentionContext(args: {
     const couponKey = `${clubId}:${couponCode}`;
     let couponPromise = couponCache.get(couponKey);
     if (!couponPromise) {
-      couponPromise = validateRetentionCoupon(clubId, couponCode);
+      couponPromise = validateRetentionCoupon(clubId, couponCode, batchClient.fetch);
       couponCache.set(couponKey, couponPromise);
     }
     try {
       const coupon = await couponPromise;
+      if (coupon.lookup_failed) {
+        const message = coupon.warning ?? `Live coupon lookup failed for ${couponCode}`;
+        diagnostics.coupon_lookup = { status: "error", errors: [message] };
+        throw new RetentionContextError("context_lookup_failed", [message], diagnostics);
+      }
       if (coupon.valid && (!bookedEvent || !next_program)) {
         promo = { code: couponCode, offer_text: offerText! };
       } else coupon_warning = coupon.warning;
     } catch (error) {
-      coupon_warning = `Could not verify coupon ${couponCode}: ${safeErrorMessage(error)}`;
+      if (error instanceof RetentionContextError) throw error;
+      const message = `Could not verify coupon ${couponCode}: ${safeErrorMessage(error)}`;
+      diagnostics.coupon_lookup = { status: "error", errors: [message] };
+      throw new RetentionContextError("context_lookup_failed", [message], diagnostics);
     }
   }
   const forbiddenProgramNames = variant === "no_program"
@@ -498,8 +517,9 @@ async function loadRetentionUpcomingEvents(args: {
   clubId: string;
   live: RetentionLiveClub;
   cache: Map<string, Promise<any[]>>;
+  batchClient: RetentionPodplayBatchClient;
 }): Promise<UpcomingEventsResult> {
-  const { clubId, live, cache } = args;
+  const { clubId, live, cache, batchClient } = args;
   const entries = getUpcomingCache(cache);
   let entry = entries.get(clubId);
   if (!entry) {
@@ -518,11 +538,11 @@ async function loadRetentionUpcomingEvents(args: {
     promise = (async () => {
       const rawEvents: LiveEvent[] = [];
       for (let page = 1; page <= 100; page++) {
-        const url = `${live.base}/apis/v2/events?startTime=${encodeURIComponent(window.start.toISOString())}&endTime=${encodeURIComponent(window.end.toISOString())}&page=${page}&ipp=${PAGE_SIZE}`;
+        const url = `${live.base}/apis/v2/events?startTime=${encodeURIComponent(window.start.toISOString())}&endTime=${encodeURIComponent(window.end.toISOString())}&page=${page}&ipp=${LISTING_PAGE_SIZE}`;
         requestUrls.push(url);
-        const response = await fetch(url, {
+        const response = await batchClient.fetch(url, {
           headers: { "x-api-key": live.apiKey },
-          signal: AbortSignal.timeout(15_000),
+          requestTimeoutMs: 15_000,
         });
         if (!response.ok) throw new Error(`PodPlay GET /events page ${page} returned ${response.status}`);
         let payload: any;
@@ -557,8 +577,8 @@ async function loadRetentionUpcomingEvents(args: {
           ).length;
         const hasMore = payload.hasMore === true
           || Number(payload.totalPages ?? 0) > page
-          || (payload.total && page * PAGE_SIZE < Number(payload.total));
-        if (!hasMore && items.length < PAGE_SIZE) break;
+          || (payload.total && page * LISTING_PAGE_SIZE < Number(payload.total));
+        if (!hasMore && items.length < LISTING_PAGE_SIZE) break;
         if (page === 100) throw new Error("PodPlay GET /events exceeded pagination safety limit");
       }
       const inWindow = rawEvents.filter((event) => isRetentionEventWithinWindow(event.startTime, window));
@@ -585,13 +605,14 @@ async function loadRetentionUpcomingEvents(args: {
 async function fetchRetentionEventSignups(
   live: RetentionLiveClub,
   event: LiveEvent,
+  batchClient: RetentionPodplayBatchClient,
 ): Promise<LiveSignup[]> {
   const signups: LiveSignup[] = [];
   for (let page = 1; page <= 100; page++) {
     const url = `${live.base}/apis/v2/events/${encodeURIComponent(event.id)}/signups?page=${page}&ipp=${PAGE_SIZE}`;
-    const response = await fetch(url, {
+    const response = await batchClient.fetch(url, {
       headers: { "x-api-key": live.apiKey },
-      signal: AbortSignal.timeout(10_000),
+      requestTimeoutMs: 10_000,
     });
     if (!response.ok) throw new Error(`PodPlay GET /events/${event.id}/signups page ${page} returned ${response.status}`);
     let payload: any;
@@ -618,23 +639,22 @@ async function loadRetentionSignupsForEvents(
   events: LiveEvent[],
   live: RetentionLiveClub,
   cache: Map<string, Promise<string[]>>,
+  batchClient: RetentionPodplayBatchClient,
 ): Promise<Map<string, LiveSignup[]>> {
   const detailsCache = getSignupCache(cache);
   const results = new Map<string, LiveSignup[]>();
-  for (let offset = 0; offset < events.length; offset += SIGNUP_BATCH_SIZE) {
-    const batch = events.slice(offset, offset + SIGNUP_BATCH_SIZE);
-    const hasUncachedSignups = batch.some((event) => !detailsCache.has(event.id));
-    if (offset > 0 && hasUncachedSignups) await sleep(250);
-    const batchResults = await Promise.all(batch.map(async (event) => {
-      let entry = detailsCache.get(event.id);
-      if (!entry) {
-        const promise = fetchRetentionEventSignups(live, event);
-        entry = { promise };
-        detailsCache.set(event.id, entry);
-      }
-      return { eventId: event.id, signups: await entry.promise };
-    }));
-    for (const result of batchResults) results.set(result.eventId, result.signups);
+  for (const event of events) {
+    let entry = detailsCache.get(event.id);
+    if (!entry) {
+      const promise = fetchRetentionEventSignups(live, event, batchClient);
+      entry = { promise };
+      detailsCache.set(event.id, entry);
+      const cachedEntry = entry;
+      void promise.catch(() => {
+        if (detailsCache.get(event.id) === cachedEntry) detailsCache.delete(event.id);
+      });
+    }
+    results.set(event.id, await entry.promise);
   }
   return results;
 }

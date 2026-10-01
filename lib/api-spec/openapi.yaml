@@ -169,6 +169,87 @@ paths:
                 required: [error]
                 properties:
                   error: {type: string}
+  /retention/retry-context:
+    post:
+      operationId: retryRetentionContextBatch
+      tags: [retention]
+      summary: Retry PodPlay context lookup for eligible needs-context candidates only
+      description: Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+      parameters:
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionRetryContextBatchInput"
+      responses:
+        "200":
+          description: Per-candidate retry results and PodPlay retry telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionRetryContextEnvelope"
+        "400":
+          description: Invalid or ineligible candidate IDs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+        "503":
+          description: Retention schema migration 012 is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+  /retention/candidates/{id}/retry-context:
+    post:
+      operationId: retryRetentionContext
+      tags: [retention]
+      summary: Retry PodPlay context lookup for one eligible needs-context candidate
+      description: Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionRetryContextSingleInput"
+      responses:
+        "200":
+          description: Per-candidate retry result and PodPlay retry telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionRetryContextEnvelope"
+        "400":
+          description: Candidate is not eligible for a context retry
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+        "503":
+          description: Retention schema migration 012 is unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
   /retention/candidates/{id}/skip:
     post:
       operationId: skipRetentionDraft
@@ -346,7 +427,7 @@ components:
           items: {type: string}
         date_phrase:
           type: [string, "null"]
-          description: Timing provenance retained in context; no_program message text must omit it.
+          description: Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW/present-time framing following a Learn to Play thank-you.
         send_date: {type: [string, "null"]}
         send_date_et: {type: [string, "null"]}
         next_program_day: {type: [string, "null"]}
@@ -399,9 +480,14 @@ components:
             - {type: "null"}
     RetentionReview:
       type: object
-      required: [schema_ready, playbooks, candidates, warnings, mode]
+      required: [schema_ready, retry_context_ready, playbooks, candidates, warnings, mode]
       properties:
-        schema_ready: {type: boolean}
+        schema_ready:
+          type: boolean
+          description: Readiness of the core retention schema from migration 011
+        retry_context_ready:
+          type: boolean
+          description: Readiness of retry-context support from migration 012, independent of schema_ready
         error: {type: string}
         counts:
           $ref: "#/components/schemas/RetentionApprovalCounts"
@@ -555,4 +641,70 @@ components:
         validation_errors:
           type: array
           items: {type: string}
+    RetentionRetryContextSingleInput:
+      type: object
+      additionalProperties: false
+    RetentionRetryContextBatchInput:
+      type: object
+      additionalProperties: false
+      required: [candidate_ids]
+      properties:
+        candidate_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: {type: string, format: uuid}
+    RetentionRetryContextEnvelope:
+      type: object
+      additionalProperties: true
+      required: [schema_ready, results, podplay]
+      properties:
+        schema_ready:
+          type: boolean
+          description: True only when both the core retention schema (migration 011) and retry-context schema (migration 012) were checked and are ready.
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionRegenerateResult"
+        failures:
+          type: array
+          description: Per-candidate failures that did not prevent other successful candidate results from being persisted.
+          items:
+            $ref: "#/components/schemas/RetentionRetryContextFailure"
+        podplay:
+          $ref: "#/components/schemas/RetentionPodplayTelemetry"
+    RetentionRetryContextFailure:
+      type: object
+      additionalProperties: false
+      required: [candidate_id, error, http_status]
+      properties:
+        candidate_id: {type: string, format: uuid}
+        error: {type: string}
+        http_status: {type: integer}
+    RetentionPodplayTelemetry:
+      type: object
+      additionalProperties: false
+      required: [total_calls, listing_calls, signup_calls, trigger_calls, coupon_calls, rate_limit_count, retries]
+      properties:
+        total_calls: {type: integer, minimum: 0}
+        listing_calls: {type: integer, minimum: 0}
+        signup_calls: {type: integer, minimum: 0}
+        trigger_calls: {type: integer, minimum: 0}
+        coupon_calls: {type: integer, minimum: 0}
+        rate_limit_count: {type: integer, minimum: 0}
+        retries:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionPodplayRetry"
+    RetentionPodplayRetry:
+      type: object
+      additionalProperties: false
+      required: [path, attempt, retry_number, wait_ms, status]
+      properties:
+        path: {type: string}
+        attempt: {type: integer, minimum: 0}
+        retry_number: {type: integer, minimum: 0}
+        wait_ms: {type: integer, minimum: 0}
+        status: {type: integer}
 

@@ -117,7 +117,7 @@ export interface RetentionContext {
   errors?: unknown[];
   validation_errors?: string[];
   /**
-   * Timing provenance retained in context; no_program message text must omit it.
+   * Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW/present-time framing following a Learn to Play thank-you.
    * @nullable
    */
   date_phrase?: string | null;
@@ -223,7 +223,10 @@ export interface RetentionApprovalCounts {
 }
 
 export interface RetentionReview {
+  /** Readiness of the core retention schema from migration 011 */
   schema_ready: boolean;
+  /** Readiness of retry-context support from migration 012, independent of schema_ready */
+  retry_context_ready: boolean;
   error?: string;
   counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];
@@ -377,6 +380,61 @@ export interface RetentionRegenerateResult {
   validation_errors?: string[];
 }
 
+export interface RetentionRetryContextSingleInput {
+  [key: string]: unknown;
+}
+
+export interface RetentionRetryContextBatchInput {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  candidate_ids: string[];
+}
+
+export interface RetentionRetryContextFailure {
+  candidate_id: string;
+  error: string;
+  http_status: number;
+}
+
+export interface RetentionPodplayRetry {
+  path: string;
+  /** @minimum 0 */
+  attempt: number;
+  /** @minimum 0 */
+  retry_number: number;
+  /** @minimum 0 */
+  wait_ms: number;
+  status: number;
+}
+
+export interface RetentionPodplayTelemetry {
+  /** @minimum 0 */
+  total_calls: number;
+  /** @minimum 0 */
+  listing_calls: number;
+  /** @minimum 0 */
+  signup_calls: number;
+  /** @minimum 0 */
+  trigger_calls: number;
+  /** @minimum 0 */
+  coupon_calls: number;
+  /** @minimum 0 */
+  rate_limit_count: number;
+  retries: RetentionPodplayRetry[];
+}
+
+export interface RetentionRetryContextEnvelope {
+  /** True only when both the core retention schema (migration 011) and retry-context schema (migration 012) were checked and are ready. */
+  schema_ready: boolean;
+  results: RetentionRegenerateResult[];
+  /** Per-candidate failures that did not prevent other successful candidate results from being persisted. */
+  failures?: RetentionRetryContextFailure[];
+  podplay: RetentionPodplayTelemetry;
+  [key: string]: unknown;
+}
+
 /**
  * Club UUID; supply either clubId or slug
  */
@@ -475,6 +533,44 @@ export type RegenerateRetentionDraftParams = {
 };
 
 export type RegenerateRetentionDraft409 = {
+  error: string;
+};
+
+export type RetryRetentionContextBatchParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type RetryRetentionContextBatch400 = {
+  error: string;
+};
+
+export type RetryRetentionContextBatch503 = {
+  error: string;
+};
+
+export type RetryRetentionContextParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type RetryRetentionContext400 = {
+  error: string;
+};
+
+export type RetryRetentionContext503 = {
   error: string;
 };
 

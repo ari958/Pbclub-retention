@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { canApprove } from "@/lib/approvalGuards";
 import type { Candidate } from "@/lib/retentionApi";
 import { approvalVariantPresentation } from "@/lib/approvalVariant";
+import { isRetryContextEligible } from "@/lib/retryContextEligibility";
 
 const D = { card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", green: "#2ea043", greenBg: "rgba(46,160,67,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -40,11 +41,12 @@ function formatIssue(issue: unknown): string {
   try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
 }
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange }: {
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
   onSave: (body: string) => Promise<boolean>; onApprove: () => void; onSkip: () => void;
   onRegenerate: () => void; regenerating: boolean;
+  onRetryContext: () => void; retryContextReady: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -64,6 +66,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   const np = x.next_program;
   const issues = [...(x.errors ?? []), ...(x.validation_errors ?? [])];
   const playerName = c.player?.name ?? x.player_first_name ?? "Unknown player";
+  const retryContextEligible = isRetryContextEligible(c.status, x.reason);
 
   return (
     <div data-testid={`card-candidate-${c.id}`} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
@@ -129,14 +132,15 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           )}
           {variant.kind !== "no_program" && np && <Fact k="Spots left" v={np.spots_remaining ?? "unknown"} />}
           {variant.kind !== "no_program" && np && <Fact k="Signup link" v={<span style={{ fontFamily: mono, fontSize: 11 }}>{np.signup_url}</span>} />}
-          <Fact k="Classmates signed up" v={variant.kind === "no_program" ? "not applicable" : `${x.classmates_signed_up ?? "unknown"} (count only)`} />
+          <Fact k="Classmates signed up" v={variant.kind === "no_program" ? "No next program to count" : `${x.classmates_signed_up ?? "unknown"} (count only)`} />
           <Fact k="Already booked" v={variant.kind === "no_program" || x.already_booked == null ? "unknown" : x.already_booked ? "yes" : "no"} />
           {x.booked_event && <Fact k="Booked event" v={`${x.booked_event.name}, ${x.booked_event.date} ${x.booked_event.time}`} />}
           <Fact k="Promo" v={x.promo ? `${x.promo.code} - ${x.promo.offer_text}` : "none"} />
           {x.coupon_warning && <Fact k="Coupon warning" v={x.coupon_warning} warn />}
           {variant.kind === "no_program"
-            ? <Fact k="Date references" v="No dates/day references" />
+            ? <Fact k="Required date phrase" v={x.date_phrase ?? "NOW (required; missing from stored context)"} warn={!x.date_phrase} />
             : x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
+          {variant.kind === "no_program" && <Fact k="No-program message" v="Thank the player for attending Learn to Play, then invite them to book now." />}
           {(x.send_date_et || x.send_date) && <Fact k="Intended send date (ET)" v={x.send_date_et ?? x.send_date!} />}
           <Fact k="Evaluated" v={fmt(x.evaluated_at)} />
         </div>
@@ -176,6 +180,17 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         {c.status === "drafted" && (
           <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-regenerate-${c.id}`} onClick={onRegenerate}>
             {regenerating ? "Regenerating..." : "Regenerate"}
+          </button>
+        )}
+        {retryContextEligible && (
+          <button
+            style={btn(false, busy || !retryContextReady)}
+            disabled={busy || !retryContextReady}
+            title={!retryContextReady ? "Apply migration 012 before retrying context" : undefined}
+            data-testid={`button-retry-context-${c.id}`}
+            onClick={onRetryContext}
+          >
+            Retry context
           </button>
         )}
         <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11, color: D.faint }} data-testid={`text-approval-${c.id}`}>

@@ -7,6 +7,7 @@ export {
   ApproveRetentionPlaybookDraftsParams,
   EditRetentionDraftParams,
   RegenerateRetentionDraftParams,
+  RetryRetentionContextParams,
   SkipRetentionDraftParams,
 } from "./generated/api";
 export type {
@@ -14,5 +15,6 @@ export type {
   ApproveRetentionPlaybookDraftsParams as ApproveRetentionPlaybookDraftsQuery,
   EditRetentionDraftParams as EditRetentionDraftQuery,
   RegenerateRetentionDraftParams as RegenerateRetentionDraftQuery,
+  RetryRetentionContextParams as RetryRetentionContextQuery,
   SkipRetentionDraftParams as SkipRetentionDraftQuery,
 } from "./generated/types";

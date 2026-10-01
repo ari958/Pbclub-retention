@@ -68,7 +68,14 @@ export const listRetentionApprovalsResponseCandidatesItemContextClassmatesSigned
 export const listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax = 30;
 
 export const ListRetentionApprovalsResponse = zod.object({
-  schema_ready: zod.boolean(),
+  schema_ready: zod
+    .boolean()
+    .describe("Readiness of the core retention schema from migration 011"),
+  retry_context_ready: zod
+    .boolean()
+    .describe(
+      "Readiness of retry-context support from migration 012, independent of schema_ready",
+    ),
   error: zod.string().optional(),
   counts: zod
     .object({
@@ -213,7 +220,7 @@ export const ListRetentionApprovalsResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),
@@ -537,7 +544,7 @@ export const GenerateRetentionDraftsResponse = zod.object({
               .string()
               .nullish()
               .describe(
-                "Timing provenance retained in context; no_program message text must omit it.",
+                "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
               ),
             send_date: zod.string().nullish(),
             send_date_et: zod.string().nullish(),
@@ -687,7 +694,7 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),
@@ -858,7 +865,7 @@ export const EditRetentionDraftResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),
@@ -1040,7 +1047,7 @@ export const ApproveRetentionDraftResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),
@@ -1195,7 +1202,7 @@ export const RegenerateRetentionDraftResponse = zod.object({
         .string()
         .nullish()
         .describe(
-          "Timing provenance retained in context; no_program message text must omit it.",
+          "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
         ),
       send_date: zod.string().nullish(),
       send_date_et: zod.string().nullish(),
@@ -1207,6 +1214,435 @@ export const RegenerateRetentionDraftResponse = zod.object({
       "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
     ),
   validation_errors: zod.array(zod.string()).optional(),
+});
+
+/**
+ * Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+ * @summary Retry PodPlay context lookup for eligible needs-context candidates only
+ */
+export const RetryRetentionContextBatchQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const retryRetentionContextBatchBodyCandidateIdsMax = 50;
+
+export const RetryRetentionContextBatchBody = zod.object({
+  candidate_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(retryRetentionContextBatchBodyCandidateIdsMax),
+});
+
+export const retryRetentionContextBatchResponseResultsItemContextClassmatesSignedUpMin = 0;
+
+export const retryRetentionContextBatchResponseResultsItemContextLookbackDaysMax = 30;
+
+export const retryRetentionContextBatchResponsePodplayTotalCallsMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayListingCallsMin = 0;
+
+export const retryRetentionContextBatchResponsePodplaySignupCallsMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayTriggerCallsMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayCouponCallsMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayRateLimitCountMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayRetriesItemAttemptMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayRetriesItemRetryNumberMin = 0;
+
+export const retryRetentionContextBatchResponsePodplayRetriesItemWaitMsMin = 0;
+
+export const RetryRetentionContextBatchResponse = zod.object({
+  schema_ready: zod
+    .boolean()
+    .describe(
+      "True only when both the core retention schema (migration 011) and retry-context schema (migration 012) were checked and are ready.",
+    ),
+  results: zod.array(
+    zod.object({
+      candidate_id: zod.string(),
+      status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
+      reason: zod.string().nullable(),
+      body: zod.string().nullable(),
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
+              event_id: zod.string(),
+              name: zod.string(),
+              date: zod.string(),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              retryRetentionContextBatchResponseResultsItemContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              retryRetentionContextBatchResponseResultsItemContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
+      validation_errors: zod.array(zod.string()).optional(),
+    }),
+  ),
+  failures: zod
+    .array(
+      zod.object({
+        candidate_id: zod.string().uuid(),
+        error: zod.string(),
+        http_status: zod.number(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Per-candidate failures that did not prevent other successful candidate results from being persisted.",
+    ),
+  podplay: zod.object({
+    total_calls: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplayTotalCallsMin),
+    listing_calls: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplayListingCallsMin),
+    signup_calls: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplaySignupCallsMin),
+    trigger_calls: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplayTriggerCallsMin),
+    coupon_calls: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplayCouponCallsMin),
+    rate_limit_count: zod
+      .number()
+      .min(retryRetentionContextBatchResponsePodplayRateLimitCountMin),
+    retries: zod.array(
+      zod.object({
+        path: zod.string(),
+        attempt: zod
+          .number()
+          .min(retryRetentionContextBatchResponsePodplayRetriesItemAttemptMin),
+        retry_number: zod
+          .number()
+          .min(
+            retryRetentionContextBatchResponsePodplayRetriesItemRetryNumberMin,
+          ),
+        wait_ms: zod
+          .number()
+          .min(retryRetentionContextBatchResponsePodplayRetriesItemWaitMsMin),
+        status: zod.number(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Only candidates with status needs_context and reason context_lookup_failed or no_next_program are eligible. This endpoint never changes drafted, approved, skipped, sent, or manual_edit candidates.
+ * @summary Retry PodPlay context lookup for one eligible needs-context candidate
+ */
+export const RetryRetentionContextParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const RetryRetentionContextQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const RetryRetentionContextBody = zod.object({});
+
+export const retryRetentionContextResponseResultsItemContextClassmatesSignedUpMin = 0;
+
+export const retryRetentionContextResponseResultsItemContextLookbackDaysMax = 30;
+
+export const retryRetentionContextResponsePodplayTotalCallsMin = 0;
+
+export const retryRetentionContextResponsePodplayListingCallsMin = 0;
+
+export const retryRetentionContextResponsePodplaySignupCallsMin = 0;
+
+export const retryRetentionContextResponsePodplayTriggerCallsMin = 0;
+
+export const retryRetentionContextResponsePodplayCouponCallsMin = 0;
+
+export const retryRetentionContextResponsePodplayRateLimitCountMin = 0;
+
+export const retryRetentionContextResponsePodplayRetriesItemAttemptMin = 0;
+
+export const retryRetentionContextResponsePodplayRetriesItemRetryNumberMin = 0;
+
+export const retryRetentionContextResponsePodplayRetriesItemWaitMsMin = 0;
+
+export const RetryRetentionContextResponse = zod.object({
+  schema_ready: zod
+    .boolean()
+    .describe(
+      "True only when both the core retention schema (migration 011) and retry-context schema (migration 012) were checked and are ready.",
+    ),
+  results: zod.array(
+    zod.object({
+      candidate_id: zod.string(),
+      status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
+      reason: zod.string().nullable(),
+      body: zod.string().nullable(),
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
+              event_id: zod.string(),
+              name: zod.string(),
+              date: zod.string(),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              retryRetentionContextResponseResultsItemContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(retryRetentionContextResponseResultsItemContextLookbackDaysMax)
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
+      validation_errors: zod.array(zod.string()).optional(),
+    }),
+  ),
+  failures: zod
+    .array(
+      zod.object({
+        candidate_id: zod.string().uuid(),
+        error: zod.string(),
+        http_status: zod.number(),
+      }),
+    )
+    .optional()
+    .describe(
+      "Per-candidate failures that did not prevent other successful candidate results from being persisted.",
+    ),
+  podplay: zod.object({
+    total_calls: zod
+      .number()
+      .min(retryRetentionContextResponsePodplayTotalCallsMin),
+    listing_calls: zod
+      .number()
+      .min(retryRetentionContextResponsePodplayListingCallsMin),
+    signup_calls: zod
+      .number()
+      .min(retryRetentionContextResponsePodplaySignupCallsMin),
+    trigger_calls: zod
+      .number()
+      .min(retryRetentionContextResponsePodplayTriggerCallsMin),
+    coupon_calls: zod
+      .number()
+      .min(retryRetentionContextResponsePodplayCouponCallsMin),
+    rate_limit_count: zod
+      .number()
+      .min(retryRetentionContextResponsePodplayRateLimitCountMin),
+    retries: zod.array(
+      zod.object({
+        path: zod.string(),
+        attempt: zod
+          .number()
+          .min(retryRetentionContextResponsePodplayRetriesItemAttemptMin),
+        retry_number: zod
+          .number()
+          .min(retryRetentionContextResponsePodplayRetriesItemRetryNumberMin),
+        wait_ms: zod
+          .number()
+          .min(retryRetentionContextResponsePodplayRetriesItemWaitMsMin),
+        status: zod.number(),
+      }),
+    ),
+  }),
 });
 
 /**
@@ -1340,7 +1776,7 @@ export const SkipRetentionDraftResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),
@@ -1517,7 +1953,7 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
             .string()
             .nullish()
             .describe(
-              "Timing provenance retained in context; no_program message text must omit it.",
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
             ),
           send_date: zod.string().nullish(),
           send_date_et: zod.string().nullish(),

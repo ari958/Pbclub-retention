@@ -11,7 +11,10 @@ import type { RetentionPlaybook } from "./retentionPlaybook";
 import type { RetentionReviewMode } from "./retentionReviewMode";
 
 export interface RetentionReview {
+  /** Readiness of the core retention schema from migration 011 */
   schema_ready: boolean;
+  /** Readiness of retry-context support from migration 012, independent of schema_ready */
+  retry_context_ready: boolean;
   error?: string;
   counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];

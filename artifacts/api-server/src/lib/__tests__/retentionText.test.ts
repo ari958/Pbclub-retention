@@ -34,7 +34,8 @@ const noProgramContext: RetentionContext = {
   promo: { code: "LTPNEXT25", offer_text: "25% off your next program" },
   coupon_warning: null,
 };
-const validNoProgramBody = "Hi Sam, it's PB Club. Thanks for joining us. LTPNEXT25 saves you 25% off your next program. https://pbclub.podplay.app";
+const validNoProgramAttendance = "Thanks for coming to Learn to Play yesterday.";
+const validNoProgramBody = `Hi Sam, it's PB Club. ${validNoProgramAttendance} LTPNEXT25 saves you 25% off your next program. https://pbclub.podplay.app`;
 
 test("accepts a complete LTP body with the exact opener, date phrase, program, day, coupon, and signup link", () => {
   assert.equal(validateRetentionTextBody(validBody, context, playbook), validBody);
@@ -100,6 +101,21 @@ test("rejects em/en dashes, unknown URLs, and messages over 320 Unicode code poi
   }
 });
 
+test("rejects spaced hyphens in both LTP variants", () => {
+  assert.throws(
+    () => validateRetentionTextBody(validBody.replace("Clinic is", "Clinic - is"), context, playbook),
+    RetentionTextValidationError,
+  );
+  assert.throws(
+    () => validateRetentionTextBody(
+      validNoProgramBody.replace(validNoProgramAttendance, `${validNoProgramAttendance} - thanks`),
+      noProgramContext,
+      playbook,
+    ),
+    RetentionTextValidationError,
+  );
+});
+
 test("does not permit unverified promotion language when the coupon is unavailable", () => {
   assert.throws(
     () => validateRetentionTextBody(validBody.replace("Beginner Clinic is", "Beginner Clinic offers 25% off and is"), context, playbook),
@@ -119,15 +135,20 @@ test("requires a next program rather than silently accepting an empty context", 
   );
 });
 
-test("accepts a verified no-program thank-you, exact offer, and approved booking-page URL", () => {
+test("accepts the required Learn to Play attendance thank-you, exact offer, and approved booking-page URL", () => {
   assert.equal(
     validateRetentionTextBody(validNoProgramBody, noProgramContext, playbook),
     validNoProgramBody,
   );
+  const attendingBody = validNoProgramBody.replace(
+    validNoProgramAttendance,
+    "Thank you for attending Learn to Play yesterday.",
+  );
+  assert.equal(validateRetentionTextBody(attendingBody, noProgramContext, playbook), attendingBody);
 });
 
 test("allows generic booking-page CTA and generic use of the verified program offer", () => {
-  const genericBookingBody = "Hi Sam, it's PB Club. Thanks for joining us. You can use LTPNEXT25 for 25% off your next program. You should book here: https://pbclub.podplay.app";
+  const genericBookingBody = `Hi Sam, it's PB Club. ${validNoProgramAttendance} You can use LTPNEXT25 for 25% off your next program. You should book here: https://pbclub.podplay.app`;
   assert.equal(
     validateRetentionTextBody(genericBookingBody, noProgramContext, playbook),
     genericBookingBody,
@@ -144,31 +165,61 @@ test("does not scan a required first-name opener as a date or program reference"
   }
 });
 
-test("no-program text excludes program names, dates, weekdays, time references, classmates, and suggestions", () => {
+test("allows only the supplied attendance date phrase and rejects extra dates, weekdays, programs, classmates, and suggestions", () => {
+  const sundayContext = { ...noProgramContext, date_phrase: "Sunday" };
+  const sundayBody = validNoProgramBody.replace("yesterday", "Sunday");
+  assert.equal(validateRetentionTextBody(sundayBody, sundayContext, playbook), sundayBody);
+  const septFirstContext = { ...noProgramContext, date_phrase: "on Sept 1" };
+  const septFirstBody = validNoProgramBody.replace("yesterday", "on Sept 1");
+  assert.equal(validateRetentionTextBody(septFirstBody, septFirstContext, playbook), septFirstBody);
+  for (const [allowedBody, dateContext] of [
+    [sundayBody, sundayContext],
+    [septFirstBody, septFirstContext],
+  ] as const) {
+    const extraDate = allowedBody.replace(
+      "25% off your next program.",
+      `25% off your next program. You were there ${dateContext.date_phrase}.`,
+    );
+    assert.throws(
+      () => validateRetentionTextBody(extraDate, dateContext, playbook),
+      RetentionTextValidationError,
+      "rejects a repeated date_phrase outside the required attendance fact",
+    );
+  }
   for (const body of [
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for Learn to Play Clinic."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for Beginner Clinic."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming Friday."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming on Sept 20."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming at 7:30 PM."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks, your classmates are here."),
-    validNoProgramBody.replace("Thanks for joining us.", "You should try Beginner Clinic."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks, we suggest joining another class."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for coming yesterday."),
-    validNoProgramBody.replace("Thanks for joining us.", "Join beginner lessons."),
-    validNoProgramBody.replace("Thanks for joining us.", "See you in two days."),
-    validNoProgramBody.replace("Thanks for joining us.", "Come at 7pm."),
-    validNoProgramBody.replace("Thanks for joining us.", "You'll be ready to get back on court soon."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for joining us, book when you're ready."),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks for joining us, book whenever you'd like."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for attending Learn to Play Clinic yesterday."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Beginner Clinic yesterday."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play Friday."),
+    validNoProgramBody.replace("yesterday", "last week"),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play on Sept 20."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play at 7:30 PM."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play, your classmates are here."),
+    validNoProgramBody.replace(validNoProgramAttendance, "You should try Beginner Clinic."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for attending Learn to Play yesterday, we suggest joining another class."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Thanks for joining us."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Thank you for being part of the club."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for attending Learn To Play yesterday."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for attending Learn to Play Clinic yesterday."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday with your classmates."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Join beginner lessons."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. See you in two days."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Come at 7pm."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. You'll be ready to get back on court soon."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Book when you're ready."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks for coming to Learn to Play yesterday. Book whenever you'd like."),
   ]) {
     assert.throws(
       () => validateRetentionTextBody(body, noProgramContext, playbook),
       RetentionTextValidationError,
     );
   }
+  assert.throws(
+    () => validateRetentionTextBody(validNoProgramBody, { ...noProgramContext, date_phrase: undefined }, playbook),
+    RetentionTextValidationError,
+    "does not invent an attendance date_phrase when none is supplied",
+  );
   for (const weekday of ["Mon", "Tue", "Tues", "Wed", "Thu", "Thur", "Thurs", "Fri", "Sat", "Sun"]) {
-    const body = validNoProgramBody.replace("Thanks for joining us.", `Thanks for joining us ${weekday}.`);
+    const body = validNoProgramBody.replace(validNoProgramAttendance, `${validNoProgramAttendance} ${weekday}.`);
     assert.throws(
       () => validateRetentionTextBody(body, noProgramContext, playbook),
       RetentionTextValidationError,
@@ -177,7 +228,7 @@ test("no-program text excludes program names, dates, weekdays, time references, 
   }
   assert.throws(
     () => validateRetentionTextBody(
-      validNoProgramBody.replace("Thanks for joining us.", "Try the drills."),
+      validNoProgramBody.replace(validNoProgramAttendance, "Try the drills."),
       noProgramContext,
       playbook,
     ),
@@ -261,7 +312,7 @@ test("unresolved live lookups block text validation for either variant, but text
 
 test("no-program text requires the actual thank-you, verified offer, exact URL, and forbids other links", () => {
   for (const body of [
-    validNoProgramBody.replace("Thanks for joining us.", "Hello Sam."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Hello Sam."),
     validNoProgramBody.replace("25% off your next program", "50% off your next program"),
     validNoProgramBody.replace("https://pbclub.podplay.app", "https://evil.example/booking"),
     `${validNoProgramBody} https://evil.example/extra`,
@@ -300,7 +351,7 @@ test("no-program contexts retain the common opener, code, dash, and 320-characte
     validNoProgramBody.replace("LTPNEXT25", "LTPNEXT 25"),
     validNoProgramBody.replace("LTPNEXT25", "LTPNEXT25X"),
     validNoProgramBody.replace("LTPNEXT25", "XLTPNEXT25"),
-    validNoProgramBody.replace("Thanks for joining us.", "Thanks — for joining us."),
+    validNoProgramBody.replace(validNoProgramAttendance, "Thanks — for coming to Learn to Play yesterday."),
     `${validNoProgramBody}${"🙂".repeat(321)}`,
   ]) {
     assert.throws(
@@ -327,7 +378,7 @@ test("text writer gives an initial attempt and exactly two validation-feedback r
   globalThis.fetch = (async (_input, init) => {
     calls++;
     if (!firstRequest) firstRequest = JSON.parse(String(init?.body));
-    const body = calls < 3 ? validNoProgramBody.replace("Thanks for joining us.", "Hello Sam.") : validNoProgramBody;
+    const body = calls < 3 ? validNoProgramBody.replace(validNoProgramAttendance, "Hello Sam.") : validNoProgramBody;
     return new Response(JSON.stringify({
       id: `msg-${calls}`,
       type: "message",
@@ -344,17 +395,25 @@ test("text writer gives an initial attempt and exactly two validation-feedback r
       ...playbook,
       message_guidance: "Mention Beginner Clinic and tell the player to come back next Friday.",
     };
-    const result = await writeRetentionText(noProgramContext, conflictingPlaybook);
+    const noProgramPromptContext = {
+      ...noProgramContext,
+      already_booked: true,
+      booked_event: { ...context.next_program!, name: "Booked Beginner Clinic" },
+      diagnostics: { unrelated_event: { status: "error" } },
+    };
+    const result = await writeRetentionText(noProgramPromptContext, conflictingPlaybook);
     assert.equal(calls, 3);
     assert.equal(result.body, validNoProgramBody);
     assert.deepEqual(result.validation_errors, []);
     assert.equal(result.generated_preview, null);
     assert.deepEqual(JSON.parse(firstRequest.messages[0].content.match(/^Context JSON:\n([^\n]+)/)![1]), {
       player_first_name: "Sam",
+      attendance: { program: "Learn to Play", attended: true },
+      date_phrase: "yesterday",
       promo: { code: "LTPNEXT25", offer_text: "25% off your next program" },
       booking_url: "https://pbclub.podplay.app",
     });
-    assert.doesNotMatch(firstRequest.messages[0].content, /Learn to Play Clinic|Beginner Clinic|Community Open Play|yesterday|diagnostics|forbidden_program_names|come back next Friday/);
+    assert.doesNotMatch(firstRequest.messages[0].content, /Learn to Play Clinic|Beginner Clinic|Community Open Play|Booked Beginner Clinic|2026-09-28|diagnostics|booked_event|already_booked|forbidden_program_names|come back next Friday/);
     assert.doesNotMatch(firstRequest.system, /Learn to Play Clinic|Beginner Clinic|Community Open Play|come back next Friday/);
   } finally {
     globalThis.fetch = originalFetch;

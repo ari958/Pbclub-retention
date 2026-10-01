@@ -1,10 +1,12 @@
 import { supabase } from "./supabaseClient";
+import { defaultRetentionPodplayBatchClient, type RetentionPodplayFetch } from "./retentionPodplayBatch";
 
 export interface RetentionCouponValidation {
   valid: boolean;
   warning: string | null;
   checked_at: string;
   ends_at?: string | null;
+  lookup_failed?: boolean;
 }
 
 const LTP_PROGRAM_BOOKING_TYPES = new Set(["EVENT_CLASS", "EVENT_EVENT"]);
@@ -38,6 +40,7 @@ function getLtpBenefitWarning(coupon: any): string | null {
 export async function validateRetentionCoupon(
   clubId: string,
   code: string,
+  fetchClient: RetentionPodplayFetch = defaultRetentionPodplayBatchClient.fetch,
 ): Promise<RetentionCouponValidation> {
   const checked_at = new Date().toISOString();
   try {
@@ -58,9 +61,9 @@ export async function validateRetentionCoupon(
     }).format(new Date());
     let page = 1;
     while (page <= 100) {
-      const response = await fetch(`${base}/apis/v2/coupons?page=${page}&ipp=100`, {
+      const response = await fetchClient(`${base}/apis/v2/coupons?page=${page}&ipp=100`, {
         headers: { "x-api-key": apiKey },
-        signal: AbortSignal.timeout(12_000),
+        requestTimeoutMs: 12_000,
       });
       if (!response.ok) throw new Error(`PodPlay /coupons returned ${response.status}`);
       const payload = await response.json() as any;
@@ -96,6 +99,6 @@ export async function validateRetentionCoupon(
     }
     return { valid: false, warning: `Coupon ${code} was not found in PodPlay`, checked_at };
   } catch (error: any) {
-    return { valid: false, warning: `Could not verify coupon ${code}: ${error.message}`, checked_at };
+    return { valid: false, warning: `Could not verify coupon ${code}: ${error.message}`, checked_at, lookup_failed: true };
   }
 }

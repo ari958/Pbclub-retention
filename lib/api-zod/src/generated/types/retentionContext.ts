@@ -45,7 +45,7 @@ export interface RetentionContext {
   errors?: unknown[];
   validation_errors?: string[];
   /**
-   * Timing provenance retained in context; no_program message text must omit it.
+   * Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW/present-time framing following a Learn to Play thank-you.
    * @nullable
    */
   date_phrase?: string | null;

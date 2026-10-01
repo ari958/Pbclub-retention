@@ -5,7 +5,9 @@ import { useToast } from "@/components/Toast";
 import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
 import { requestApprovalList } from "@/lib/approvalListRequest";
-import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate } from "@/lib/retentionApi";
+import { isRetryContextEligible } from "@/lib/retryContextEligibility";
+import { combineRetryContextEnvelopes } from "@/lib/retryContextEnvelope";
+import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type RetryContextEnvelope } from "@/lib/retentionApi";
 
 const D = { bg: "#161b22", card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", orange: "#d4813a", orangeBg: "rgba(212,129,58,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -40,6 +42,8 @@ export default function Approvals() {
   const [ksBusy, setKsBusy] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
+  const [retryContextBusy, setRetryContextBusy] = useState(false);
+  const [retryContextReport, setRetryContextReport] = useState<RetryContextEnvelope | null>(null);
   const setEditing = useCallback((id: string, on: boolean) => {
     setEditingIds((s) => { if (s.has(id) === on) return s; const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
   }, []);
@@ -132,6 +136,46 @@ export default function Approvals() {
       toast.error(e instanceof Error ? `Could not regenerate this draft: ${e.message}` : "Could not regenerate this draft");
     } finally {
       try { await load(); } finally { setRegeneratingId(null); }
+    }
+  };
+
+  const retryContext = async (ids: string[], single = false) => {
+    if (retryContextBusy || busy.size > 0 || regeneratingId || generating || !data?.retry_context_ready) return;
+    const retryableIds = ids.filter((id) => {
+      const candidate = data.candidates.find((item) => item.id === id);
+      return candidate && isRetryContextEligible(candidate.status, candidate.context.reason);
+    });
+    if (retryableIds.length === 0 || (single && retryableIds.length !== 1)) return;
+
+    setRetryContextReport(null);
+    setRetryContextBusy(true);
+    setBusy((current) => new Set([...current, ...retryableIds]));
+    try {
+      let report: RetryContextEnvelope;
+      if (single) {
+        report = await retentionApi.retryContext(slug, retryableIds[0]);
+      } else {
+        const reports: RetryContextEnvelope[] = [];
+        for (let offset = 0; offset < retryableIds.length; offset += 50) {
+          const chunk = retryableIds.slice(offset, offset + 50);
+          reports.push(await retentionApi.retryContextBatch(slug, chunk));
+        }
+        report = combineRetryContextEnvelopes(reports);
+      }
+      setRetryContextReport(report);
+      const statusCounts = report.results.reduce<Record<string, number>>((counts, result) => {
+        counts[result.status] = (counts[result.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      toast.info(`Context retry finished: ${Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no results"}. See results and PodPlay telemetry below.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? `Could not retry context: ${e.message}` : "Could not retry context");
+    } finally {
+      try { await load(); }
+      finally {
+        setBusy((current) => { const next = new Set(current); retryableIds.forEach((id) => next.delete(id)); return next; });
+        setRetryContextBusy(false);
+      }
     }
   };
 
@@ -237,9 +281,10 @@ export default function Approvals() {
               Live sending is off. Approved texts are consumed by the queue as simulated sends and will not be delivered. Do not approve the acceptance-test texts until live sending and the operator test override are both on.
             </div>
           )}
-          {(warnings.length > 0 || couponFails > 0 || (data && !data.schema_ready)) && (
+          {(warnings.length > 0 || couponFails > 0 || (data && (!data.schema_ready || !data.retry_context_ready))) && (
             <div role="alert" data-testid="banner-warning" style={{ background: D.orangeBg, border: "1px solid rgba(212,129,58,0.3)", borderRadius: 7, padding: "10px 14px", color: D.orange, fontSize: 12, lineHeight: 1.6 }}>
               {data && !data.schema_ready && <div>Retention tables are unavailable (schema not ready). Approvals cannot be loaded or changed until the database is migrated.</div>}
+              {data && !data.retry_context_ready && <div>Migration 012 is missing or not ready. Retry context is disabled until the retry-context schema is migrated.</div>}
               {couponFails > 0 && <div>{couponFails} draft{couponFails === 1 ? "" : "s"} failed the coupon check. The promo code may not work; review before approving.</div>}
               {warnings.map((w, i) => <div key={i}>{w}</div>)}
             </div>
@@ -282,6 +327,51 @@ export default function Approvals() {
             ))}
           </div>
 
+          {retryContextReport && (
+            <section data-testid="panel-retry-context-report" aria-live="polite" style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ fontWeight: 600, color: D.text, fontSize: 13 }}>Context retry results</div>
+              <div data-testid="list-retry-context-results" style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {retryContextReport.results.map((result) => (
+                  <div key={result.candidate_id} style={{ display: "flex", gap: 10, color: D.muted, fontSize: 12 }}>
+                    <span style={{ fontFamily: mono, color: D.faint }}>{result.candidate_id.slice(0, 8)}</span>
+                    <span style={{ color: result.status === "drafted" ? "#2ea043" : result.status === "needs_context" ? D.redText : D.accent }}>{result.status.replace("_", " ")}</span>
+                    {result.reason && <span>{result.reason}</span>}
+                  </div>
+                ))}
+              </div>
+              {(retryContextReport.failures?.length ?? 0) > 0 && (
+                <div data-testid="list-retry-context-failures" role="alert" style={{ border: "1px solid rgba(255,107,107,0.3)", borderRadius: 5, padding: "8px 10px", background: D.redBg, display: "flex", flexDirection: "column", gap: 5 }}>
+                  <strong style={{ color: D.redText, fontSize: 12 }}>Candidate retries not persisted</strong>
+                  {retryContextReport.failures?.map((failure) => (
+                    <div key={`${failure.candidate_id}-${failure.http_status}`} style={{ color: D.redText, fontSize: 11 }}>
+                      <span style={{ fontFamily: mono }}>{failure.candidate_id.slice(0, 8)}</span>
+                      {" · "}{failure.error} (HTTP {failure.http_status})
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div data-testid="panel-podplay-telemetry" style={{ display: "flex", flexWrap: "wrap", gap: 12, fontFamily: mono, fontSize: 11, color: D.faint }}>
+                <span>Total calls: {retryContextReport.podplay.total_calls}</span>
+                <span>Listing: {retryContextReport.podplay.listing_calls}</span>
+                <span>Signup: {retryContextReport.podplay.signup_calls}</span>
+                <span>Trigger: {retryContextReport.podplay.trigger_calls}</span>
+                <span>Coupon: {retryContextReport.podplay.coupon_calls}</span>
+                <span>Rate limits: {retryContextReport.podplay.rate_limit_count}</span>
+              </div>
+              {retryContextReport.podplay.retries.length > 0 && (
+                <ul data-testid="list-podplay-retries" style={{ margin: 0, paddingLeft: 18, color: D.faint, fontFamily: mono, fontSize: 10 }}>
+                  {retryContextReport.podplay.retries.map((retry, index) => (
+                    <li key={`${retry.path}-${retry.attempt}-${index}`}>
+                      {retry.path} · attempt {retry.attempt} · retry {retry.retry_number} · waited {retry.wait_ms} ms · status {retry.status}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {retryContextReport.podplay.retries.length === 0 && <div style={{ color: D.faint, fontSize: 11 }}>No PodPlay retry attempts.</div>}
+              {!retryContextReport.schema_ready && <div role="alert" style={{ color: D.redText, fontSize: 12 }}>The retry response reported that the required retention schemas are not ready.</div>}
+            </section>
+          )}
+
           {loading && !data ? (
             <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {[0, 1].map((i) => <div key={i} style={{ height: 150, borderRadius: 8, background: D.card, border: `1px solid ${D.border}`, opacity: 0.6 }} />)}
@@ -299,6 +389,7 @@ export default function Approvals() {
             [...groups.entries()].map(([key, list]) => {
               const pb = data?.playbooks.find((p) => p.key === key);
               const drafted = list.filter((c) => c.status === "drafted");
+              const retryable = list.filter((c) => isRetryContextEligible(c.status, c.context.reason));
               const sel = drafted.filter((c) => selected.has(c.id));
               const groupEditing = list.some((c) => editingIds.has(c.id));
               return (
@@ -309,6 +400,17 @@ export default function Approvals() {
                       {key}{pb && !pb.enabled ? " / disabled" : ""}{pb?.promo_code ? ` / code ${pb.promo_code}` : ""}{pb && pb.holdout_pct > 0 ? ` / holdout ${pb.holdout_pct}%` : ""}
                     </span>
                     <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                      {retryable.length > 0 && (
+                        <button
+                          style={btn(false, busy.size > 0 || retryContextBusy || generating || regeneratingId !== null || !data?.retry_context_ready)}
+                          disabled={busy.size > 0 || retryContextBusy || generating || regeneratingId !== null || !data?.retry_context_ready}
+                          title={!data?.retry_context_ready ? "Apply migration 012 before retrying context" : undefined}
+                          onClick={() => retryContext(retryable.map((candidate) => candidate.id))}
+                          data-testid={`button-retry-context-batch-${key}`}
+                        >
+                          {retryContextBusy ? "Retrying context..." : `Retry context (${retryable.length})`}
+                        </button>
+                      )}
                       {drafted.length > 0 && (
                         <>
                           <button style={btn(false, regeneratingId !== null || busy.size > 0)} onClick={() => setSelected((s) => { const n = new Set(s); const all = drafted.every((c) => n.has(c.id)); drafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={regeneratingId !== null || busy.size > 0} data-testid={`button-select-${key}`}>
@@ -327,7 +429,8 @@ export default function Approvals() {
                       onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}
                       onApprove={() => { if (!editingIds.has(c.id) && c.message && needOperator()) withBusy(c.id, () => retentionApi.approve(slug, c.id, operator.trim(), c.message?.body ?? ""), "Approved and scheduled"); }}
                       onSkip={() => withBusy(c.id, () => retentionApi.skip(slug, c.id), "Skipped")}
-                      onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id} />
+                       onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id}
+                       onRetryContext={() => retryContext([c.id], true)} retryContextReady={Boolean(data?.retry_context_ready)} />
                   ))}
                 </section>
               );

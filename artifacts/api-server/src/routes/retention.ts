@@ -4,7 +4,7 @@ import { GenerateRetentionDraftsBody } from "@workspace/api-zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
-import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate } from "../lib/retentionEngine";
+import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate, retryRetentionContextBatch } from "../lib/retentionEngine";
 import {
   ALLOWED_RETENTION_LOOKBACK_DAYS,
   DEFAULT_RETENTION_LOOKBACK_DAYS,
@@ -131,6 +131,11 @@ async function requireRetentionSchemaReady() {
   }
 }
 
+async function retentionContextRetryReady(): Promise<boolean> {
+  const { data, error } = await supabase.rpc("retention_context_retry_ready");
+  return !error && data === true;
+}
+
 async function approveCandidate(
   clubId: string,
   candidate: RetentionCandidate,
@@ -201,6 +206,7 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     if (schemaReady !== true) {
       return missingSchemaResponse(res, new Error("Retention migration 011 is not installed or is incomplete"), clubId);
     }
+    const retryContextReady = await retentionContextRetryReady();
     const { data: playbooks, error: playbookError } = await supabase.from("retention_playbooks").select("*").order("key");
     if (playbookError) throw new Error(playbookError.message);
     const candidates = await fetchAllRows<RetentionCandidate>((from, to) => {
@@ -228,6 +234,7 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     ].filter(Boolean))] as string[];
     res.json({
       schema_ready: true,
+      retry_context_ready: retryContextReady,
       playbooks: (playbooks ?? []) as RetentionPlaybook[],
       candidates: decorateApprovalCandidates(candidates, players, messages) as (RetentionCandidate & {
         player: { name: string };
@@ -371,6 +378,35 @@ router.post("/retention/candidates/:id/regenerate", requireClub, async (req, res
       schema_ready: !schemaMissing,
       error: error.message,
     });
+  }
+});
+
+const RetryContextSchema = z.object({
+  candidate_ids: z.array(z.string().uuid()).min(1).max(50)
+    .refine((ids) => new Set(ids).size === ids.length, "Candidate IDs must be distinct"),
+}).strict();
+
+router.post("/retention/retry-context", requireClub, async (req, res) => {
+  const parsed = RetryContextSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Provide 1–50 distinct candidate UUIDs" });
+  try {
+    await requireRetentionSchemaReady();
+    return res.json(await retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids));
+  } catch (error: any) {
+    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message });
+  }
+});
+
+router.post("/retention/candidates/:id/retry-context", requireClub, async (req, res) => {
+  const parsed = RetryContextSchema.safeParse({ candidate_ids: [req.params.id] });
+  if (!parsed.success || !z.object({}).strict().safeParse(req.body ?? {}).success) {
+    return res.status(400).json({ error: "A valid candidate UUID and empty request body are required" });
+  }
+  try {
+    await requireRetentionSchemaReady();
+    return res.json(await retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids));
+  } catch (error: any) {
+    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message });
   }
 });
 
