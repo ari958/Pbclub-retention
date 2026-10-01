@@ -1,0 +1,126 @@
+GOAL
+Rebuild ltp_followup as a two-step text sequence. Text is built from rotating phrase slots plus facts filled in by code. Add capacity checks, send-time re-checks, and exits when a player books. No LLM for this playbook.
+
+Drafts only: no approvals, no sends, no changes to sending settings.
+
+1. TEXT GENERATION: PHRASE SLOTS PLUS CODE-FILLED FACTS
+- Store phrase slots in the playbook config, so they can be edited without a deploy. Keep step 1 slots and step 2 slots separate.
+- Facts are always inserted by code, never written by a model: first name, Learn to Play date, program name, program date and time, promo code, and links.
+- Pick each slot at random, seeded by candidate ID, so regenerating a draft gives the same text unless the operator reshuffles it.
+- Formats:
+  - {ltp_date}: like "Sept 27"
+  - {when}: like "Sunday, Oct 4 at 10:30am", in America/New_York
+- Never describe a past event using only a weekday name.
+- The link is always the last thing in the message, with no punctuation after it.
+
+2. STEP 1 CONTENT
+Assembly:
+- with_program: opener + thanks + next_step + offer + {link}
+- no_program: opener + thanks + offer_no_program + https://pbclub.podplay.app
+
+opener:
+- "Hi {first}, it's PB Club."
+
+thanks:
+- "Thanks for coming to Learn to Play on {ltp_date}."
+- "Great having you at Learn to Play on {ltp_date}."
+- "Glad you made it to Learn to Play on {ltp_date}."
+- "Hope you enjoyed Learn to Play on {ltp_date}."
+
+next_step (with_program only):
+- "A good next step is {program} on {when}."
+- "If you're ready for more, {program} is on {when}."
+- "{program} on {when} is a natural next step."
+- "Next up for a lot of new players: {program} on {when}."
+
+offer (with_program):
+- "Use code LTPNEXT25 for 25% off:"
+- "Here's 25% off with code LTPNEXT25:"
+- "Code LTPNEXT25 takes 25% off:"
+
+offer_no_program:
+- "Use code LTPNEXT25 for 25% off your next program:"
+- "Here's 25% off your next program with code LTPNEXT25:"
+
+Keep the existing LTPNEXT25 coupon verification for step 1. If the code isn't valid at drafting or at send time, step 1 does not send.
+
+3. STEP 2 CONTENT: NO PROMO CODE
+- Step 2 never includes LTPNEXT25 or any discount, and it skips the coupon check entirely.
+- The validator must reject any promo code or percentage in step 2 text.
+
+Assembly:
+- with_program: opener + nudge + next_step + {link}
+- no_program: opener + nudge + "Here's what's coming up:" + https://pbclub.podplay.app
+
+opener:
+- "Hi {first}, it's PB Club."
+- "Hey {first}, PB Club here."
+
+nudge:
+- "Hope you're ready to get back out there."
+- "We'd love to see you back on the court."
+- "Thinking about your next session?"
+
+next_step (with_program only):
+- "{program} on {when} still has spots."
+- "{program} on {when} is a great fit after Learn to Play."
+- "There's room in {program} on {when}."
+
+Fill in the next program fresh at step 2, using the same matching, capacity, and send-time checks as step 1.
+
+4. VALIDATOR (both steps, run on the assembled text)
+- Opens with the selected opener and includes the player's first name.
+- No em dashes, no en dashes, no spaced hyphen (" - ").
+- No time references other than the code-filled {ltp_date} and {when}.
+- with_program: includes the program name, {when}, and the event signup link.
+- no_program: includes the booking page link, and no program name or event date.
+- Step 1 includes "Learn to Play" and LTPNEXT25 exactly.
+- The link comes last, with no trailing punctuation.
+- 320 characters or fewer.
+If validation fails, flag the draft as manual_edit.
+
+5. NEXT-PROGRAM CAPACITY
+- Do not point more candidates at one session than it has open spots (confirmed signups vs totalTeams).
+- When a session would be oversubscribed, assign candidates in trigger order. The rest go to the next matching session in the 14-day window, or to no_program if there is none.
+
+6. SEND-TIME RE-CHECKS (both steps)
+At dispatch, re-verify:
+- the suggested session is not canceled and still has open spots
+- the player has not booked anything since the trigger (step 1) or since step 1 was sent (step 2)
+- step 1 only: LTPNEXT25 is still valid
+
+If a session check fails: don't send, and return the candidate to drafted with reason session_changed for re-review.
+If a booking is found: apply the booked exit in section 8.
+
+7. SEQUENCE STRUCTURE
+- Add step (1 or 2) to retention_candidates.
+- Change the uniqueness rule to (player_id, playbook_key, step).
+- Add sequence_status: active | paused_reply | exited_booked | exited_opt_out | completed.
+- Add exited_at, exit_reason, and booked_event_id.
+
+Step 2 trigger. A nightly job drafts step 2 only when ALL of these are true:
+- step 1 has sent_at set
+- at least 7 days have passed since step 1 sent_at (store this as playbook config step2_gap_days = 7)
+- sequence_status is active
+- the player has no booking since step 1 was sent. Check both live PodPlay upcoming signups and the attendances table.
+
+Step 2 requires the same per-message operator approval as step 1. Maximum of 2 texts per player for this playbook.
+
+8. EXITS
+- Booking found (at step 2 drafting or at dispatch of either step): set exited_booked and record booked_event_id and exited_at. Withdraw any pending step 2 draft so it can never send. Record this cleanly so a future playbook for post-Learn-to-Play players can trigger from exited_booked.
+- Inbound reply from the player: set paused_reply. Do not draft or send further steps. Surface the reply in Messages for operator follow-up.
+- STOP or opt-out: set exited_opt_out permanently.
+- Step 2 sent: set completed.
+
+9. APPROVALS PAGE
+- Show the step number, the variant (with_program or no_program), and the sequence status on each card.
+- On step 2 cards, show the step 1 text and its sent date.
+- Add a Reshuffle button that re-picks the phrase slots. It works on drafted candidates only.
+- Keep the stale flag for test-lookback candidates.
+
+10. RUN AND REPORT
+- Confirm the existing 8 drafted candidates are step 1, and regenerate them with the new step 1 builder.
+- Paste, for each: status, variant, suggested session (name, date and time, open spots at lookup), and full text.
+- Confirm no session was assigned more candidates than it had open spots.
+- Explain how exits are recorded and how a future playbook would trigger from exited_booked.
+- Confirm nothing was approved, scheduled, or sent, and that sending settings are unchanged.

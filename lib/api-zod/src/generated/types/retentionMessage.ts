@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionMessageRetentionDeliveryKind } from "./retentionMessageRetentionDeliveryKind";
 
 export interface RetentionMessage {
   id: string;
@@ -19,4 +20,6 @@ export interface RetentionMessage {
   /** @nullable */
   sent_at?: string | null;
   simulated?: boolean;
+  /** @nullable */
+  retention_delivery_kind?: RetentionMessageRetentionDeliveryKind;
 }

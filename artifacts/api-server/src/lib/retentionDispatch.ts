@@ -1,6 +1,7 @@
 import { logger } from "./logger";
 import { isRetentionOnlyMode } from "./retentionPolicy";
 import { supabase } from "./supabaseClient";
+import { verifyLtpSequenceSchemaReady } from "./ltpSequenceLifecycle";
 
 export class RetentionDispatchAuthorizationError extends Error {
   constructor(message: string, readonly statusCode: 403 | 500) {
@@ -15,6 +16,10 @@ interface RetentionCandidateDispatchRow {
   player_id?: string | null;
   club_id?: string | null;
   status?: string | null;
+  playbook_key?: string | null;
+  step?: number | null;
+  sequence_id?: string | null;
+  sequence_status?: string | null;
   context?: unknown;
 }
 
@@ -38,7 +43,9 @@ export async function verifyRetentionCandidateDispatch(
     );
   }
 
-  if (!isRetentionOnlyMode()) return candidate as RetentionCandidateDispatchRow | null;
+  if (!isRetentionOnlyMode() && (candidate as RetentionCandidateDispatchRow | null)?.playbook_key !== "ltp_followup") {
+    return candidate as RetentionCandidateDispatchRow | null;
+  }
 
   const blocked = (message: string): never => {
     throw new RetentionDispatchAuthorizationError(message, 403);
@@ -49,6 +56,19 @@ export async function verifyRetentionCandidateDispatch(
   }
 
   const linked = candidate as RetentionCandidateDispatchRow;
+
+  if (linked.playbook_key === "ltp_followup") {
+    try {
+      await verifyLtpSequenceSchemaReady();
+    } catch (error: any) {
+      logger.error({ messageId, err: error?.message ?? String(error) }, "LTP sequence schema readiness check failed");
+      throw new RetentionDispatchAuthorizationError(
+        "LTP sequence messaging is disabled until migration 013 is installed and ready",
+        500,
+      );
+    }
+  }
+
   if (
     linked.message_id !== messageId ||
     linked.player_id !== playerId ||
@@ -66,5 +86,18 @@ export async function verifyRetentionCandidateDispatch(
   ) {
     blocked("Retention candidate and linked message have not been explicitly approved");
   }
+
+  if (linked.playbook_key === "ltp_followup") {
+    const context = linked.context as Record<string, any> | null;
+    if (
+      !linked.sequence_id
+      || linked.sequence_status !== "active"
+      || (linked.step !== 1 && linked.step !== 2)
+      || context?.ltp_text?.step !== linked.step
+    ) {
+      blocked("LTP candidate is not a verified active step of its shared sequence");
+    }
+  }
+
   return linked;
 }

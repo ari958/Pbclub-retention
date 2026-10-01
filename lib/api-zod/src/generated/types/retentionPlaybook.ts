@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { LtpSequenceConfig } from "./ltpSequenceConfig";
 
 export interface RetentionPlaybook {
   key: string;
@@ -21,4 +22,5 @@ export interface RetentionPlaybook {
    * @maximum 100
    */
   holdout_pct: number;
+  ltp_sequence_config?: LtpSequenceConfig | null;
 }

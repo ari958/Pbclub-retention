@@ -10,6 +10,41 @@ export interface RetentionPlaybook {
   next_program_names: string[];
   message_guidance: string | null;
   holdout_pct: number;
+  ltp_sequence_config?: LtpSequenceConfig;
+}
+
+export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed";
+export type RetentionSequenceStep = 1 | 2;
+
+export interface LtpSequenceStep1Slots {
+  opener: string[];
+  thanks: string[];
+  next_step: string[];
+  offer: string[];
+  offer_no_program: string[];
+}
+
+export interface LtpSequenceStep2Slots {
+  opener: string[];
+  nudge: string[];
+  next_step: string[];
+  no_program_cta: string[];
+}
+
+export interface LtpSequenceConfig {
+  step2_gap_days: number;
+  step1: LtpSequenceStep1Slots;
+  step2: LtpSequenceStep2Slots;
+}
+
+export interface LtpTextSelection {
+  step: RetentionSequenceStep;
+  seed_nonce: number;
+  slot_indices: Record<string, number>;
+  slot_templates: Record<string, string>;
+  opener: string;
+  ltp_date: string;
+  when: string | null;
 }
 
 export interface RetentionNextProgram {
@@ -53,6 +88,7 @@ export interface RetentionContext {
   generated_preview?: string | null;
   lookback_days?: number;
   stale?: boolean;
+  ltp_text?: LtpTextSelection;
   [evidence: string]: unknown;
 }
 
@@ -67,6 +103,12 @@ export interface RetentionCandidate {
   message_id: string | null;
   created_at: string;
   updated_at: string;
+  step?: RetentionSequenceStep;
+  sequence_id?: string | null;
+  sequence_status?: LtpSequenceStatus;
+  exited_at?: string | null;
+  exit_reason?: string | null;
+  booked_event_id?: string | null;
 }
 
 export interface RetentionMessage {
@@ -77,4 +119,6 @@ export interface RetentionMessage {
   approved_by: string | null;
   scheduled_send_at: string | null;
   sent_at: string | null;
+  simulated?: boolean | null;
+  retention_delivery_kind?: "real" | "test" | "simulated" | null;
 }

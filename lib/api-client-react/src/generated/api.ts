@@ -20,20 +20,28 @@ import type {
   ApproveRetentionDraftParams,
   ApproveRetentionPlaybookDraftsParams,
   EditRetentionDraftParams,
-  GenerateRetentionDrafts400,
   GenerateRetentionDraftsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
   RegenerateRetentionDraft409,
   RegenerateRetentionDraftParams,
+  RegenerateRetentionLtpBatch400,
+  RegenerateRetentionLtpBatchParams,
+  ReshuffleRetentionLtpDraftParams,
   RetentionActionResult,
   RetentionApprovalInput,
   RetentionBulkApprovalInput,
   RetentionDraftUpdate,
   RetentionGenerationInput,
   RetentionGenerationResult,
+  RetentionLtpSequenceOperationError,
   RetentionPauseInput,
+  RetentionPlaybook,
+  RetentionPlaybookConfigInput,
+  RetentionRegenerateBatchInput,
+  RetentionRegenerateBatchResult,
   RetentionRegenerateResult,
+  RetentionReshuffleInput,
   RetentionRetryContextBatchInput,
   RetentionRetryContextEnvelope,
   RetentionRetryContextSingleInput,
@@ -46,6 +54,8 @@ import type {
   RetryRetentionContextParams,
   SkipRetentionDraftParams,
   UpdateRetentionKillSwitchParams,
+  UpdateRetentionLtpPhraseConfig400,
+  UpdateRetentionLtpPhraseConfigParams,
 } from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
@@ -271,7 +281,9 @@ export const generateRetentionDrafts = async (
 };
 
 export const getGenerateRetentionDraftsMutationOptions = <
-  TError = ErrorType<GenerateRetentionDrafts400 | RetentionGenerationResult>,
+  TError = ErrorType<
+    RetentionLtpSequenceOperationError | RetentionGenerationResult
+  >,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -323,14 +335,16 @@ export type GenerateRetentionDraftsMutationResult = NonNullable<
 export type GenerateRetentionDraftsMutationBody =
   BodyType<RetentionGenerationInput>;
 export type GenerateRetentionDraftsMutationError = ErrorType<
-  GenerateRetentionDrafts400 | RetentionGenerationResult
+  RetentionLtpSequenceOperationError | RetentionGenerationResult
 >;
 
 /**
  * @summary Generate first-ever Learn to Play drafts in a configurable lookback window; never approve or send
  */
 export const useGenerateRetentionDrafts = <
-  TError = ErrorType<GenerateRetentionDrafts400 | RetentionGenerationResult>,
+  TError = ErrorType<
+    RetentionLtpSequenceOperationError | RetentionGenerationResult
+  >,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
@@ -831,6 +845,396 @@ export const useRegenerateRetentionDraft = <
   TContext
 > => {
   return useMutation(getRegenerateRetentionDraftMutationOptions(options));
+};
+
+/**
+ * Uses live capacity ordering for the whole cohort, retains candidate/message identity and approval evidence, and only drafts. Never approves or sends.
+ * @summary Rebuild a coherent ordered cohort of drafted LTP step-one messages only
+ */
+export const getRegenerateRetentionLtpBatchUrl = (
+  params?: RegenerateRetentionLtpBatchParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/regenerate-batch?${stringifiedParams}`
+    : `/api/retention/regenerate-batch`;
+};
+
+export const regenerateRetentionLtpBatch = async (
+  retentionRegenerateBatchInput: RetentionRegenerateBatchInput,
+  params?: RegenerateRetentionLtpBatchParams,
+  options?: RequestInit,
+): Promise<RetentionRegenerateBatchResult> => {
+  return customFetch<RetentionRegenerateBatchResult>(
+    getRegenerateRetentionLtpBatchUrl(params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionRegenerateBatchInput),
+    },
+  );
+};
+
+export const getRegenerateRetentionLtpBatchMutationOptions = <
+  TError = ErrorType<
+    RegenerateRetentionLtpBatch400 | RetentionLtpSequenceOperationError
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>,
+    TError,
+    {
+      data: BodyType<RetentionRegenerateBatchInput>;
+      params?: RegenerateRetentionLtpBatchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>,
+  TError,
+  {
+    data: BodyType<RetentionRegenerateBatchInput>;
+    params?: RegenerateRetentionLtpBatchParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["regenerateRetentionLtpBatch"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>,
+    {
+      data: BodyType<RetentionRegenerateBatchInput>;
+      params?: RegenerateRetentionLtpBatchParams;
+    }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return regenerateRetentionLtpBatch(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RegenerateRetentionLtpBatchMutationResult = NonNullable<
+  Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>
+>;
+export type RegenerateRetentionLtpBatchMutationBody =
+  BodyType<RetentionRegenerateBatchInput>;
+export type RegenerateRetentionLtpBatchMutationError = ErrorType<
+  RegenerateRetentionLtpBatch400 | RetentionLtpSequenceOperationError
+>;
+
+/**
+ * @summary Rebuild a coherent ordered cohort of drafted LTP step-one messages only
+ */
+export const useRegenerateRetentionLtpBatch = <
+  TError = ErrorType<
+    RegenerateRetentionLtpBatch400 | RetentionLtpSequenceOperationError
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>,
+    TError,
+    {
+      data: BodyType<RetentionRegenerateBatchInput>;
+      params?: RegenerateRetentionLtpBatchParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof regenerateRetentionLtpBatch>>,
+  TError,
+  {
+    data: BodyType<RetentionRegenerateBatchInput>;
+    params?: RegenerateRetentionLtpBatchParams;
+  },
+  TContext
+> => {
+  return useMutation(getRegenerateRetentionLtpBatchMutationOptions(options));
+};
+
+/**
+ * Updates one active, drafted, slot-based LTP step-one or step-two row only. Never approves or sends. Other playbooks do not expose reshuffling.
+ * @summary Reselect seeded phrase slots for one drafted LTP candidate at either sequence step
+ */
+export const getReshuffleRetentionLtpDraftUrl = (
+  id: string,
+  params?: ReshuffleRetentionLtpDraftParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}/reshuffle?${stringifiedParams}`
+    : `/api/retention/candidates/${id}/reshuffle`;
+};
+
+export const reshuffleRetentionLtpDraft = async (
+  id: string,
+  retentionReshuffleInput: RetentionReshuffleInput,
+  params?: ReshuffleRetentionLtpDraftParams,
+  options?: RequestInit,
+): Promise<RetentionRegenerateResult> => {
+  return customFetch<RetentionRegenerateResult>(
+    getReshuffleRetentionLtpDraftUrl(id, params),
+    {
+      ...options,
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionReshuffleInput),
+    },
+  );
+};
+
+export const getReshuffleRetentionLtpDraftMutationOptions = <
+  TError = ErrorType<RetentionLtpSequenceOperationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionReshuffleInput>;
+      params?: ReshuffleRetentionLtpDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionReshuffleInput>;
+    params?: ReshuffleRetentionLtpDraftParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["reshuffleRetentionLtpDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>,
+    {
+      id: string;
+      data: BodyType<RetentionReshuffleInput>;
+      params?: ReshuffleRetentionLtpDraftParams;
+    }
+  > = (props) => {
+    const { id, data, params } = props ?? {};
+
+    return reshuffleRetentionLtpDraft(id, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type ReshuffleRetentionLtpDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>
+>;
+export type ReshuffleRetentionLtpDraftMutationBody =
+  BodyType<RetentionReshuffleInput>;
+export type ReshuffleRetentionLtpDraftMutationError =
+  ErrorType<RetentionLtpSequenceOperationError>;
+
+/**
+ * @summary Reselect seeded phrase slots for one drafted LTP candidate at either sequence step
+ */
+export const useReshuffleRetentionLtpDraft = <
+  TError = ErrorType<RetentionLtpSequenceOperationError>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<RetentionReshuffleInput>;
+      params?: ReshuffleRetentionLtpDraftParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof reshuffleRetentionLtpDraft>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<RetentionReshuffleInput>;
+    params?: ReshuffleRetentionLtpDraftParams;
+  },
+  TContext
+> => {
+  return useMutation(getReshuffleRetentionLtpDraftMutationOptions(options));
+};
+
+/**
+ * Validates separate phrase arrays for steps one and two. This changes only playbook text configuration, never a sending setting.
+ * @summary Edit the stored two-step LTP phrase slots and follow-up gap
+ */
+export const getUpdateRetentionLtpPhraseConfigUrl = (
+  key: string,
+  params?: UpdateRetentionLtpPhraseConfigParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/playbooks/${key}/config?${stringifiedParams}`
+    : `/api/retention/playbooks/${key}/config`;
+};
+
+export const updateRetentionLtpPhraseConfig = async (
+  key: string,
+  retentionPlaybookConfigInput: RetentionPlaybookConfigInput,
+  params?: UpdateRetentionLtpPhraseConfigParams,
+  options?: RequestInit,
+): Promise<RetentionPlaybook> => {
+  return customFetch<RetentionPlaybook>(
+    getUpdateRetentionLtpPhraseConfigUrl(key, params),
+    {
+      ...options,
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionPlaybookConfigInput),
+    },
+  );
+};
+
+export const getUpdateRetentionLtpPhraseConfigMutationOptions = <
+  TError = ErrorType<
+    UpdateRetentionLtpPhraseConfig400 | RetentionLtpSequenceOperationError
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>,
+    TError,
+    {
+      key: string;
+      data: BodyType<RetentionPlaybookConfigInput>;
+      params?: UpdateRetentionLtpPhraseConfigParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>,
+  TError,
+  {
+    key: string;
+    data: BodyType<RetentionPlaybookConfigInput>;
+    params?: UpdateRetentionLtpPhraseConfigParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["updateRetentionLtpPhraseConfig"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>,
+    {
+      key: string;
+      data: BodyType<RetentionPlaybookConfigInput>;
+      params?: UpdateRetentionLtpPhraseConfigParams;
+    }
+  > = (props) => {
+    const { key, data, params } = props ?? {};
+
+    return updateRetentionLtpPhraseConfig(key, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type UpdateRetentionLtpPhraseConfigMutationResult = NonNullable<
+  Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>
+>;
+export type UpdateRetentionLtpPhraseConfigMutationBody =
+  BodyType<RetentionPlaybookConfigInput>;
+export type UpdateRetentionLtpPhraseConfigMutationError = ErrorType<
+  UpdateRetentionLtpPhraseConfig400 | RetentionLtpSequenceOperationError
+>;
+
+/**
+ * @summary Edit the stored two-step LTP phrase slots and follow-up gap
+ */
+export const useUpdateRetentionLtpPhraseConfig = <
+  TError = ErrorType<
+    UpdateRetentionLtpPhraseConfig400 | RetentionLtpSequenceOperationError
+  >,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>,
+    TError,
+    {
+      key: string;
+      data: BodyType<RetentionPlaybookConfigInput>;
+      params?: UpdateRetentionLtpPhraseConfigParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof updateRetentionLtpPhraseConfig>>,
+  TError,
+  {
+    key: string;
+    data: BodyType<RetentionPlaybookConfigInput>;
+    params?: UpdateRetentionLtpPhraseConfigParams;
+  },
+  TContext
+> => {
+  return useMutation(getUpdateRetentionLtpPhraseConfigMutationOptions(options));
 };
 
 /**

@@ -6,6 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 
-export type GenerateRetentionDrafts400 = {
-  error: string;
-};
+export interface RetentionRegenerateBatchInput {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  candidate_ids: string[];
+}

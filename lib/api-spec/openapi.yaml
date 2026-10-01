@@ -68,10 +68,7 @@ paths:
           content:
             application/json:
               schema:
-                type: object
-                required: [error]
-                properties:
-                  error: {type: string}
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
         "503":
           description: Retention schema is unavailable; results may include drafts created before a per-candidate schema error
           content:
@@ -169,6 +166,125 @@ paths:
                 required: [error]
                 properties:
                   error: {type: string}
+  /retention/regenerate-batch:
+    post:
+      operationId: regenerateRetentionLtpBatch
+      tags: [retention]
+      summary: Rebuild a coherent ordered cohort of drafted LTP step-one messages only
+      description: Uses live capacity ordering for the whole cohort, retains candidate/message identity and approval evidence, and only drafts. Never approves or sends.
+      parameters:
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionRegenerateBatchInput"
+      responses:
+        "200":
+          description: Updated candidates, per-candidate failures, and actual PodPlay request telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionRegenerateBatchResult"
+        "400":
+          description: Invalid candidate IDs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+        "409":
+          description: The full capacity cohort changed or no longer fits live capacity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
+        "503":
+          description: Migration 013 is not installed or ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
+  /retention/candidates/{id}/reshuffle:
+    post:
+      operationId: reshuffleRetentionLtpDraft
+      tags: [retention]
+      summary: Reselect seeded phrase slots for one drafted LTP candidate at either sequence step
+      description: Updates one active, drafted, slot-based LTP step-one or step-two row only. Never approves or sends. Other playbooks do not expose reshuffling.
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionReshuffleInput"
+      responses:
+        "200":
+          description: Updated step-one or step-two draft text and its selected deterministic slot facts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionRegenerateResult"
+        "409":
+          description: Candidate is not an active drafted LTP candidate with matching step context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
+        "503":
+          description: Migration 013 is not installed or ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
+  /retention/playbooks/{key}/config:
+    patch:
+      operationId: updateRetentionLtpPhraseConfig
+      tags: [retention]
+      summary: Edit the stored two-step LTP phrase slots and follow-up gap
+      description: Validates separate phrase arrays for steps one and two. This changes only playbook text configuration, never a sending setting.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionPlaybookConfigInput"
+      responses:
+        "200":
+          description: Persisted, validated playbook phrase configuration
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionPlaybook"
+        "400":
+          description: Invalid phrase slots or a step-two gap outside 7–30 days
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+        "503":
+          description: Migration 013 is not installed or ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionLtpSequenceOperationError"
   /retention/retry-context:
     post:
       operationId: retryRetentionContextBatch
@@ -433,6 +549,22 @@ components:
         next_program_day: {type: [string, "null"]}
         generated_preview: {type: [string, "null"]}
         diagnostics: {}
+        ltp_text:
+          type: [object, "null"]
+          description: Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.
+          required: [step, seed_nonce, slot_indices, slot_templates, opener, ltp_date, when]
+          properties:
+            step: {type: integer, enum: [1, 2]}
+            seed_nonce: {type: integer, minimum: 0}
+            slot_indices:
+              type: object
+              additionalProperties: {type: integer, minimum: 0}
+            opener: {type: string}
+            slot_templates:
+              type: object
+              additionalProperties: {type: string}
+            ltp_date: {type: string}
+            when: {type: [string, "null"]}
     RetentionPlaybook:
       type: object
       required: [key, name, enabled, next_program_names, holdout_pct]
@@ -447,6 +579,10 @@ components:
           items: {type: string}
         message_guidance: {type: string}
         holdout_pct: {type: number, minimum: 0, maximum: 100}
+        ltp_sequence_config:
+          anyOf:
+            - $ref: "#/components/schemas/LtpSequenceConfig"
+            - {type: "null"}
     RetentionMessage:
       type: object
       required: [id, body, status]
@@ -459,6 +595,9 @@ components:
         scheduled_send_at: {type: [string, "null"]}
         sent_at: {type: [string, "null"]}
         simulated: {type: boolean}
+        retention_delivery_kind:
+          type: [string, "null"]
+          enum: [real, test, simulated, null]
     RetentionCandidate:
       type: object
       required: [id, player_id, playbook_key, trigger_event_id, status, context]
@@ -468,6 +607,16 @@ components:
         playbook_key: {type: string}
         trigger_event_id: {type: string}
         status: {type: string, enum: [drafted, approved, skipped, sent, needs_context, manual_edit]}
+        step: {type: integer, enum: [1, 2], default: 1}
+        sequence_id: {type: [string, "null"], format: uuid}
+        sequence_status:
+          type: [string, "null"]
+          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, null]
+        exited_at: {type: [string, "null"]}
+        exit_reason: {type: [string, "null"]}
+        booked_event_id: {type: [string, "null"]}
+        step1_text: {type: [string, "null"], description: Present on step-two approval cards for operator review.}
+        step1_sent_at: {type: [string, "null"], description: Real step-one sent timestamp displayed on step-two cards.}
         context:
           $ref: "#/components/schemas/RetentionContext"
         player:
@@ -480,7 +629,7 @@ components:
             - {type: "null"}
     RetentionReview:
       type: object
-      required: [schema_ready, retry_context_ready, playbooks, candidates, warnings, mode]
+      required: [schema_ready, retry_context_ready, sequence_schema_ready, playbooks, candidates, warnings, mode]
       properties:
         schema_ready:
           type: boolean
@@ -488,6 +637,9 @@ components:
         retry_context_ready:
           type: boolean
           description: Readiness of retry-context support from migration 012, independent of schema_ready
+        sequence_schema_ready:
+          type: boolean
+          description: Readiness of LTP sequence safety, slot configuration, and atomic capacity/dispatch RPCs from migration 013.
         error: {type: string}
         counts:
           $ref: "#/components/schemas/RetentionApprovalCounts"
@@ -617,6 +769,10 @@ components:
           description: Exact persisted draft body; null when context, validation, or already-returned checks block drafting
         context:
           $ref: "#/components/schemas/RetentionContext"
+        step: {type: integer, enum: [1, 2]}
+        sequence_status:
+          type: [string, "null"]
+          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, null]
         validation_errors:
           type: array
           items: {type: string}
@@ -641,6 +797,94 @@ components:
         validation_errors:
           type: array
           items: {type: string}
+    RetentionRegenerateBatchInput:
+      type: object
+      additionalProperties: false
+      required: [candidate_ids]
+      properties:
+        candidate_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: {type: string, format: uuid}
+    RetentionReshuffleInput:
+      type: object
+      additionalProperties: false
+    RetentionLtpSequenceOperationError:
+      type: object
+      additionalProperties: true
+      required: [schema_ready, error]
+      properties:
+        schema_ready:
+          type: boolean
+          description: False when the sequence schema readiness check failed; true after it passed.
+        error: {type: string}
+    RetentionRegenerateBatchResult:
+      type: object
+      additionalProperties: true
+      required: [schema_ready, results, podplay]
+      properties:
+        schema_ready: {type: boolean}
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionRegenerateResult"
+        failures:
+          type: array
+          items:
+            $ref: "#/components/schemas/RetentionRetryContextFailure"
+        podplay:
+          $ref: "#/components/schemas/RetentionPodplayTelemetry"
+    RetentionPlaybookConfigInput:
+      type: object
+      additionalProperties: false
+      required: [ltp_sequence_config]
+      properties:
+        ltp_sequence_config:
+          $ref: "#/components/schemas/LtpSequenceConfig"
+    LtpSequenceConfig:
+      type: object
+      additionalProperties: false
+      required: [step2_gap_days, step1, step2]
+      properties:
+        step2_gap_days:
+          type: integer
+          minimum: 7
+          maximum: 30
+          default: 7
+        step1:
+          $ref: "#/components/schemas/LtpStepOnePhraseSlots"
+        step2:
+          $ref: "#/components/schemas/LtpStepTwoPhraseSlots"
+    LtpStepOnePhraseSlots:
+      type: object
+      additionalProperties: false
+      required: [opener, thanks, next_step, offer, offer_no_program]
+      properties:
+        opener: {$ref: "#/components/schemas/LtpPhraseArray"}
+        thanks: {$ref: "#/components/schemas/LtpPhraseArray"}
+        next_step: {$ref: "#/components/schemas/LtpPhraseArray"}
+        offer: {$ref: "#/components/schemas/LtpPhraseArray"}
+        offer_no_program: {$ref: "#/components/schemas/LtpPhraseArray"}
+    LtpStepTwoPhraseSlots:
+      type: object
+      additionalProperties: false
+      required: [opener, nudge, next_step, no_program_cta]
+      properties:
+        opener: {$ref: "#/components/schemas/LtpPhraseArray"}
+        nudge: {$ref: "#/components/schemas/LtpPhraseArray"}
+        next_step: {$ref: "#/components/schemas/LtpPhraseArray"}
+        no_program_cta: {$ref: "#/components/schemas/LtpPhraseArray"}
+    LtpPhraseArray:
+      type: array
+      minItems: 1
+      maxItems: 32
+      items:
+        type: string
+        minLength: 1
+        maxLength: 240
+        pattern: '\S'
     RetentionRetryContextSingleInput:
       type: object
       additionalProperties: false

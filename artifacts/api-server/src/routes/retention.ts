@@ -21,8 +21,10 @@ import {
   decorateApprovalCandidates,
   parseApprovalListStatus,
 } from "../lib/retentionApprovals";
+import ltpSequenceRouter, { requireLtpSequenceSchemaReady } from "./ltpSequence";
 
 const router: IRouter = Router();
+router.use(ltpSequenceRouter);
 const ExpectedBodySchema = z.string().refine((value) => value.trim().length > 0);
 const ApproverSchema = z.object({ approved_by: z.string().trim().min(1), expected_body: ExpectedBodySchema });
 const EditSchema = z.object({ body: z.string().trim().min(1) });
@@ -146,6 +148,13 @@ async function approveCandidate(
   if (candidate.status !== "drafted") {
     throw Object.assign(new Error("Only drafted candidates can be approved"), { status: 409 });
   }
+  if (candidate.playbook_key === "ltp_followup") {
+    await requireLtpSequenceSchemaReady();
+    if (candidate.sequence_status !== "active" || !candidate.context.ltp_text
+      || candidate.context.reason != null || candidate.context.ltp_text.step !== candidate.step) {
+      throw Object.assign(new Error("Rebuild and review an active two-step LTP draft before approving"), { status: 409 });
+    }
+  }
   const context = candidate.context as RetentionContext;
   try {
     validateRetentionTextBody(expectedBody, context, {
@@ -161,7 +170,7 @@ async function approveCandidate(
   } catch (error: any) {
     throw Object.assign(new Error(error.message), { status: 409 });
   }
-  if (context.promo?.code) {
+  if ((candidate.step ?? 1) === 1 && context.promo?.code) {
     const validation = await validateRetentionCoupon(clubId, context.promo.code);
     if (!validation.valid) throw Object.assign(new Error(validation.warning ?? "Promotion could not be verified"), { status: 409 });
   }
@@ -207,6 +216,8 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
       return missingSchemaResponse(res, new Error("Retention migration 011 is not installed or is incomplete"), clubId);
     }
     const retryContextReady = await retentionContextRetryReady();
+    const { data: sequenceReady, error: sequenceReadinessError } = await supabase.rpc("retention_sequence_ready");
+    const sequenceSchemaReady = !sequenceReadinessError && sequenceReady === true;
     const { data: playbooks, error: playbookError } = await supabase.from("retention_playbooks").select("*").order("key");
     if (playbookError) throw new Error(playbookError.message);
     const candidates = await fetchAllRows<RetentionCandidate>((from, to) => {
@@ -214,18 +225,31 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
       query = applyCandidateStatusFilter(query, status);
       return query.order("created_at", { ascending: false }).range(from, to);
     });
+    const step2PlayerIds = [...new Set(candidates.filter((candidate) => candidate.step === 2).map((candidate) => candidate.player_id))];
+    const step1Candidates: RetentionCandidate[] = [];
+    if (sequenceSchemaReady) {
+      for (let offset = 0; offset < step2PlayerIds.length; offset += 500) {
+        const { data, error } = await supabase.from("retention_candidates").select("*")
+          .eq("club_id", clubId).eq("playbook_key", "ltp_followup").eq("step", 1)
+          .in("player_id", step2PlayerIds.slice(offset, offset + 500));
+        if (error) throw new Error(error.message);
+        step1Candidates.push(...(data ?? []) as RetentionCandidate[]);
+      }
+    }
     const counts = await fetchCandidateCounts(clubId);
     const playerIds = [...new Set(candidates.map((c) => c.player_id))];
-    const messageIds = [...new Set(candidates.map((c) => c.message_id).filter(Boolean))] as string[];
+    const messageIds = [...new Set([...candidates, ...step1Candidates].map((c) => c.message_id).filter(Boolean))] as string[];
     const [playerRows, messageRows] = await Promise.all([
       fetchByIds("players", "id,name", playerIds, clubId),
       fetchByIds("messages", "id,body,status,approved_at,approved_by,scheduled_send_at,sent_at,simulated", messageIds),
     ]);
     const players = new Map(playerRows.map((row: any) => [row.id, row]));
     const messages = new Map(messageRows.map((row: any) => [row.id, row]));
+    const priorSteps = new Map(step1Candidates.map((candidate) => [candidate.player_id, messages.get(candidate.message_id)]));
     const mode = await retentionMode(clubId);
     const couponWarnings = await Promise.all((playbooks ?? [])
-      .filter((playbook: RetentionPlaybook) => playbook.enabled && playbook.promo_code)
+      .filter((playbook: RetentionPlaybook) => playbook.enabled && playbook.promo_code
+        && candidates.some((candidate) => candidate.playbook_key === playbook.key && (candidate.step ?? 1) === 1))
       .map(async (playbook: RetentionPlaybook) => (await validateRetentionCoupon(clubId, playbook.promo_code!)).warning));
     const warnings = [...new Set([
       ...candidates.map((candidate) => candidate.context?.coupon_warning),
@@ -235,8 +259,15 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     res.json({
       schema_ready: true,
       retry_context_ready: retryContextReady,
+      sequence_schema_ready: sequenceSchemaReady,
       playbooks: (playbooks ?? []) as RetentionPlaybook[],
-      candidates: decorateApprovalCandidates(candidates, players, messages) as (RetentionCandidate & {
+      candidates: decorateApprovalCandidates(candidates, players, messages).map((candidate) => ({
+        ...candidate,
+        ...(candidate.step === 2 ? {
+          step1_text: priorSteps.get(candidate.player_id)?.body ?? null,
+          step1_sent_at: priorSteps.get(candidate.player_id)?.sent_at ?? null,
+        } : {}),
+      })) as (RetentionCandidate & {
         player: { name: string };
         message: RetentionMessage | null;
       })[],
@@ -417,6 +448,12 @@ router.patch("/retention/candidates/:id", requireClub, async (req, res) => {
   try {
     const candidate = await loadCandidate(clubId, req.params.id as string);
     if (!candidate) return res.status(404).json({ error: "Retention candidate not found" });
+    if (candidate.playbook_key === "ltp_followup") {
+      await requireLtpSequenceSchemaReady();
+      if (candidate.sequence_status !== "active" || !candidate.context.ltp_text) {
+        return res.status(409).json({ error: "Only an active rebuilt LTP sequence can be edited" });
+      }
+    }
     if (!["drafted", "needs_context", "manual_edit"].includes(candidate.status)) {
       return res.status(409).json({ error: "Only a draft or flagged candidate can be edited" });
     }

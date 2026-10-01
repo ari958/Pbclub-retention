@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { RetentionCandidatePlayer } from "./retentionCandidatePlayer";
+import type { RetentionCandidateSequenceStatus } from "./retentionCandidateSequenceStatus";
 import type { RetentionCandidateStatus } from "./retentionCandidateStatus";
+import type { RetentionCandidateStep } from "./retentionCandidateStep";
 import type { RetentionContext } from "./retentionContext";
 import type { RetentionMessage } from "./retentionMessage";
 
@@ -16,6 +18,27 @@ export interface RetentionCandidate {
   playbook_key: string;
   trigger_event_id: string;
   status: RetentionCandidateStatus;
+  step?: RetentionCandidateStep;
+  /** @nullable */
+  sequence_id?: string | null;
+  /** @nullable */
+  sequence_status?: RetentionCandidateSequenceStatus;
+  /** @nullable */
+  exited_at?: string | null;
+  /** @nullable */
+  exit_reason?: string | null;
+  /** @nullable */
+  booked_event_id?: string | null;
+  /**
+   * Present on step-two approval cards for operator review.
+   * @nullable
+   */
+  step1_text?: string | null;
+  /**
+   * Real step-one sent timestamp displayed on step-two cards.
+   * @nullable
+   */
+  step1_sent_at?: string | null;
   context: RetentionContext;
   player?: RetentionCandidatePlayer;
   message?: RetentionMessage | null;

@@ -15,6 +15,8 @@ export interface RetentionReview {
   schema_ready: boolean;
   /** Readiness of retry-context support from migration 012, independent of schema_ready */
   retry_context_ready: boolean;
+  /** Readiness of LTP sequence safety, slot configuration, and atomic capacity/dispatch RPCs from migration 013. */
+  sequence_schema_ready: boolean;
   error?: string;
   counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];

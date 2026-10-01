@@ -369,96 +369,19 @@ test("no-program contexts retain the common opener, code, dash, and 320-characte
   );
 });
 
-test("text writer gives an initial attempt and exactly two validation-feedback retries", async () => {
-  const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.ANTHROPIC_API_KEY;
-  process.env.ANTHROPIC_API_KEY = "test-only-key";
-  let calls = 0;
-  let firstRequest: any;
-  globalThis.fetch = (async (_input, init) => {
-    calls++;
-    if (!firstRequest) firstRequest = JSON.parse(String(init?.body));
-    const body = calls < 3 ? validNoProgramBody.replace(validNoProgramAttendance, "Hello Sam.") : validNoProgramBody;
-    return new Response(JSON.stringify({
-      id: `msg-${calls}`,
-      type: "message",
-      role: "assistant",
-      model: "test-model",
-      content: [{ type: "tool_use", id: `tool-${calls}`, name: "write_retention_text", input: { body } }],
-      stop_reason: "tool_use",
-      stop_sequence: null,
-      usage: { input_tokens: 1, output_tokens: 1 },
-    }), { status: 200, headers: { "content-type": "application/json" } });
-  }) as typeof fetch;
-  try {
-    const conflictingPlaybook = {
-      ...playbook,
-      message_guidance: "Mention Beginner Clinic and tell the player to come back next Friday.",
-    };
-    const noProgramPromptContext = {
-      ...noProgramContext,
-      already_booked: true,
-      booked_event: { ...context.next_program!, name: "Booked Beginner Clinic" },
-      diagnostics: { unrelated_event: { status: "error" } },
-    };
-    const result = await writeRetentionText(noProgramPromptContext, conflictingPlaybook);
-    assert.equal(calls, 3);
-    assert.equal(result.body, validNoProgramBody);
-    assert.deepEqual(result.validation_errors, []);
-    assert.equal(result.generated_preview, null);
-    assert.deepEqual(JSON.parse(firstRequest.messages[0].content.match(/^Context JSON:\n([^\n]+)/)![1]), {
-      player_first_name: "Sam",
-      attendance: { program: "Learn to Play", attended: true },
-      date_phrase: "yesterday",
-      promo: { code: "LTPNEXT25", offer_text: "25% off your next program" },
-      booking_url: "https://pbclub.podplay.app",
-    });
-    assert.doesNotMatch(firstRequest.messages[0].content, /Learn to Play Clinic|Beginner Clinic|Community Open Play|Booked Beginner Clinic|2026-09-28|diagnostics|booked_event|already_booked|forbidden_program_names|come back next Friday/);
-    assert.doesNotMatch(firstRequest.system, /Learn to Play Clinic|Beginner Clinic|Community Open Play|come back next Friday/);
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = originalApiKey;
-  }
+test("Learn to Play texts cannot enter the legacy LLM retry loop", async () => {
+  await assert.rejects(
+    writeRetentionText(noProgramContext, playbook),
+    /code-only sequence phrase builder, not LLM generation/,
+  );
 });
 
-test("with-program prompt projection retains only relevant verified facts and guidance", async () => {
-  const originalFetch = globalThis.fetch;
-  const originalApiKey = process.env.ANTHROPIC_API_KEY;
-  process.env.ANTHROPIC_API_KEY = "test-only-key";
-  let requestBody: any;
-  globalThis.fetch = (async (_input, init) => {
-    requestBody = JSON.parse(String(init?.body));
-    return new Response(JSON.stringify({
-      id: "msg-with-program",
-      type: "message",
-      role: "assistant",
-      model: "test-model",
-      content: [{ type: "tool_use", id: "tool-with-program", name: "write_retention_text", input: { body: validBody } }],
-      stop_reason: "tool_use",
-      stop_sequence: null,
-      usage: { input_tokens: 1, output_tokens: 1 },
-    }), { status: 200, headers: { "content-type": "application/json" } });
-  }) as typeof fetch;
-  try {
-    const withProgramContext = { ...context, variant: "with_program" as const };
-    const withGuidance = { ...playbook, message_guidance: "Use the approved conversational style." };
-    const result = await writeRetentionText(withProgramContext, withGuidance);
-    assert.equal(result.body, validBody);
-    assert.deepEqual(JSON.parse(requestBody.messages[0].content.match(/^Context JSON:\n([^\n]+)/)![1]), {
-      player_first_name: "Sam",
-      trigger: { name: "Learn to Play Clinic", date: "2026-09-28" },
-      next_program: { name: "Beginner Clinic", signup_url: "https://pb.podplay.app/community/events/evt-2" },
-      next_program_day: "Friday",
-      date_phrase: "yesterday",
-      already_booked: false,
-      promo: null,
-    });
-    assert.match(requestBody.messages[0].content, /Use the approved conversational style/);
-    assert.doesNotMatch(requestBody.messages[0].content, /classmates_signed_up|diagnostics|forbidden_program_names|start_time|spots_remaining/);
-  } finally {
-    globalThis.fetch = originalFetch;
-    if (originalApiKey === undefined) delete process.env.ANTHROPIC_API_KEY;
-    else process.env.ANTHROPIC_API_KEY = originalApiKey;
-  }
+test("message guidance cannot re-enable LLM-generated LTP text", async () => {
+  await assert.rejects(
+    writeRetentionText(
+      { ...context, variant: "with_program" },
+      { ...playbook, message_guidance: "Use the approved conversational style." },
+    ),
+    /code-only sequence phrase builder, not LLM generation/,
+  );
 });

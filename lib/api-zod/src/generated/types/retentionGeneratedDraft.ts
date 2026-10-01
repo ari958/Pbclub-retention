@@ -6,7 +6,9 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { RetentionContext } from "./retentionContext";
+import type { RetentionGeneratedDraftSequenceStatus } from "./retentionGeneratedDraftSequenceStatus";
 import type { RetentionGeneratedDraftStatus } from "./retentionGeneratedDraftStatus";
+import type { RetentionGeneratedDraftStep } from "./retentionGeneratedDraftStep";
 
 export interface RetentionGeneratedDraft {
   candidate_id: string;
@@ -22,5 +24,8 @@ export interface RetentionGeneratedDraft {
    */
   body: string | null;
   context: RetentionContext;
+  step?: RetentionGeneratedDraftStep;
+  /** @nullable */
+  sequence_status?: RetentionGeneratedDraftSequenceStatus;
   validation_errors?: string[];
 }

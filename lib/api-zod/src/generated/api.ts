@@ -63,9 +63,72 @@ export const listRetentionApprovalsResponseCountsManualEditMin = 0;
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin = 0;
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax = 100;
 
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysDefault = 7;
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysMin = 7;
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysMax = 30;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepMax = 32;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaItemMax = 240;
+
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaItemRegExp =
+  new RegExp("\\S");
+export const listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaMax = 32;
+
+export const listRetentionApprovalsResponseCandidatesItemStepDefault = 1;
 export const listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin = 0;
 
 export const listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax = 30;
+
+export const listRetentionApprovalsResponseCandidatesItemContextLtpTextSeedNonceMin = 0;
+
+export const listRetentionApprovalsResponseCandidatesItemContextLtpTextSlotIndicesMinOne = 0;
 
 export const ListRetentionApprovalsResponse = zod.object({
   schema_ready: zod
@@ -75,6 +138,11 @@ export const ListRetentionApprovalsResponse = zod.object({
     .boolean()
     .describe(
       "Readiness of retry-context support from migration 012, independent of schema_ready",
+    ),
+  sequence_schema_ready: zod
+    .boolean()
+    .describe(
+      "Readiness of LTP sequence safety, slot configuration, and atomic capacity\/dispatch RPCs from migration 013.",
     ),
   error: zod.string().optional(),
   counts: zod
@@ -110,6 +178,172 @@ export const ListRetentionApprovalsResponse = zod.object({
         .number()
         .min(listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin)
         .max(listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax),
+      ltp_sequence_config: zod
+        .union([
+          zod.object({
+            step2_gap_days: zod
+              .number()
+              .min(
+                listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysMin,
+              )
+              .max(
+                listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysMax,
+              )
+              .default(
+                listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2GapDaysDefault,
+              ),
+            step1: zod.object({
+              opener: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OpenerMax,
+                ),
+              thanks: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1ThanksMax,
+                ),
+              next_step: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1NextStepMax,
+                ),
+              offer: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferMax,
+                ),
+              offer_no_program: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep1OfferNoProgramMax,
+                ),
+            }),
+            step2: zod.object({
+              opener: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2OpenerMax,
+                ),
+              nudge: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NudgeMax,
+                ),
+              next_step: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NextStepMax,
+                ),
+              no_program_cta: zod
+                .array(
+                  zod
+                    .string()
+                    .min(1)
+                    .max(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaItemMax,
+                    )
+                    .regex(
+                      listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaItemRegExp,
+                    ),
+                )
+                .min(1)
+                .max(
+                  listRetentionApprovalsResponsePlaybooksItemLtpSequenceConfigOneStep2NoProgramCtaMax,
+                ),
+            }),
+          }),
+          zod.null(),
+        ])
+        .optional(),
     }),
   ),
   candidates: zod.array(
@@ -126,6 +360,31 @@ export const ListRetentionApprovalsResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(listRetentionApprovalsResponseCandidatesItemStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -227,6 +486,31 @@ export const ListRetentionApprovalsResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  listRetentionApprovalsResponseCandidatesItemContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    listRetentionApprovalsResponseCandidatesItemContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -247,6 +531,14 @@ export const ListRetentionApprovalsResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])
@@ -331,6 +623,10 @@ export const generateRetentionDraftsResponseStatsSkippedByReasonAlreadyReturnedM
 export const generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin = 0;
 
 export const generateRetentionDraftsResponseDraftsItemContextLookbackDaysMax = 30;
+
+export const generateRetentionDraftsResponseDraftsItemContextLtpTextSeedNonceMin = 0;
+
+export const generateRetentionDraftsResponseDraftsItemContextLtpTextSlotIndicesMinOne = 0;
 
 export const GenerateRetentionDraftsResponse = zod.object({
   schema_ready: zod.boolean(),
@@ -551,10 +847,46 @@ export const GenerateRetentionDraftsResponse = zod.object({
             next_program_day: zod.string().nullish(),
             generated_preview: zod.string().nullish(),
             diagnostics: zod.unknown().optional(),
+            ltp_text: zod
+              .object({
+                step: zod.union([zod.literal(1), zod.literal(2)]),
+                seed_nonce: zod
+                  .number()
+                  .min(
+                    generateRetentionDraftsResponseDraftsItemContextLtpTextSeedNonceMin,
+                  ),
+                slot_indices: zod.record(
+                  zod.string(),
+                  zod
+                    .number()
+                    .min(
+                      generateRetentionDraftsResponseDraftsItemContextLtpTextSlotIndicesMinOne,
+                    ),
+                ),
+                opener: zod.string(),
+                slot_templates: zod.record(zod.string(), zod.string()),
+                ltp_date: zod.string(),
+                when: zod.string().nullable(),
+              })
+              .nullish()
+              .describe(
+                "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+              ),
           })
           .describe(
             "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
           ),
+        step: zod.union([zod.literal(1), zod.literal(2)]).optional(),
+        sequence_status: zod
+          .union([
+            zod.literal("active"),
+            zod.literal("paused_reply"),
+            zod.literal("exited_booked"),
+            zod.literal("exited_opt_out"),
+            zod.literal("completed"),
+            zod.literal(null),
+          ])
+          .nullish(),
         validation_errors: zod.array(zod.string()).optional(),
       }),
     )
@@ -580,9 +912,14 @@ export const UpdateRetentionKillSwitchBody = zod.object({
   enabled: zod.boolean(),
 });
 
+export const updateRetentionKillSwitchResponseCandidateStepDefault = 1;
 export const updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin = 0;
 
 export const updateRetentionKillSwitchResponseCandidateContextLookbackDaysMax = 30;
+
+export const updateRetentionKillSwitchResponseCandidateContextLtpTextSeedNonceMin = 0;
+
+export const updateRetentionKillSwitchResponseCandidateContextLtpTextSlotIndicesMinOne = 0;
 
 export const UpdateRetentionKillSwitchResponse = zod.object({
   approved: zod.number().optional(),
@@ -600,6 +937,31 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(updateRetentionKillSwitchResponseCandidateStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -701,6 +1063,31 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  updateRetentionKillSwitchResponseCandidateContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    updateRetentionKillSwitchResponseCandidateContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -721,6 +1108,14 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])
@@ -753,9 +1148,14 @@ export const EditRetentionDraftBody = zod.object({
   body: zod.string().min(1),
 });
 
+export const editRetentionDraftResponseCandidateStepDefault = 1;
 export const editRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
 export const editRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
+export const editRetentionDraftResponseCandidateContextLtpTextSeedNonceMin = 0;
+
+export const editRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne = 0;
 
 export const EditRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
@@ -773,6 +1173,31 @@ export const EditRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(editRetentionDraftResponseCandidateStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -872,6 +1297,31 @@ export const EditRetentionDraftResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  editRetentionDraftResponseCandidateContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    editRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -892,6 +1342,14 @@ export const EditRetentionDraftResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])
@@ -935,9 +1393,14 @@ export const ApproveRetentionDraftBody = zod.object({
     ),
 });
 
+export const approveRetentionDraftResponseCandidateStepDefault = 1;
 export const approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
 export const approveRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
+export const approveRetentionDraftResponseCandidateContextLtpTextSeedNonceMin = 0;
+
+export const approveRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne = 0;
 
 export const ApproveRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
@@ -955,6 +1418,31 @@ export const ApproveRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(approveRetentionDraftResponseCandidateStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -1054,6 +1542,31 @@ export const ApproveRetentionDraftResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  approveRetentionDraftResponseCandidateContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    approveRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -1074,6 +1587,14 @@ export const ApproveRetentionDraftResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])
@@ -1106,6 +1627,10 @@ export const RegenerateRetentionDraftQueryParams = zod.object({
 export const regenerateRetentionDraftResponseContextClassmatesSignedUpMin = 0;
 
 export const regenerateRetentionDraftResponseContextLookbackDaysMax = 30;
+
+export const regenerateRetentionDraftResponseContextLtpTextSeedNonceMin = 0;
+
+export const regenerateRetentionDraftResponseContextLtpTextSlotIndicesMinOne = 0;
 
 export const RegenerateRetentionDraftResponse = zod.object({
   candidate_id: zod.string(),
@@ -1209,11 +1734,905 @@ export const RegenerateRetentionDraftResponse = zod.object({
       next_program_day: zod.string().nullish(),
       generated_preview: zod.string().nullish(),
       diagnostics: zod.unknown().optional(),
+      ltp_text: zod
+        .object({
+          step: zod.union([zod.literal(1), zod.literal(2)]),
+          seed_nonce: zod
+            .number()
+            .min(regenerateRetentionDraftResponseContextLtpTextSeedNonceMin),
+          slot_indices: zod.record(
+            zod.string(),
+            zod
+              .number()
+              .min(
+                regenerateRetentionDraftResponseContextLtpTextSlotIndicesMinOne,
+              ),
+          ),
+          opener: zod.string(),
+          slot_templates: zod.record(zod.string(), zod.string()),
+          ltp_date: zod.string(),
+          when: zod.string().nullable(),
+        })
+        .nullish()
+        .describe(
+          "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+        ),
     })
     .describe(
       "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
     ),
   validation_errors: zod.array(zod.string()).optional(),
+});
+
+/**
+ * Uses live capacity ordering for the whole cohort, retains candidate/message identity and approval evidence, and only drafts. Never approves or sends.
+ * @summary Rebuild a coherent ordered cohort of drafted LTP step-one messages only
+ */
+export const RegenerateRetentionLtpBatchQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const regenerateRetentionLtpBatchBodyCandidateIdsMax = 50;
+
+export const RegenerateRetentionLtpBatchBody = zod.object({
+  candidate_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(regenerateRetentionLtpBatchBodyCandidateIdsMax),
+});
+
+export const regenerateRetentionLtpBatchResponseResultsItemContextClassmatesSignedUpMin = 0;
+
+export const regenerateRetentionLtpBatchResponseResultsItemContextLookbackDaysMax = 30;
+
+export const regenerateRetentionLtpBatchResponseResultsItemContextLtpTextSeedNonceMin = 0;
+
+export const regenerateRetentionLtpBatchResponseResultsItemContextLtpTextSlotIndicesMinOne = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayTotalCallsMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayListingCallsMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplaySignupCallsMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayTriggerCallsMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayCouponCallsMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayRateLimitCountMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayRetriesItemAttemptMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayRetriesItemRetryNumberMin = 0;
+
+export const regenerateRetentionLtpBatchResponsePodplayRetriesItemWaitMsMin = 0;
+
+export const RegenerateRetentionLtpBatchResponse = zod.object({
+  schema_ready: zod.boolean(),
+  results: zod.array(
+    zod.object({
+      candidate_id: zod.string(),
+      status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
+      reason: zod.string().nullable(),
+      body: zod.string().nullable(),
+      context: zod
+        .object({
+          variant: zod
+            .enum(["with_program", "no_program"])
+            .optional()
+            .describe("Generation variant. Optional only for legacy contexts."),
+          player_first_name: zod.string().optional(),
+          trigger: zod
+            .object({
+              event_id: zod.string(),
+              name: zod.string(),
+              date: zod.string(),
+            })
+            .optional(),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booking_url: zod
+            .literal("https://pbclub.podplay.app")
+            .optional()
+            .describe(
+              "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+            ),
+          forbidden_program_names: zod
+            .array(zod.string())
+            .optional()
+            .describe(
+              "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+            ),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              regenerateRetentionLtpBatchResponseResultsItemContextClassmatesSignedUpMin,
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              regenerateRetentionLtpBatchResponseResultsItemContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod
+            .string()
+            .nullish()
+            .describe(
+              "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
+            ),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  regenerateRetentionLtpBatchResponseResultsItemContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    regenerateRetentionLtpBatchResponseResultsItemContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
+        })
+        .describe(
+          "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+        ),
+      validation_errors: zod.array(zod.string()).optional(),
+    }),
+  ),
+  failures: zod
+    .array(
+      zod.object({
+        candidate_id: zod.string().uuid(),
+        error: zod.string(),
+        http_status: zod.number(),
+      }),
+    )
+    .optional(),
+  podplay: zod.object({
+    total_calls: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplayTotalCallsMin),
+    listing_calls: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplayListingCallsMin),
+    signup_calls: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplaySignupCallsMin),
+    trigger_calls: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplayTriggerCallsMin),
+    coupon_calls: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplayCouponCallsMin),
+    rate_limit_count: zod
+      .number()
+      .min(regenerateRetentionLtpBatchResponsePodplayRateLimitCountMin),
+    retries: zod.array(
+      zod.object({
+        path: zod.string(),
+        attempt: zod
+          .number()
+          .min(regenerateRetentionLtpBatchResponsePodplayRetriesItemAttemptMin),
+        retry_number: zod
+          .number()
+          .min(
+            regenerateRetentionLtpBatchResponsePodplayRetriesItemRetryNumberMin,
+          ),
+        wait_ms: zod
+          .number()
+          .min(regenerateRetentionLtpBatchResponsePodplayRetriesItemWaitMsMin),
+        status: zod.number(),
+      }),
+    ),
+  }),
+});
+
+/**
+ * Updates one active, drafted, slot-based LTP step-one or step-two row only. Never approves or sends. Other playbooks do not expose reshuffling.
+ * @summary Reselect seeded phrase slots for one drafted LTP candidate at either sequence step
+ */
+export const ReshuffleRetentionLtpDraftParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const ReshuffleRetentionLtpDraftQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const ReshuffleRetentionLtpDraftBody = zod.object({});
+
+export const reshuffleRetentionLtpDraftResponseContextClassmatesSignedUpMin = 0;
+
+export const reshuffleRetentionLtpDraftResponseContextLookbackDaysMax = 30;
+
+export const reshuffleRetentionLtpDraftResponseContextLtpTextSeedNonceMin = 0;
+
+export const reshuffleRetentionLtpDraftResponseContextLtpTextSlotIndicesMinOne = 0;
+
+export const ReshuffleRetentionLtpDraftResponse = zod.object({
+  candidate_id: zod.string(),
+  status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
+  reason: zod.string().nullable(),
+  body: zod.string().nullable(),
+  context: zod
+    .object({
+      variant: zod
+        .enum(["with_program", "no_program"])
+        .optional()
+        .describe("Generation variant. Optional only for legacy contexts."),
+      player_first_name: zod.string().optional(),
+      trigger: zod
+        .object({
+          event_id: zod.string(),
+          name: zod.string(),
+          date: zod.string(),
+        })
+        .optional(),
+      next_program: zod
+        .union([
+          zod.object({
+            event_id: zod.string(),
+            name: zod.string(),
+            start_time: zod.string(),
+            date: zod.string(),
+            time: zod.string(),
+            signup_url: zod.string(),
+            spots_remaining: zod.number().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+      booking_url: zod
+        .literal("https://pbclub.podplay.app")
+        .optional()
+        .describe(
+          "Exact approved booking-page URL supplied for no_program contexts; optional on legacy with_program contexts.",
+        ),
+      forbidden_program_names: zod
+        .array(zod.string())
+        .optional()
+        .describe(
+          "Event, trigger, and configured program names that no_program text must not mention. Required for new no_program contexts; optional on legacy contexts.",
+        ),
+      booked_event: zod
+        .union([
+          zod.object({
+            event_id: zod.string(),
+            name: zod.string(),
+            start_time: zod.string(),
+            date: zod.string(),
+            time: zod.string(),
+            signup_url: zod.string(),
+            spots_remaining: zod.number().optional(),
+          }),
+          zod.null(),
+        ])
+        .optional(),
+      classmates_signed_up: zod
+        .number()
+        .min(reshuffleRetentionLtpDraftResponseContextClassmatesSignedUpMin)
+        .optional(),
+      already_booked: zod.boolean().optional(),
+      promo: zod
+        .object({
+          code: zod.string().optional(),
+          offer_text: zod.string().optional(),
+        })
+        .nullish(),
+      coupon_warning: zod.string().nullish(),
+      evaluated_at: zod.string().optional(),
+      stale: zod
+        .boolean()
+        .optional()
+        .describe(
+          "True when the candidate was generated with a test lookback longer than the production default.",
+        ),
+      lookback_days: zod
+        .number()
+        .min(1)
+        .max(reshuffleRetentionLtpDraftResponseContextLookbackDaysMax)
+        .optional(),
+      reason: zod.string().nullish(),
+      errors: zod
+        .array(zod.unknown())
+        .optional()
+        .describe(
+          "Lookup failures; entries may be strings or structured error objects.",
+        ),
+      validation_errors: zod.array(zod.string()).optional(),
+      date_phrase: zod
+        .string()
+        .nullish()
+        .describe(
+          "Timing provenance retained in context. Required for new no_program contexts; no_program copy uses NOW\/present-time framing following a Learn to Play thank-you.",
+        ),
+      send_date: zod.string().nullish(),
+      send_date_et: zod.string().nullish(),
+      next_program_day: zod.string().nullish(),
+      generated_preview: zod.string().nullish(),
+      diagnostics: zod.unknown().optional(),
+      ltp_text: zod
+        .object({
+          step: zod.union([zod.literal(1), zod.literal(2)]),
+          seed_nonce: zod
+            .number()
+            .min(reshuffleRetentionLtpDraftResponseContextLtpTextSeedNonceMin),
+          slot_indices: zod.record(
+            zod.string(),
+            zod
+              .number()
+              .min(
+                reshuffleRetentionLtpDraftResponseContextLtpTextSlotIndicesMinOne,
+              ),
+          ),
+          opener: zod.string(),
+          slot_templates: zod.record(zod.string(), zod.string()),
+          ltp_date: zod.string(),
+          when: zod.string().nullable(),
+        })
+        .nullish()
+        .describe(
+          "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+        ),
+    })
+    .describe(
+      "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
+    ),
+  validation_errors: zod.array(zod.string()).optional(),
+});
+
+/**
+ * Validates separate phrase arrays for steps one and two. This changes only playbook text configuration, never a sending setting.
+ * @summary Edit the stored two-step LTP phrase slots and follow-up gap
+ */
+export const UpdateRetentionLtpPhraseConfigParams = zod.object({
+  key: zod.coerce.string(),
+});
+
+export const UpdateRetentionLtpPhraseConfigQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysDefault = 7;
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysMin = 7;
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysMax = 30;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepMax = 32;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaMax = 32;
+
+export const UpdateRetentionLtpPhraseConfigBody = zod.object({
+  ltp_sequence_config: zod.object({
+    step2_gap_days: zod
+      .number()
+      .min(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysMin)
+      .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysMax)
+      .default(
+        updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2GapDaysDefault,
+      ),
+    step1: zod.object({
+      opener: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OpenerMax),
+      thanks: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1ThanksMax),
+      next_step: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(
+          updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1NextStepMax,
+        ),
+      offer: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferMax),
+      offer_no_program: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(
+          updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep1OfferNoProgramMax,
+        ),
+    }),
+    step2: zod.object({
+      opener: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2OpenerMax),
+      nudge: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NudgeMax),
+      next_step: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(
+          updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NextStepMax,
+        ),
+      no_program_cta: zod
+        .array(
+          zod
+            .string()
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaItemMax,
+            )
+            .regex(
+              updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaItemRegExp,
+            ),
+        )
+        .min(1)
+        .max(
+          updateRetentionLtpPhraseConfigBodyLtpSequenceConfigStep2NoProgramCtaMax,
+        ),
+    }),
+  }),
+});
+
+export const updateRetentionLtpPhraseConfigResponseHoldoutPctMin = 0;
+export const updateRetentionLtpPhraseConfigResponseHoldoutPctMax = 100;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysDefault = 7;
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysMin = 7;
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysMax = 30;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepMax = 32;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaItemMax = 240;
+
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaItemRegExp =
+  new RegExp("\\S");
+export const updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaMax = 32;
+
+export const UpdateRetentionLtpPhraseConfigResponse = zod.object({
+  key: zod.string(),
+  name: zod.string(),
+  enabled: zod.boolean(),
+  promo_code: zod.string().nullish(),
+  offer_text: zod.string().nullish(),
+  next_program_names: zod.array(zod.string()),
+  message_guidance: zod.string().optional(),
+  holdout_pct: zod
+    .number()
+    .min(updateRetentionLtpPhraseConfigResponseHoldoutPctMin)
+    .max(updateRetentionLtpPhraseConfigResponseHoldoutPctMax),
+  ltp_sequence_config: zod
+    .union([
+      zod.object({
+        step2_gap_days: zod
+          .number()
+          .min(
+            updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysMin,
+          )
+          .max(
+            updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysMax,
+          )
+          .default(
+            updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2GapDaysDefault,
+          ),
+        step1: zod.object({
+          opener: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OpenerMax,
+            ),
+          thanks: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1ThanksMax,
+            ),
+          next_step: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1NextStepMax,
+            ),
+          offer: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferMax,
+            ),
+          offer_no_program: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep1OfferNoProgramMax,
+            ),
+        }),
+        step2: zod.object({
+          opener: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2OpenerMax,
+            ),
+          nudge: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NudgeMax,
+            ),
+          next_step: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NextStepMax,
+            ),
+          no_program_cta: zod
+            .array(
+              zod
+                .string()
+                .min(1)
+                .max(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaItemMax,
+                )
+                .regex(
+                  updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaItemRegExp,
+                ),
+            )
+            .min(1)
+            .max(
+              updateRetentionLtpPhraseConfigResponseLtpSequenceConfigOneStep2NoProgramCtaMax,
+            ),
+        }),
+      }),
+      zod.null(),
+    ])
+    .optional(),
 });
 
 /**
@@ -1244,6 +2663,10 @@ export const RetryRetentionContextBatchBody = zod.object({
 export const retryRetentionContextBatchResponseResultsItemContextClassmatesSignedUpMin = 0;
 
 export const retryRetentionContextBatchResponseResultsItemContextLookbackDaysMax = 30;
+
+export const retryRetentionContextBatchResponseResultsItemContextLtpTextSeedNonceMin = 0;
+
+export const retryRetentionContextBatchResponseResultsItemContextLtpTextSlotIndicesMinOne = 0;
 
 export const retryRetentionContextBatchResponsePodplayTotalCallsMin = 0;
 
@@ -1376,6 +2799,31 @@ export const RetryRetentionContextBatchResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  retryRetentionContextBatchResponseResultsItemContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    retryRetentionContextBatchResponseResultsItemContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -1459,6 +2907,10 @@ export const RetryRetentionContextBody = zod.object({});
 export const retryRetentionContextResponseResultsItemContextClassmatesSignedUpMin = 0;
 
 export const retryRetentionContextResponseResultsItemContextLookbackDaysMax = 30;
+
+export const retryRetentionContextResponseResultsItemContextLtpTextSeedNonceMin = 0;
+
+export const retryRetentionContextResponseResultsItemContextLtpTextSlotIndicesMinOne = 0;
 
 export const retryRetentionContextResponsePodplayTotalCallsMin = 0;
 
@@ -1589,6 +3041,31 @@ export const RetryRetentionContextResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  retryRetentionContextResponseResultsItemContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    retryRetentionContextResponseResultsItemContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -1664,9 +3141,14 @@ export const SkipRetentionDraftQueryParams = zod.object({
     .describe("Club slug; supply either clubId or slug"),
 });
 
+export const skipRetentionDraftResponseCandidateStepDefault = 1;
 export const skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
 export const skipRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
+export const skipRetentionDraftResponseCandidateContextLtpTextSeedNonceMin = 0;
+
+export const skipRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne = 0;
 
 export const SkipRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
@@ -1684,6 +3166,31 @@ export const SkipRetentionDraftResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(skipRetentionDraftResponseCandidateStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -1783,6 +3290,31 @@ export const SkipRetentionDraftResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  skipRetentionDraftResponseCandidateContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    skipRetentionDraftResponseCandidateContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -1803,6 +3335,14 @@ export const SkipRetentionDraftResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])
@@ -1839,9 +3379,14 @@ export const ApproveRetentionPlaybookDraftsBody = zod.object({
     .describe("Candidate ID to exact reviewed stored message text"),
 });
 
+export const approveRetentionPlaybookDraftsResponseCandidateStepDefault = 1;
 export const approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin = 0;
 
 export const approveRetentionPlaybookDraftsResponseCandidateContextLookbackDaysMax = 30;
+
+export const approveRetentionPlaybookDraftsResponseCandidateContextLtpTextSeedNonceMin = 0;
+
+export const approveRetentionPlaybookDraftsResponseCandidateContextLtpTextSlotIndicesMinOne = 0;
 
 export const ApproveRetentionPlaybookDraftsResponse = zod.object({
   approved: zod.number().optional(),
@@ -1859,6 +3404,31 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
         "needs_context",
         "manual_edit",
       ]),
+      step: zod
+        .union([zod.literal(1), zod.literal(2)])
+        .default(approveRetentionPlaybookDraftsResponseCandidateStepDefault),
+      sequence_id: zod.string().uuid().nullish(),
+      sequence_status: zod
+        .union([
+          zod.literal("active"),
+          zod.literal("paused_reply"),
+          zod.literal("exited_booked"),
+          zod.literal("exited_opt_out"),
+          zod.literal("completed"),
+          zod.literal(null),
+        ])
+        .nullish(),
+      exited_at: zod.string().nullish(),
+      exit_reason: zod.string().nullish(),
+      booked_event_id: zod.string().nullish(),
+      step1_text: zod
+        .string()
+        .nullish()
+        .describe("Present on step-two approval cards for operator review."),
+      step1_sent_at: zod
+        .string()
+        .nullish()
+        .describe("Real step-one sent timestamp displayed on step-two cards."),
       context: zod
         .object({
           variant: zod
@@ -1960,6 +3530,31 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
           next_program_day: zod.string().nullish(),
           generated_preview: zod.string().nullish(),
           diagnostics: zod.unknown().optional(),
+          ltp_text: zod
+            .object({
+              step: zod.union([zod.literal(1), zod.literal(2)]),
+              seed_nonce: zod
+                .number()
+                .min(
+                  approveRetentionPlaybookDraftsResponseCandidateContextLtpTextSeedNonceMin,
+                ),
+              slot_indices: zod.record(
+                zod.string(),
+                zod
+                  .number()
+                  .min(
+                    approveRetentionPlaybookDraftsResponseCandidateContextLtpTextSlotIndicesMinOne,
+                  ),
+              ),
+              opener: zod.string(),
+              slot_templates: zod.record(zod.string(), zod.string()),
+              ltp_date: zod.string(),
+              when: zod.string().nullable(),
+            })
+            .nullish()
+            .describe(
+              "Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.",
+            ),
         })
         .describe(
           "Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.",
@@ -1980,6 +3575,14 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
             scheduled_send_at: zod.string().nullish(),
             sent_at: zod.string().nullish(),
             simulated: zod.boolean().optional(),
+            retention_delivery_kind: zod
+              .union([
+                zod.literal("real"),
+                zod.literal("test"),
+                zod.literal("simulated"),
+                zod.literal(null),
+              ])
+              .nullish(),
           }),
           zod.null(),
         ])

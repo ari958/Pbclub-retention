@@ -6,6 +6,7 @@ import {
   RETENTION_NO_PROGRAM_BOOKING_URL,
 } from "./retentionTypes";
 import type { RetentionContext, RetentionPlaybook } from "./retentionTypes";
+import type { LtpTextSelection, RetentionSequenceStep } from "./retentionTypes";
 
 const VOICE_RULES = `You are a retention agent for a pickleball club. Write like a knowledgeable person at the front desk who knows the players personally: casual but not sloppy, warm but not gushing.
 
@@ -39,6 +40,140 @@ const PROMOTION_NUMBER_WORD = "(?:zero|one|two|three|four|five|six|seven|eight|n
 const PROMOTION_WORD_PERCENT_RE = new RegExp(`\\b(${PROMOTION_NUMBER_WORD})\\s+percent\\b`, "gi");
 const PROMOTION_WORD_MONEY_RE = new RegExp(`\\b(${PROMOTION_NUMBER_WORD})\\s+(?:dollars?|bucks?)\\b`, "gi");
 const PROMOTION_BENEFIT_RE = /\b(?:free|freebies?|complimentary|bonus|gift(?:\s+cards?)?|rewards?|perks?|credits?|benefits?|unlimited|priority|exclusive|guaranteed|waived?|no[\s-]+charge|no[\s-]+cost|cashback|cash\s+back|rebates?)\b/gi;
+const SEQUENCE_TIME_REFERENCE_RE = /\b(?:yesterday|today|tomorrow|tonight|now|soon|later|upcoming|this\s+(?:morning|afternoon|evening|day|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|next\s+(?:day|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|last\s+(?:night|week|weekend|month|year|sunday|monday|tuesday|wednesday|thursday|friday|saturday)|sunday|monday|tuesday|wednesday|thursday|friday|saturday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|\d{1,2}(?:st|nd|rd|th)|\d{1,2}:\d{2}\s*(?:am|pm)?|\d{1,2}\/\d{1,2}|\d+\s+days?\s+(?:from\s+now|later|away)|(?:in|within)\s+(?:a\s+few|\d+)\s+days?|morning|afternoon|evening)\b/i;
+
+function renderLtpStoredTemplate(template: string, facts: Record<string, string>): string {
+  return template.replace(/\{([a-z_]+)\}/g, (_whole, key: string) => facts[key] ?? "\u0000");
+}
+
+/** Strictly validates deterministic sequence copy; no model-generated LTP can use this path. */
+export function validateLtpSequenceText(
+  body: string,
+  context: RetentionContext,
+  selection: LtpTextSelection,
+): string[] {
+  const errors: string[] = [];
+  const text = body.trim();
+  if (!selection || (selection.step !== 1 && selection.step !== 2)) return ["LTP sequence context needs a valid step selection"];
+  if (!selection.slot_indices || !selection.slot_templates || !selection.opener || !selection.ltp_date) {
+    return ["LTP sequence context is missing its persisted phrase-selection snapshot"];
+  }
+  const step = selection.step as RetentionSequenceStep;
+  const expectedOpener = selection.opener;
+  if (!text.startsWith(expectedOpener) || !text.includes(context.player_first_name.trim())) {
+    errors.push("Message must start with the selected opener and include the player's first name");
+  }
+  if (/[–—]| - /u.test(text)) errors.push('Message cannot contain em/en dashes or spaced hyphens (" - ")');
+  if ([...text].length > 320) errors.push("Message must be 320 Unicode characters or fewer");
+  if (/[\r\n]/.test(text)) errors.push("LTP sequence message must be a single line");
+
+  const noProgram = context.variant === "no_program";
+  const requiredSlots = step === 1
+    ? noProgram ? ["opener", "thanks", "offer_no_program"] : ["opener", "thanks", "next_step", "offer"]
+    : noProgram ? ["opener", "nudge", "no_program_cta"] : ["opener", "nudge", "next_step"];
+  if (Object.keys(selection.slot_templates).length !== requiredSlots.length
+    || requiredSlots.some((key) => typeof selection.slot_templates[key] !== "string" || !Number.isInteger(selection.slot_indices[key]))) {
+    errors.push("LTP phrase selection does not match the selected step and variant");
+    return errors;
+  }
+
+  const safeCode = step === 1 ? "LTPNEXT25" : "";
+  const knownProgram = context.next_program;
+  const knownWhen = step === 2 && noProgram ? "" : selection.when ?? "";
+  const facts = {
+    first: context.player_first_name.trim(),
+    ltp_date: selection.ltp_date,
+    when: knownWhen,
+    program: knownProgram?.name ?? "",
+    promo: safeCode,
+  };
+  if (renderLtpStoredTemplate(selection.slot_templates.opener, facts) !== selection.opener) {
+    errors.push("Selected opener does not match the saved phrase-slot snapshot");
+  }
+  const expectedParts = [expectedOpener];
+  for (const key of requiredSlots.filter((item) => item !== "opener")) {
+    expectedParts.push(renderLtpStoredTemplate(selection.slot_templates[key], facts));
+  }
+  const expectedLink = noProgram ? RETENTION_NO_PROGRAM_BOOKING_URL : knownProgram?.signup_url ?? "";
+  if (!expectedLink) errors.push("LTP sequence context is missing the selected program's booking link");
+  const expectedBody = `${expectedParts.join(" ")} ${expectedLink}`;
+  if (text !== expectedBody) errors.push("Message differs from its immutable code-filled phrase selection");
+  if (!text.endsWith(expectedLink)) errors.push("The booking link must be the final text with no punctuation after it");
+
+  if (step === 1) {
+    if (!/\bLearn to Play\b/.test(text)) errors.push("Step 1 must name Learn to Play");
+    if (!context.trigger?.date || !text.includes(selection.ltp_date)) errors.push("Step 1 must contain the code-filled Learn to Play attendance date");
+    if (!context.promo || context.promo.code !== "LTPNEXT25") {
+      errors.push("Step 1 requires the live-verified LTPNEXT25 coupon");
+    } else {
+      const benefit = context.promo.offer_text;
+      const containsVerifiedBenefit = !!benefit && (
+        text.toLocaleLowerCase().includes(benefit.toLocaleLowerCase())
+        || /\b25% off\b/i.test(text)
+      );
+      if (!containsVerifiedBenefit) errors.push("Step 1 requires the verified 25% LTPNEXT25 benefit");
+      const claims = [...text.matchAll(PROMOTION_PERCENT_RE)];
+      if (claims.length !== 1 || Number(claims[0]?.[1]) !== 25) {
+        errors.push("Step 1 must contain exactly the verified 25% offer and no other percentage");
+      }
+      PROMOTION_BENEFIT_RE.lastIndex = 0;
+      if (PROMOTION_BENEFIT_RE.test(text)) errors.push("Step 1 cannot claim an unverified bonus or benefit");
+      PROMOTION_BENEFIT_RE.lastIndex = 0;
+    }
+    if (noProgram) {
+      if (context.next_program) errors.push("No-program step 1 cannot name a program or event");
+      if (!context.booking_url || context.booking_url !== RETENTION_NO_PROGRAM_BOOKING_URL) {
+        errors.push("No-program step 1 must use the approved generic booking link");
+      }
+    } else {
+      if (!knownProgram || !selection.when) errors.push("With-program step 1 needs its live-verified session and time");
+      if (context.promo?.code === "LTPNEXT25" && text.includes("LTPNEXT25") === false) {
+        errors.push("Step 1 must contain the exact LTPNEXT25 code");
+      }
+    }
+  } else {
+    if (context.promo || /\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:discount|coupon|promo(?:tion)?)\b/i.test(text)) {
+      errors.push("Step 2 cannot contain a promo code, coupon, percentage, discount, or offer");
+    }
+    if (noProgram) {
+      if (context.next_program) errors.push("No-program step 2 cannot name a next program or event");
+      if (!text.endsWith(RETENTION_NO_PROGRAM_BOOKING_URL)) errors.push("No-program step 2 must end with the club booking page");
+    } else if (!knownProgram || !selection.when) {
+      errors.push("With-program step 2 needs a fresh live-verified session and time");
+    }
+  }
+
+  const suppliedFacts = [
+    selection.opener,
+    selection.ltp_date,
+    selection.when ?? "",
+    knownProgram?.name ?? "",
+    expectedLink,
+    ...(step === 1 ? ["Learn to Play", "LTPNEXT25", context.promo?.offer_text ?? ""] : []),
+    ...(step === 2 && noProgram ? [selection.slot_templates.no_program_cta ?? ""] : []),
+  ].filter(Boolean).sort((a, b) => b.length - a.length);
+  let unexplained = text;
+  for (const fact of suppliedFacts) unexplained = unexplained.replace(fact, " ");
+  if (SEQUENCE_TIME_REFERENCE_RE.test(unexplained)) {
+    errors.push("Message may only mention the code-filled Learn to Play date and selected session time");
+  }
+  const urls = text.match(/(?:https?:\/\/|www\.)[^\s<>"']+|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s<>"']*)?/gi) ?? [];
+  if (urls.length !== 1 || !urls[0]?.replace(/[),.;!?]+$/g, "").includes(expectedLink.replace(/[),.;!?]+$/g, ""))) {
+    errors.push("Message must contain only its selected final booking URL");
+  }
+  if (noProgram && step === 1) {
+    const attendanceClause = `Learn to Play on ${selection.ltp_date}`;
+    const afterAttendance = text.replace(selection.opener, " ").replace(attendanceClause, " ");
+    const withoutVerifiedOffer = afterAttendance.replace(
+      renderLtpStoredTemplate(selection.slot_templates.offer_no_program, facts),
+      " ",
+    );
+    if (/\b(?:class(?:es)?|lesson(?:s)?|clinics?|drills?|guided play|programs?|events?|tournaments?|leagues?|camps?|sessions?|open play|practice)\b/i.test(withoutVerifiedOffer)) {
+      errors.push("No-program step 1 must not mention another program or activity");
+    }
+  }
+  return [...new Set(errors)];
+}
 
 function retentionVariant(context: RetentionContext): "with_program" | "no_program" | null {
   if (context.variant) return context.variant;
@@ -301,6 +436,11 @@ export function validateRetentionTextBody(
   }
   const errors = validateUrls(text, context);
   if (playbook.key === "ltp_followup") {
+    if (context.ltp_text) {
+      const sequenceErrors = validateLtpSequenceText(text, context, context.ltp_text);
+      if (sequenceErrors.length) throw new RetentionTextValidationError(sequenceErrors);
+      return text;
+    }
     const variant = retentionVariant(context);
     errors.push(...validateCommonLtpText(text, context));
     if (variant === "with_program") errors.push(...validateWithProgramLtpText(text, context));
@@ -362,6 +502,9 @@ export async function writeRetentionText(
   context: RetentionContext,
   playbook: RetentionPlaybook,
 ): Promise<RetentionTextResult> {
+  if (playbook.key === "ltp_followup") {
+    throw new Error("Learn to Play texts must use the code-only sequence phrase builder, not LLM generation");
+  }
   const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
     ?? process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Claude credentials are not configured (AI_INTEGRATIONS_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY)");

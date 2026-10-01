@@ -6,6 +6,7 @@ import {
   RETENTION_NO_PROGRAM_BOOKING_URL,
 } from "./retentionTypes";
 import type { RetentionContext, RetentionNextProgram, RetentionPlaybook } from "./retentionTypes";
+import type { RetentionSequenceStep } from "./retentionTypes";
 import {
   defaultRetentionPodplayBatchClient,
   type RetentionPodplayBatchClient,
@@ -242,6 +243,8 @@ export async function buildRetentionContext(args: {
   clubCache: Map<string, Promise<RetentionLiveClub>>;
   couponCache: Map<string, Promise<RetentionCouponValidation>>;
   batchClient?: RetentionPodplayBatchClient;
+  allocatedCapacityByEvent?: Map<string, number>;
+  sequenceStep?: RetentionSequenceStep;
 }): Promise<RetentionContext> {
   const {
     clubId, player, playbook, trigger, classmatesExternalIds,
@@ -367,6 +370,11 @@ export async function buildRetentionContext(args: {
       diagnostics.upcoming.filter_causes.full_event_ids.push(event.id);
       continue;
     }
+    const inCohort = args.allocatedCapacityByEvent?.get(event.id) ?? 0;
+    if (spots - inCohort <= 0) {
+      diagnostics.upcoming.filter_causes.full_event_ids.push(event.id);
+      continue;
+    }
     const eventDate = toEtDate(event.startTime);
     next_program = {
       event_id: event.id, name: event.name, start_time: event.startTime,
@@ -408,12 +416,13 @@ export async function buildRetentionContext(args: {
   }
 
   const variant = next_program ? "with_program" : "no_program";
-  const isNoProgramLtp = variant === "no_program" && playbook.key === "ltp_followup";
+  const isStepTwo = playbook.key === "ltp_followup" && args.sequenceStep === 2;
+  const isNoProgramLtp = !isStepTwo && variant === "no_program" && playbook.key === "ltp_followup";
   const couponCode = isNoProgramLtp ? "LTPNEXT25" : playbook.promo_code;
   const offerText = isNoProgramLtp ? RETENTION_LTP_VERIFIED_OFFER_TEXT : playbook.offer_text;
   let promo: RetentionContext["promo"] = null;
   let coupon_warning: string | null = null;
-  if (couponCode && (isNoProgramLtp || offerText)) {
+  if (!isStepTwo && couponCode && (isNoProgramLtp || offerText)) {
     const couponKey = `${clubId}:${couponCode}`;
     let couponPromise = couponCache.get(couponKey);
     if (!couponPromise) {

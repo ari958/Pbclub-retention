@@ -8,6 +8,7 @@ import {
   sendViaTwilio,
   setTwilioClientFactoryForTests,
   setTwilioClockForTests,
+  setLtpSequenceBatchOptionsFactoryForTests,
 } from "../twilio.js";
 
 type DbResult = { data?: any; error?: { message: string } | null };
@@ -20,6 +21,7 @@ const originalEnv = {
   retentionOnly: process.env.RETENTION_ONLY_MODE,
 };
 const originalSupabaseFrom = (supabase as any).from;
+const originalSupabaseRpc = (supabase as any).rpc;
 const MESSAGE_ID = "00000000-0000-4000-8000-000000000001";
 const PLAYER_ID = "00000000-0000-4000-8000-000000000002";
 const CLUB_ID = "00000000-0000-4000-8000-000000000003";
@@ -36,6 +38,8 @@ const state: {
   transportCalls: number;
   sends: Array<{ body: string; to: string }>;
   ledger: any[];
+  rpcCalls: Array<{ name: string; args: any }>;
+  sequenceTransitionError?: { message: string } | null;
 } = {
   message: {},
   player: {},
@@ -45,6 +49,7 @@ const state: {
   transportCalls: 0,
   sends: [],
   ledger: [],
+  rpcCalls: [],
 };
 
 function queryFor(table: string) {
@@ -108,6 +113,14 @@ function queryFor(table: string) {
   return query;
 }
 
+async function mockRpc(name: string, args: any) {
+  state.rpcCalls.push({ name, args });
+  if (name === "retention_sequence_transition" && state.sequenceTransitionError) {
+    return { data: null, error: state.sequenceTransitionError };
+  }
+  return { data: { sequence_status: args?.p_status ?? "ready" }, error: null };
+}
+
 function reset(options: {
   approved?: boolean;
   kill?: DbResult;
@@ -157,6 +170,8 @@ function reset(options: {
   state.transportCalls = 0;
   state.sends = [];
   state.ledger = [];
+  state.rpcCalls = [];
+  state.sequenceTransitionError = undefined;
 }
 
 async function invoke() {
@@ -183,6 +198,7 @@ setTwilioClientFactoryForTests(() => ({
   },
 } as any));
 (supabase as any).from = (table: string) => queryFor(table);
+(supabase as any).rpc = mockRpc;
 
 test("unapproved message is blocked before transport", async () => {
   reset({ approved: false });
@@ -209,6 +225,38 @@ test("approved retention candidate and approved linked message can dispatch thro
   assert.equal(state.transportCalls, 1);
   assert.equal(state.sends.length, 1);
   assert.equal(state.message.status, "sent");
+});
+
+test("LTP dispatch fails closed before transport until sequence schema readiness passes", async () => {
+  reset({
+    candidate: {
+      id: "00000000-0000-4000-8000-000000000004",
+      message_id: MESSAGE_ID,
+      player_id: PLAYER_ID,
+      club_id: CLUB_ID,
+      playbook_key: "ltp_followup",
+      status: "approved",
+      step: 1,
+      sequence_id: "00000000-0000-4000-8000-000000000005",
+      sequence_status: "active",
+      context: { ltp_text: { step: 1 } },
+      updated_at: "2026-01-01T12:00:00.000Z",
+    },
+  });
+  (supabase as any).rpc = async (name: string) => {
+    assert.equal(name, "retention_sequence_ready");
+    return { data: false, error: null };
+  };
+  try {
+    await assert.rejects(invoke(), /migration 013 is installed and ready/);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.sends.length, 0);
+    assert.equal(state.ledger.length, 0);
+    assert.equal(state.message.dispatch_claimed_at, null);
+    assert.equal(state.message.dispatch_token, null);
+  } finally {
+    (supabase as any).rpc = mockRpc;
+  }
 });
 
 test("retention dispatch requires approved candidate state and linked-message approval timestamp", async () => {
@@ -358,6 +406,25 @@ test("live transport failure retains the dispatch claim for reconciliation", asy
   assert.ok(state.message.dispatch_claimed_at);
 });
 
+test("synchronous Twilio 21610 failure persists permanent opt-out and exits the LTP sequence", async () => {
+  const error = Object.assign(new Error("Recipient opted out"), { code: 21610 });
+  reset({ transportError: error });
+  let sendError: unknown;
+  await assert.rejects(invoke(), (failure: any) => {
+    sendError = failure;
+    return /Recipient opted out/.test(failure.message);
+  });
+  await recordSmsDispatchFailure(sendError);
+  assert.equal(state.message.status, "failed");
+  assert.equal(state.player.opted_out, true);
+  assert.equal(state.player.sms_opt_in, false);
+  assert.ok(state.rpcCalls.some((call) =>
+    call.name === "retention_sequence_transition"
+    && call.args.p_status === "exited_opt_out"
+    && call.args.p_reason === "twilio_error_21610",
+  ));
+});
+
 test("redirected live send is ledgered as a test without original-player contact", async () => {
   reset();
   state.player.last_outbound_at = "2026-01-15T16:59:00.000Z";
@@ -384,6 +451,8 @@ test("redirected live send is ledgered as a test without original-player contact
 test("test environment is restored", () => {
   setTwilioClientFactoryForTests(null);
   setTwilioClockForTests(null);
+  setLtpSequenceBatchOptionsFactoryForTests(null);
+  (supabase as any).rpc = originalSupabaseRpc;
   if (originalEnv.nodeEnv === undefined) delete process.env.NODE_ENV;
   else process.env.NODE_ENV = originalEnv.nodeEnv;
   if (originalEnv.smsLive === undefined) delete process.env.SMS_LIVE;

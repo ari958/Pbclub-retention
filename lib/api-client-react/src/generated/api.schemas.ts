@@ -83,6 +83,22 @@ export type RetentionContextPromo = {
 } | null;
 
 /**
+ * Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.
+ * @nullable
+ */
+export type RetentionContextLtpText = {
+  step: 1 | 2;
+  /** @minimum 0 */
+  seed_nonce: number;
+  slot_indices: { [key: string]: number };
+  opener: string;
+  slot_templates: { [key: string]: string };
+  ltp_date: string;
+  /** @nullable */
+  when: string | null;
+} | null;
+
+/**
  * Context fields are optional for compatibility with legacy stored candidates. A missing variant is interpreted as with_program only when next_program is present; incomplete legacy contexts do not imply no_program.
  */
 export interface RetentionContext {
@@ -130,7 +146,43 @@ export interface RetentionContext {
   /** @nullable */
   generated_preview?: string | null;
   diagnostics?: unknown;
+  /**
+   * Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.
+   * @nullable
+   */
+  ltp_text?: RetentionContextLtpText;
   [key: string]: unknown;
+}
+
+/**
+ * @minItems 1
+ * @maxItems 32
+ */
+export type LtpPhraseArray = string[];
+
+export interface LtpStepOnePhraseSlots {
+  opener: LtpPhraseArray;
+  thanks: LtpPhraseArray;
+  next_step: LtpPhraseArray;
+  offer: LtpPhraseArray;
+  offer_no_program: LtpPhraseArray;
+}
+
+export interface LtpStepTwoPhraseSlots {
+  opener: LtpPhraseArray;
+  nudge: LtpPhraseArray;
+  next_step: LtpPhraseArray;
+  no_program_cta: LtpPhraseArray;
+}
+
+export interface LtpSequenceConfig {
+  /**
+   * @minimum 7
+   * @maximum 30
+   */
+  step2_gap_days: number;
+  step1: LtpStepOnePhraseSlots;
+  step2: LtpStepTwoPhraseSlots;
 }
 
 export interface RetentionPlaybook {
@@ -148,7 +200,21 @@ export interface RetentionPlaybook {
    * @maximum 100
    */
   holdout_pct: number;
+  ltp_sequence_config?: LtpSequenceConfig | null;
 }
+
+/**
+ * @nullable
+ */
+export type RetentionMessageRetentionDeliveryKind =
+  | (typeof RetentionMessageRetentionDeliveryKind)[keyof typeof RetentionMessageRetentionDeliveryKind]
+  | null;
+
+export const RetentionMessageRetentionDeliveryKind = {
+  real: "real",
+  test: "test",
+  simulated: "simulated",
+} as const;
 
 export interface RetentionMessage {
   id: string;
@@ -163,6 +229,8 @@ export interface RetentionMessage {
   /** @nullable */
   sent_at?: string | null;
   simulated?: boolean;
+  /** @nullable */
+  retention_delivery_kind?: RetentionMessageRetentionDeliveryKind;
 }
 
 export type RetentionCandidateStatus =
@@ -177,6 +245,29 @@ export const RetentionCandidateStatus = {
   manual_edit: "manual_edit",
 } as const;
 
+export type RetentionCandidateStep =
+  (typeof RetentionCandidateStep)[keyof typeof RetentionCandidateStep];
+
+export const RetentionCandidateStep = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+} as const;
+
+/**
+ * @nullable
+ */
+export type RetentionCandidateSequenceStatus =
+  | (typeof RetentionCandidateSequenceStatus)[keyof typeof RetentionCandidateSequenceStatus]
+  | null;
+
+export const RetentionCandidateSequenceStatus = {
+  active: "active",
+  paused_reply: "paused_reply",
+  exited_booked: "exited_booked",
+  exited_opt_out: "exited_opt_out",
+  completed: "completed",
+} as const;
+
 export type RetentionCandidatePlayer = {
   /** @nullable */
   name?: string | null;
@@ -188,6 +279,27 @@ export interface RetentionCandidate {
   playbook_key: string;
   trigger_event_id: string;
   status: RetentionCandidateStatus;
+  step?: RetentionCandidateStep;
+  /** @nullable */
+  sequence_id?: string | null;
+  /** @nullable */
+  sequence_status?: RetentionCandidateSequenceStatus;
+  /** @nullable */
+  exited_at?: string | null;
+  /** @nullable */
+  exit_reason?: string | null;
+  /** @nullable */
+  booked_event_id?: string | null;
+  /**
+   * Present on step-two approval cards for operator review.
+   * @nullable
+   */
+  step1_text?: string | null;
+  /**
+   * Real step-one sent timestamp displayed on step-two cards.
+   * @nullable
+   */
+  step1_sent_at?: string | null;
   context: RetentionContext;
   player?: RetentionCandidatePlayer;
   message?: RetentionMessage | null;
@@ -227,6 +339,8 @@ export interface RetentionReview {
   schema_ready: boolean;
   /** Readiness of retry-context support from migration 012, independent of schema_ready */
   retry_context_ready: boolean;
+  /** Readiness of LTP sequence safety, slot configuration, and atomic capacity/dispatch RPCs from migration 013. */
+  sequence_schema_ready: boolean;
   error?: string;
   counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];
@@ -304,6 +418,29 @@ export const RetentionGeneratedDraftStatus = {
   skipped: "skipped",
 } as const;
 
+export type RetentionGeneratedDraftStep =
+  (typeof RetentionGeneratedDraftStep)[keyof typeof RetentionGeneratedDraftStep];
+
+export const RetentionGeneratedDraftStep = {
+  NUMBER_1: 1,
+  NUMBER_2: 2,
+} as const;
+
+/**
+ * @nullable
+ */
+export type RetentionGeneratedDraftSequenceStatus =
+  | (typeof RetentionGeneratedDraftSequenceStatus)[keyof typeof RetentionGeneratedDraftSequenceStatus]
+  | null;
+
+export const RetentionGeneratedDraftSequenceStatus = {
+  active: "active",
+  paused_reply: "paused_reply",
+  exited_booked: "exited_booked",
+  exited_opt_out: "exited_opt_out",
+  completed: "completed",
+} as const;
+
 export interface RetentionGeneratedDraft {
   candidate_id: string;
   player_id: string;
@@ -318,6 +455,9 @@ export interface RetentionGeneratedDraft {
    */
   body: string | null;
   context: RetentionContext;
+  step?: RetentionGeneratedDraftStep;
+  /** @nullable */
+  sequence_status?: RetentionGeneratedDraftSequenceStatus;
   validation_errors?: string[];
 }
 
@@ -380,16 +520,23 @@ export interface RetentionRegenerateResult {
   validation_errors?: string[];
 }
 
-export interface RetentionRetryContextSingleInput {
-  [key: string]: unknown;
-}
-
-export interface RetentionRetryContextBatchInput {
+export interface RetentionRegenerateBatchInput {
   /**
    * @minItems 1
    * @maxItems 50
    */
   candidate_ids: string[];
+}
+
+export interface RetentionReshuffleInput {
+  [key: string]: unknown;
+}
+
+export interface RetentionLtpSequenceOperationError {
+  /** False when the sequence schema readiness check failed; true after it passed. */
+  schema_ready: boolean;
+  error: string;
+  [key: string]: unknown;
 }
 
 export interface RetentionRetryContextFailure {
@@ -423,6 +570,30 @@ export interface RetentionPodplayTelemetry {
   /** @minimum 0 */
   rate_limit_count: number;
   retries: RetentionPodplayRetry[];
+}
+
+export interface RetentionRegenerateBatchResult {
+  schema_ready: boolean;
+  results: RetentionRegenerateResult[];
+  failures?: RetentionRetryContextFailure[];
+  podplay: RetentionPodplayTelemetry;
+  [key: string]: unknown;
+}
+
+export interface RetentionPlaybookConfigInput {
+  ltp_sequence_config: LtpSequenceConfig;
+}
+
+export interface RetentionRetryContextSingleInput {
+  [key: string]: unknown;
+}
+
+export interface RetentionRetryContextBatchInput {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  candidate_ids: string[];
 }
 
 export interface RetentionRetryContextEnvelope {
@@ -484,10 +655,6 @@ export type GenerateRetentionDraftsParams = {
   slug?: RetentionSlugParameter;
 };
 
-export type GenerateRetentionDrafts400 = {
-  error: string;
-};
-
 export type UpdateRetentionKillSwitchParams = {
   /**
    * Club UUID; supply either clubId or slug
@@ -533,6 +700,47 @@ export type RegenerateRetentionDraftParams = {
 };
 
 export type RegenerateRetentionDraft409 = {
+  error: string;
+};
+
+export type RegenerateRetentionLtpBatchParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type RegenerateRetentionLtpBatch400 = {
+  error: string;
+};
+
+export type ReshuffleRetentionLtpDraftParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type UpdateRetentionLtpPhraseConfigParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type UpdateRetentionLtpPhraseConfig400 = {
   error: string;
 };
 

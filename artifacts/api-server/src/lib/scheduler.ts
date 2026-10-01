@@ -15,7 +15,7 @@ import { batchComputePlayerTiming } from "./playerTiming";
 import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 import { isRetentionOnlyMode } from "./retentionPolicy";
-import { generateRetentionDrafts } from "./retentionEngine";
+import { generateDueLtpStep2Drafts, generateRetentionDrafts } from "./retentionEngine";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -149,6 +149,24 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
         } catch (draftError) {
           logger.error({ err: draftError }, "[scheduler] retention draft generation failed after successful event sync");
           await appendJobLog(JOB_NIGHTLY, `Retention draft generation failed (non-fatal): ${draftError instanceof Error ? draftError.message : String(draftError)}`);
+        }
+        // Step 2 is an independent, migration-gated draft-only cohort. It may
+        // create only an unscheduled draft and still requires later approval.
+        try {
+          const stepTwo = await generateDueLtpStep2Drafts(CLUB_ID);
+          const summary =
+            `LTP step-2 drafts generated — created=${stepTwo.results.length}, ` +
+            `blocked=${stepTwo.failures.length}`;
+          await appendJobLog(JOB_NIGHTLY, summary);
+          if (stepTwo.failures.length) {
+            logger.warn({ failures: stepTwo.failures }, "[scheduler] LTP step-2 draft generation reported item failures");
+          }
+        } catch (stepTwoError) {
+          logger.error({ err: stepTwoError }, "[scheduler] LTP step-2 draft generation failed after successful event sync");
+          await appendJobLog(
+            JOB_NIGHTLY,
+            `LTP step-2 draft generation failed (non-fatal): ${stepTwoError instanceof Error ? stepTwoError.message : String(stepTwoError)}`,
+          );
         }
       } catch (err: any) {
         const wasCancelled = err.name === "CancelledError";

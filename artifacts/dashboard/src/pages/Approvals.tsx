@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { ApprovalCard, btn } from "@/components/ApprovalCard";
+import { LtpSequenceConfigEditor } from "@/components/LtpSequenceConfigEditor";
 import { useToast } from "@/components/Toast";
 import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
 import { requestApprovalList } from "@/lib/approvalListRequest";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
 import { combineRetryContextEnvelopes } from "@/lib/retryContextEnvelope";
-import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type RetryContextEnvelope } from "@/lib/retentionApi";
+import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type LtpSequenceConfig, type RetryContextEnvelope } from "@/lib/retentionApi";
+import { canApproveLtpCandidate, canReshuffleLtpCandidate, isLtpCandidate } from "@/lib/ltpPhraseSlots";
 
 const D = { bg: "#161b22", card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", orange: "#d4813a", orangeBg: "rgba(212,129,58,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -21,6 +23,7 @@ export default function Approvals() {
   const [data, setData] = useState<ApprovalsResponse | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [lookbackDays, setLookbackDays] = useState<typeof LOOKBACK_DAY_OPTIONS[number]>(DEFAULT_LOOKBACK_DAYS);
@@ -44,6 +47,9 @@ export default function Approvals() {
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const [retryContextBusy, setRetryContextBusy] = useState(false);
   const [retryContextReport, setRetryContextReport] = useState<RetryContextEnvelope | null>(null);
+  const [ltpBatchBusy, setLtpBatchBusy] = useState(false);
+  const [ltpReshufflingId, setLtpReshufflingId] = useState<string | null>(null);
+  const [ltpConfigBusyKey, setLtpConfigBusyKey] = useState<string | null>(null);
   const setEditing = useCallback((id: string, on: boolean) => {
     setEditingIds((s) => { if (s.has(id) === on) return s; const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
   }, []);
@@ -74,7 +80,7 @@ export default function Approvals() {
     setSelected((s) => { const n = new Set([...s].filter((id) => drafted.has(id))); return n.size === s.size ? s : n; });
   }, [data, loadedFilter]);
 
-  const withBusy = async (id: string, fn: () => Promise<unknown>, ok: string) => {
+   const withBusy = async (id: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy((b) => new Set(b).add(id));
     try { await fn(); toast.success(ok); await load(); return true; }
     catch (e) {
@@ -93,6 +99,10 @@ export default function Approvals() {
   };
 
   const generate = async () => {
+    if (!ltpSequenceReady) {
+      toast.info("Apply migration 013 before generating LTP drafts. No drafts were created.");
+      return;
+    }
     setGenerating(true);
     try {
       const r = await retentionApi.generate(slug, lookbackDays);
@@ -179,6 +189,63 @@ export default function Approvals() {
     }
   };
 
+  const regenerateLtpBatch = async (ids: string[]) => {
+    if (!data?.sequence_schema_ready || ltpBatchBusy || ltpReshufflingId || ltpConfigBusyKey
+      || regeneratingId || generating || busy.size > 0 || retryContextBusy || ids.length === 0) return;
+    setLtpBatchBusy(true);
+    setSelected(new Set());
+    try {
+      const result = await retentionApi.regenerateLtpBatch(slug, ids);
+      const statusCounts = result.results.reduce<Record<string, number>>((counts, candidate) => {
+        counts[candidate.status] = (counts[candidate.status] ?? 0) + 1;
+        return counts;
+      }, {});
+      const failures = result.failures?.length ?? 0;
+      const statuses = Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no candidates rebuilt";
+      const message = `LTP cohort rebuild: ${statuses}${failures ? `, ${failures} failures` : ""}. Drafts only; no approvals or sends.`;
+      if (failures || result.results.some((candidate) => candidate.status !== "drafted")) toast.info(message);
+      else toast.success(message);
+      await load();
+    } catch (e) {
+      toast.error(e instanceof Error ? `Could not rebuild the drafted LTP cohort: ${e.message}` : "Could not rebuild the drafted LTP cohort");
+      await load();
+    } finally {
+      setLtpBatchBusy(false);
+    }
+  };
+
+  const reshuffleLtp = async (candidate: Candidate) => {
+    if (!data?.sequence_schema_ready || !canReshuffleLtpCandidate(candidate, true)
+      || ltpReshufflingId || ltpBatchBusy || regeneratingId || busy.size > 0) return;
+    setLtpReshufflingId(candidate.id);
+    try {
+      const result = await retentionApi.reshuffleLtp(slug, candidate.id);
+      if (result.status === "drafted") toast.success("LTP phrase slots reshuffled. Review the new draft; it remains unapproved and unsent.");
+      else toast.info(`Reshuffle returned ${result.status.replace("_", " ")}${result.reason ? `: ${result.reason}` : ""}. Review the updated candidate.`);
+    } catch (e) {
+      toast.error(e instanceof Error ? `Could not reshuffle this LTP draft: ${e.message}` : "Could not reshuffle this LTP draft");
+    } finally {
+      try { await load(); }
+      finally { setLtpReshufflingId(null); }
+    }
+  };
+
+  const updateLtpConfig = async (key: string, config: LtpSequenceConfig): Promise<boolean> => {
+    if (!data?.sequence_schema_ready || ltpConfigBusyKey) return false;
+    setLtpConfigBusyKey(key);
+    try {
+      await retentionApi.updatePlaybookSequenceConfig(slug, key, config);
+      toast.success("Stored LTP phrase configuration saved. Existing drafted message text is unchanged.");
+      await load();
+      return true;
+    } catch (e) {
+      toast.error(e instanceof Error ? `Could not save LTP phrase configuration: ${e.message}` : "Could not save LTP phrase configuration");
+      return false;
+    } finally {
+      setLtpConfigBusyKey(null);
+    }
+  };
+
   const groups = useMemo(() => {
     const m = new Map<string, Candidate[]>();
     for (const c of data?.candidates ?? []) {
@@ -222,6 +289,19 @@ export default function Approvals() {
 
   const confirmBulk = async () => {
     if (!bulkKey || !snap || !needOperator() || snap.ids.length === 0) return;
+    const ltpIds = snap.candidates.filter(isLtpCandidate).map((candidate) => candidate.id);
+    if (ltpIds.length > 0) {
+      const current = new Map((data?.candidates ?? []).map((candidate) => [candidate.id, candidate]));
+      if (!ltpSequenceReady || ltpIds.some((id) => {
+        const candidate = current.get(id);
+        return !candidate || !canApproveLtpCandidate(candidate, true);
+      })) {
+        toast.error("One or more LTP drafts are no longer active, ready, or slot-based. Nothing was approved. Refresh the list and review the sequence again.");
+        closeBulk();
+        await load();
+        return;
+      }
+    }
     setBulkBusy(true);
     try {
       const r = await retentionApi.bulk(slug, bulkKey, operator.trim(), snap.ids, snap.bodies);
@@ -240,14 +320,60 @@ export default function Approvals() {
 
   const warnings = [...(data?.warnings ?? []), ...(data?.error ? [data.error] : [])];
   const couponFails = (data?.candidates ?? []).filter((c) => c.status === "drafted" && c.context.coupon_warning).length;
+  const ltpSequenceReady = data?.sequence_schema_ready === true;
+  const ltpPlaybook = data?.playbooks.find((playbook) => playbook.key === "ltp_followup");
 
   return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
-      <Sidebar />
-      <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px", borderBottom: `1px solid ${D.border}`, background: D.card, position: "sticky", top: 0, zIndex: 5 }}>
+    <div className="approvals-page" style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
+      <style>{`
+        @media (max-width: 640px) {
+          .approvals-page { width: 100%; height: 100dvh !important; flex-direction: column !important; overflow: hidden; }
+          .approvals-sidebar-nav { display: block !important; flex: 0 0 auto; width: 100%; }
+          .approvals-mobile-menu { display: block !important; width: 100%; min-height: 44px; padding: 10px 14px; border: 0; border-bottom: 1px solid ${D.border}; background: ${D.card}; color: ${D.text}; text-align: left; font: 12px var(--font-mono); cursor: pointer; }
+          .approvals-sidebar-nav > aside { display: none !important; }
+          .approvals-sidebar-nav.is-open > aside { display: flex !important; position: static !important; top: auto !important; left: auto !important; width: 100% !important; min-width: 0 !important; height: auto !important; max-height: 52dvh; overflow-y: auto; border-right: 0 !important; border-bottom: 1px solid ${D.border}; }
+          .approvals-shell { width: 100%; min-width: 0; margin-left: 0 !important; flex: 1 1 auto !important; overflow: hidden; }
+          .approvals-header { height: auto !important; min-height: 52px; align-items: flex-start !important; flex-direction: column; justify-content: flex-start !important; gap: 9px; padding: 10px 14px !important; position: relative !important; }
+          .approvals-header-actions { width: 100%; max-width: 100%; display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 8px !important; }
+          .approvals-header-actions > * { max-width: 100%; }
+          .approvals-content { min-width: 0; overflow-x: hidden !important; padding: 14px !important; gap: 12px !important; }
+          .approvals-content > * { min-width: 0; max-width: 100%; box-sizing: border-box; }
+          .approvals-status-tabs { flex-wrap: wrap; }
+          .approvals-status-tabs button { padding: 8px 9px !important; }
+          .approval-group-actions { width: 100%; margin-left: 0 !important; flex-wrap: wrap; }
+          .approval-group-actions button { max-width: 100%; white-space: normal; }
+          .approval-card { width: 100%; min-width: 0; }
+          .approval-card-header { min-width: 0; flex-wrap: wrap; }
+          .approval-card-grid { min-width: 0; grid-template-columns: minmax(0, 1fr) !important; }
+          .approval-card-copy { min-width: 0; border-right: 0 !important; border-bottom: 1px solid ${D.border}; }
+          .approval-card-footer { min-width: 0; }
+          .approval-card-footer button { max-width: 100%; white-space: normal; }
+          .approval-card-footer > span { max-width: 100%; overflow-wrap: anywhere; }
+          .approval-fact-value { min-width: 0; overflow-wrap: anywhere; word-break: break-word; }
+          .approvals-content a { overflow-wrap: anywhere; word-break: break-word; }
+          .approvals-content textarea, .approvals-content input, .approvals-content select { max-width: 100%; }
+          .approvals-content details > summary { overflow-wrap: anywhere; }
+        }
+        @media (min-width: 641px) {
+          .approvals-sidebar-nav { display: contents; }
+          .approvals-mobile-menu { display: none; }
+        }
+      `}</style>
+      <div className={`approvals-sidebar-nav${mobileNavOpen ? " is-open" : ""}`}>
+        <button
+          type="button"
+          className="approvals-mobile-menu"
+          aria-expanded={mobileNavOpen}
+          onClick={() => setMobileNavOpen((open) => !open)}
+        >
+          {mobileNavOpen ? "Close navigation" : "Menu · Navigation"}
+        </button>
+        <Sidebar />
+      </div>
+      <div className="approvals-shell" style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+        <header className="approvals-header" style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 28px", borderBottom: `1px solid ${D.border}`, background: D.card, position: "sticky", top: 0, zIndex: 5 }}>
           <span style={{ fontWeight: 600, fontSize: 14, color: D.text }}>Approvals</span>
-          <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span className="approvals-header-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <span style={{ fontFamily: mono, fontSize: 11, color: D.faint }} data-testid="text-updated">
               {updatedAt ? `refreshed ${updatedAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", second: "2-digit" })}` : ""}
             </span>
@@ -262,29 +388,31 @@ export default function Approvals() {
                 aria-label="Draft generation lookback"
                 data-testid="select-lookback-days"
                 value={lookbackDays}
-                disabled={generating || regeneratingId !== null}
+                disabled={!ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy}
+                title={!ltpSequenceReady ? "Apply migration 013 before generating LTP drafts" : undefined}
                 onChange={(event) => setLookbackDays(Number(event.target.value) as typeof LOOKBACK_DAY_OPTIONS[number])}
                 style={{ background: D.card, color: D.text, border: `1px solid ${D.border}`, borderRadius: 5, padding: "6px 8px", fontSize: 12 }}
               >
                 {LOOKBACK_DAY_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
               </select>
             </label>
-            <button style={btn(true, generating || regeneratingId !== null)} disabled={generating || regeneratingId !== null} onClick={generate} data-testid="button-generate">
+            <button style={btn(true, !ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy)} disabled={!ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy} title={!ltpSequenceReady ? "Apply migration 013 before generating LTP drafts" : undefined} onClick={generate} data-testid="button-generate">
               {generating ? "Creating drafts..." : "Generate drafts (nothing is sent)"}
             </button>
           </span>
         </header>
 
-        <main style={{ flex: 1, overflowY: "auto", padding: "20px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
+        <main className="approvals-content" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
           {data && data.mode.sms_live === false && (
             <div role="alert" data-testid="banner-simulated" style={{ background: D.accentBg, border: "1px solid rgba(232,168,56,0.3)", borderRadius: 7, padding: "10px 14px", color: D.accent, fontSize: 12, lineHeight: 1.6 }}>
               Live sending is off. Approved texts are consumed by the queue as simulated sends and will not be delivered. Do not approve the acceptance-test texts until live sending and the operator test override are both on.
             </div>
           )}
-          {(warnings.length > 0 || couponFails > 0 || (data && (!data.schema_ready || !data.retry_context_ready))) && (
+          {(warnings.length > 0 || couponFails > 0 || (data && (!data.schema_ready || !data.retry_context_ready || !ltpSequenceReady))) && (
             <div role="alert" data-testid="banner-warning" style={{ background: D.orangeBg, border: "1px solid rgba(212,129,58,0.3)", borderRadius: 7, padding: "10px 14px", color: D.orange, fontSize: 12, lineHeight: 1.6 }}>
               {data && !data.schema_ready && <div>Retention tables are unavailable (schema not ready). Approvals cannot be loaded or changed until the database is migrated.</div>}
               {data && !data.retry_context_ready && <div>Migration 012 is missing or not ready. Retry context is disabled until the retry-context schema is migrated.</div>}
+              {data && !ltpSequenceReady && <div data-testid="warning-ltp-sequence-unready">Migration 013 is missing or not ready. LTP step approvals, active-sequence phrase reshuffling, cohort rebuild, and phrase-configuration edits remain disabled. Other playbooks are unaffected.</div>}
               {couponFails > 0 && <div>{couponFails} draft{couponFails === 1 ? "" : "s"} failed the coupon check. The promo code may not work; review before approving.</div>}
               {warnings.map((w, i) => <div key={i}>{w}</div>)}
             </div>
@@ -318,7 +446,21 @@ export default function Approvals() {
             </div>
           </div>
 
-          <div style={{ display: "flex", borderBottom: `1px solid ${D.border}` }}>
+          {ltpPlaybook && (
+            <section aria-label="Shared global LTP playbook configuration" data-testid="panel-ltp-global-config" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ fontSize: 11, color: D.muted }}>
+                Shared configuration for {ltpPlaybook.name}. Phrase edits affect future builds and regenerations; saved draft text stays unchanged. The step 2 gap applies to future eligibility checks, including active sequences.
+              </div>
+              <LtpSequenceConfigEditor
+                playbook={ltpPlaybook}
+                schemaReady={ltpSequenceReady}
+                busy={ltpConfigBusyKey === ltpPlaybook.key}
+                onSave={updateLtpConfig}
+              />
+            </section>
+          )}
+
+          <div className="approvals-status-tabs" style={{ display: "flex", borderBottom: `1px solid ${D.border}` }}>
             {(["all", "drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as ApprovalListStatus[]).map((k) => (
               <button key={k} onClick={() => setFilter(k)} disabled={regeneratingId !== null} data-testid={`tab-${k}`}
                 style={{ padding: "8px 14px", background: "transparent", border: "none", borderBottom: filter === k ? `2px solid ${D.accent}` : "2px solid transparent", color: filter === k ? D.text : D.muted, fontSize: 13, cursor: "pointer", marginBottom: -1 }}>
@@ -389,9 +531,19 @@ export default function Approvals() {
             [...groups.entries()].map(([key, list]) => {
               const pb = data?.playbooks.find((p) => p.key === key);
               const drafted = list.filter((c) => c.status === "drafted");
+              const selectableDrafted = drafted.filter((c) => canApproveLtpCandidate(c, ltpSequenceReady));
               const retryable = list.filter((c) => isRetryContextEligible(c.status, c.context.reason));
-              const sel = drafted.filter((c) => selected.has(c.id));
+              const sel = selectableDrafted.filter((c) => selected.has(c.id));
               const groupEditing = list.some((c) => editingIds.has(c.id));
+              const ltpStepOneDrafts = key === "ltp_followup" && data
+                ? data.candidates.filter((c) => c.playbook_key === key
+                  && c.status === "drafted"
+                  && (c.step ?? c.context.ltp_text?.step ?? 1) === 1
+                  && c.sequence_status === "active")
+                : [];
+              const canShowLtpBatch = key === "ltp_followup"
+                && (loadedFilter === "all" || loadedFilter === "drafted")
+                && ltpStepOneDrafts.length > 0;
               return (
                 <section key={key} data-testid={`group-${key}`} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
@@ -399,7 +551,7 @@ export default function Approvals() {
                     <span style={{ fontFamily: mono, fontSize: 10, color: D.faint }}>
                       {key}{pb && !pb.enabled ? " / disabled" : ""}{pb?.promo_code ? ` / code ${pb.promo_code}` : ""}{pb && pb.holdout_pct > 0 ? ` / holdout ${pb.holdout_pct}%` : ""}
                     </span>
-                    <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
+                    <span className="approval-group-actions" style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
                       {retryable.length > 0 && (
                         <button
                           style={btn(false, busy.size > 0 || retryContextBusy || generating || regeneratingId !== null || !data?.retry_context_ready)}
@@ -413,24 +565,37 @@ export default function Approvals() {
                       )}
                       {drafted.length > 0 && (
                         <>
-                          <button style={btn(false, regeneratingId !== null || busy.size > 0)} onClick={() => setSelected((s) => { const n = new Set(s); const all = drafted.every((c) => n.has(c.id)); drafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={regeneratingId !== null || busy.size > 0} data-testid={`button-select-${key}`}>
-                            {drafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
+                          <button style={btn(false, regeneratingId !== null || busy.size > 0 || ltpBatchBusy || selectableDrafted.length === 0)} onClick={() => setSelected((s) => { const n = new Set(s); const all = selectableDrafted.every((c) => n.has(c.id)); selectableDrafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={regeneratingId !== null || busy.size > 0 || ltpBatchBusy || selectableDrafted.length === 0} data-testid={`button-select-${key}`}>
+                            {selectableDrafted.length === 0 ? "No LTP drafts ready for bulk approval" : selectableDrafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
                           </button>
                           <button style={btn(true, sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0)} disabled={sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0} title={groupEditing ? "Finish or cancel open edits in this group first" : undefined} onClick={() => openBulk(key)} data-testid={`button-bulk-${key}`}>
                             Review bulk approval ({sel.length})
                           </button>
                         </>
                       )}
+                      {canShowLtpBatch && (
+                        <button
+                          style={btn(false, !ltpSequenceReady || ltpBatchBusy || groupEditing || busy.size > 0 || generating || regeneratingId !== null || ltpReshufflingId !== null || ltpConfigBusyKey !== null)}
+                          disabled={!ltpSequenceReady || ltpBatchBusy || groupEditing || busy.size > 0 || generating || regeneratingId !== null || ltpReshufflingId !== null || ltpConfigBusyKey !== null}
+                          title={!ltpSequenceReady ? "Apply migration 013 before rebuilding the LTP cohort" : groupEditing ? "Save or cancel the current edit first" : undefined}
+                          onClick={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id))}
+                          data-testid="button-regenerate-ltp-cohort"
+                        >
+                          {ltpBatchBusy ? "Rebuilding LTP cohort..." : `Rebuild all drafted step 1s (${ltpStepOneDrafts.length})`}
+                        </button>
+                      )}
                     </span>
                   </div>
                   {list.map((c) => (
-                    <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating} selected={selected.has(c.id)}
+                    <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
                       onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}
                       onApprove={() => { if (!editingIds.has(c.id) && c.message && needOperator()) withBusy(c.id, () => retentionApi.approve(slug, c.id, operator.trim(), c.message?.body ?? ""), "Approved and scheduled"); }}
                       onSkip={() => withBusy(c.id, () => retentionApi.skip(slug, c.id), "Skipped")}
-                       onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id}
-                       onRetryContext={() => retryContext([c.id], true)} retryContextReady={Boolean(data?.retry_context_ready)} />
+                        onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id}
+                        onReshuffle={() => { void reshuffleLtp(c); }} reshuffling={ltpReshufflingId === c.id}
+                        onLtpBatchRegenerate={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id))}
+                        onRetryContext={() => retryContext([c.id], true)} retryContextReady={Boolean(data?.retry_context_ready)} sequenceSchemaReady={ltpSequenceReady} />
                   ))}
                 </section>
               );

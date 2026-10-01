@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionContextLtpText } from "./retentionContextLtpText";
 import type { RetentionContextPromo } from "./retentionContextPromo";
 import type { RetentionContextTrigger } from "./retentionContextTrigger";
 import type { RetentionContextVariant } from "./retentionContextVariant";
@@ -58,5 +59,10 @@ export interface RetentionContext {
   /** @nullable */
   generated_preview?: string | null;
   diagnostics?: unknown;
+  /**
+   * Selected template slots and code-filled facts for deterministic LTP copy; absent on legacy model-built drafts.
+   * @nullable
+   */
+  ltp_text?: RetentionContextLtpText;
   [key: string]: unknown;
 }

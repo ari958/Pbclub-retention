@@ -3,6 +3,7 @@ import { canApprove } from "@/lib/approvalGuards";
 import type { Candidate } from "@/lib/retentionApi";
 import { approvalVariantPresentation } from "@/lib/approvalVariant";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
+import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpTriggerFact, isLtpCandidate } from "@/lib/ltpPhraseSlots";
 
 const D = { card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", green: "#2ea043", greenBg: "rgba(46,160,67,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -23,9 +24,9 @@ function fmt(iso: string | null | undefined) {
 
 function Fact({ k, v, warn }: { k: string; v: React.ReactNode; warn?: boolean }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "5px 0", borderBottom: `1px solid ${D.border}`, fontSize: 12 }}>
+    <div className="approval-fact" style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "5px 0", borderBottom: `1px solid ${D.border}`, fontSize: 12 }}>
       <span style={{ color: D.faint, fontFamily: mono, fontSize: 10, textTransform: "uppercase", letterSpacing: "0.05em", paddingTop: 2 }}>{k}</span>
-      <span style={{ color: warn ? D.redText : D.text, textAlign: "right", wordBreak: "break-word" }}>{v}</span>
+      <span className="approval-fact-value" style={{ color: warn ? D.redText : D.text, textAlign: "right", wordBreak: "break-word" }}>{v}</span>
     </div>
   );
 }
@@ -41,12 +42,16 @@ function formatIssue(issue: unknown): string {
   try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
 }
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady }: {
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
   onSave: (body: string) => Promise<boolean>; onApprove: () => void; onSkip: () => void;
   onRegenerate: () => void; regenerating: boolean;
   onRetryContext: () => void; retryContextReady: boolean;
+  sequenceSchemaReady: boolean;
+  onReshuffle: () => void;
+  reshuffling: boolean;
+  onLtpBatchRegenerate: () => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -63,16 +68,27 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   const open = c.status === "drafted";
   const editable = open || c.status === "manual_edit";
   const pendingApproved = c.status === "approved";
+  const ltpCandidate = isLtpCandidate(c);
   const np = x.next_program;
+  const ltpAttendanceDate = formatLtpAttendanceDate(c);
+  const requiredNoProgramDate = ltpCandidate
+    ? ltpAttendanceDate ? `on ${ltpAttendanceDate}` : "NOW (required; missing from stored context)"
+    : x.date_phrase ?? "NOW (required; missing from stored context)";
+  const missingNoProgramDate = ltpCandidate ? !ltpAttendanceDate : !x.date_phrase;
   const issues = [...(x.errors ?? []), ...(x.validation_errors ?? [])];
   const playerName = c.player?.name ?? x.player_first_name ?? "Unknown player";
   const retryContextEligible = isRetryContextEligible(c.status, x.reason);
+  const step = c.step ?? x.ltp_text?.step ?? 1;
+  const legacyLtpDraft = ltpCandidate && c.status === "drafted" && !x.ltp_text;
+  const approvableLtp = canApproveLtpCandidate(c, sequenceSchemaReady);
+  const resharplableLtp = canReshuffleLtpCandidate(c, sequenceSchemaReady);
+  const sequenceStatusColor = c.sequence_status === "active" ? D.green : D.faint;
 
   return (
-    <div data-testid={`card-candidate-${c.id}`} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: `1px solid ${D.border}`, background: D.inner }}>
+    <div className="approval-card" data-testid={`card-candidate-${c.id}`} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
+      <div className="approval-card-header" style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: `1px solid ${D.border}`, background: D.inner }}>
         {c.status === "drafted" && (
-          <input type="checkbox" checked={selected} onChange={onToggle} disabled={busy} data-testid={`check-candidate-${c.id}`} aria-label="Include in bulk approval" />
+          <input type="checkbox" checked={selected} onChange={onToggle} disabled={busy || (ltpCandidate && !approvableLtp)} data-testid={`check-candidate-${c.id}`} aria-label="Include in bulk approval" title={legacyLtpDraft ? "Rebuild this model-built draft as a slot-based step-one text before approval" : undefined} />
         )}
         <span style={{ fontWeight: 600, fontSize: 13, color: D.text }}>{playerName}</span>
         <span style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, border: `1px solid ${D.border}`, color: STATUS_COLOR[c.status] }} data-testid={`status-candidate-${c.id}`}>
@@ -81,6 +97,16 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         <span data-testid={`variant-candidate-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
           {variant.label}
         </span>
+        {ltpCandidate && (
+          <>
+            <span data-testid={`badge-ltp-step-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.inner, color: D.text, border: `1px solid ${D.border}` }}>
+              Step {step}
+            </span>
+            <span data-testid={`badge-ltp-sequence-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.inner, color: sequenceStatusColor, border: `1px solid ${D.border}` }}>
+              {c.sequence_status ?? "sequence unavailable"}
+            </span>
+          </>
+        )}
         {x.stale === true && (
           <span data-testid={`badge-stale-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
             Stale test draft · {x.lookback_days ?? "unknown"}-day test lookback
@@ -94,8 +120,8 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         <span style={{ fontFamily: mono, fontSize: 10, color: D.faint, marginLeft: "auto" }}>{c.id.slice(0, 8)}</span>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
-        <div style={{ padding: 16, borderRight: `1px solid ${D.border}` }}>
+      <div className="approval-card-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
+        <div className="approval-card-copy" style={{ padding: 16, borderRight: `1px solid ${D.border}` }}>
           <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{c.status === "manual_edit" ? "Invalid preview - manual edit required" : "Draft text"}</div>
           {editing ? (
             <>
@@ -120,11 +146,22 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           )}
         </div>
 
+        {ltpCandidate && step === 2 && (
+          <div data-testid={`panel-ltp-step-one-${c.id}`} style={{ gridColumn: "1 / -1", borderTop: `1px solid ${D.border}`, padding: 16 }}>
+            <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 7 }}>
+              Step 1 text · sent {c.step1_sent_at ? fmt(c.step1_sent_at) : "timestamp unavailable"}
+            </div>
+            <div data-testid={`text-ltp-step-one-${c.id}`} style={{ fontSize: 13, color: c.step1_text ? D.text : D.redText, lineHeight: 1.65, whiteSpace: "pre-wrap", background: D.inner, border: `1px solid ${D.border}`, borderRadius: 6, padding: "10px 12px" }}>
+              {c.step1_text ?? "Step 1 text is unavailable; review its sequence before approval."}
+            </div>
+          </div>
+        )}
+
         <div style={{ padding: 16 }}>
           <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Stored context facts</div>
           <Fact k="First name" v={x.player_first_name ?? "unavailable"} />
-          <Fact k="Trigger" v={x.trigger ? `${x.trigger.name ?? "Unknown event"} on ${x.trigger.date ?? "date unavailable"}` : "unavailable"} />
-          <Fact k="Next program" v={variant.kind === "no_program" ? "No suggestion" : np ? `${np.name}, ${np.date} ${np.time}` : "none found"} />
+          <Fact k="Trigger" v={formatLtpTriggerFact(c)} />
+          <Fact k="Next program" v={variant.kind === "no_program" ? "No suggestion" : formatLtpNextProgramFact(c)} />
           {variant.kind === "no_program" && (
             <Fact k="Booking URL" v={x.booking_url
               ? <a href={x.booking_url} target="_blank" rel="noopener noreferrer" style={{ color: D.accent }}>{x.booking_url}</a>
@@ -138,7 +175,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           <Fact k="Promo" v={x.promo ? `${x.promo.code} - ${x.promo.offer_text}` : "none"} />
           {x.coupon_warning && <Fact k="Coupon warning" v={x.coupon_warning} warn />}
           {variant.kind === "no_program"
-            ? <Fact k="Required date phrase" v={x.date_phrase ?? "NOW (required; missing from stored context)"} warn={!x.date_phrase} />
+            ? <Fact k="Required date phrase" v={requiredNoProgramDate} warn={missingNoProgramDate} />
             : x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
           {variant.kind === "no_program" && <Fact k="No-program message" v="Thank the player for attending Learn to Play, then invite them to book now." />}
           {(x.send_date_et || x.send_date) && <Fact k="Intended send date (ET)" v={x.send_date_et ?? x.send_date!} />}
@@ -165,22 +202,48 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         </div>
       )}
 
-      <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: `1px solid ${D.border}`, flexWrap: "wrap" }}>
+      <div className="approval-card-footer" style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: `1px solid ${D.border}`, flexWrap: "wrap" }}>
         {editable && !editing && (
           <button style={btn(false, busy)} disabled={busy} data-testid={`button-edit-${c.id}`} onClick={() => { setDraft(body); setEditing(true); }}>Edit</button>
         )}
         {c.status === "drafted" && (
-          <button style={btn(true, busy || editing)} disabled={busy || !canApprove(c, editing ? new Set([c.id]) : new Set())}
+          <button style={btn(true, busy || editing || (ltpCandidate && !approvableLtp))} disabled={busy || !canApprove(c, editing ? new Set([c.id]) : new Set()) || (ltpCandidate && !approvableLtp)}
             title={editing ? "Save or cancel the edit first" : undefined} data-testid={`button-approve-${c.id}`} onClick={onApprove}>Approve</button>
         )}
         {editing && c.status === "drafted" && <span style={{ fontSize: 11, color: D.accent }}>Save or cancel the edit, then review the saved text to approve.</span>}
         {open && (
           <button style={btn(false, busy)} disabled={busy} data-testid={`button-skip-${c.id}`} onClick={onSkip}>Skip</button>
         )}
-        {c.status === "drafted" && (
+        {ltpCandidate && c.status === "drafted" && step === 1 && !x.ltp_text && sequenceSchemaReady && (
+          <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-rebuild-ltp-${c.id}`} onClick={onLtpBatchRegenerate}>
+            Rebuild step 1 cohort
+          </button>
+        )}
+        {resharplableLtp && (
+          <button style={btn(false, busy || editing || reshuffling)} disabled={busy || editing || reshuffling} data-testid={`button-reshuffle-ltp-${c.id}`} onClick={onReshuffle}>
+            {reshuffling ? "Reshuffling..." : "Reshuffle"}
+          </button>
+        )}
+        {!ltpCandidate && c.status === "drafted" && (
           <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-regenerate-${c.id}`} onClick={onRegenerate}>
             {regenerating ? "Regenerating..." : "Regenerate"}
           </button>
+        )}
+        {legacyLtpDraft && (
+          <span data-testid={`notice-ltp-legacy-${c.id}`} role="note" style={{ width: "100%", color: D.accent, fontSize: 11 }}>
+            This pre-sequence draft is blocked from approval until its slot-based sequence text is rebuilt. Migration does not approve or send texts.
+          </span>
+        )}
+        {ltpCandidate && c.status === "drafted" && !sequenceSchemaReady && (
+          <span role="note" data-testid={`notice-ltp-sequence-schema-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
+            Migration 013 is not ready. LTP approvals, rebuilding, and reshuffling are disabled.
+          </span>
+        )}
+        {ltpCandidate && c.status === "drafted" && sequenceSchemaReady && !approvableLtp && !legacyLtpDraft && (
+          <span role="note" data-testid={`notice-ltp-approval-blocked-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
+            This LTP draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${c.sequence_status ?? "unavailable"}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
+            Rebuild the active step-one cohort and review the refreshed text before approving.
+          </span>
         )}
         {retryContextEligible && (
           <button

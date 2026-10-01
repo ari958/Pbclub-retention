@@ -1,11 +1,15 @@
 import { supabase } from "./supabaseClient";
+import { randomUUID } from "node:crypto";
 import { getTextEligibilitySkipReason } from "./retentionPolicy";
 import { buildRetentionContext, isLearnToPlayName, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
-import { writeRetentionText } from "./retentionText";
+import { RetentionTextValidationError, validateRetentionTextBody, writeRetentionText } from "./retentionText";
+import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateLtpSequenceConfig } from "./ltpPhraseBuilder";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { sanitizeScheduledSendAt } from "./playerTiming";
+import { checkLtpBookingSince, transitionLtpSequence, type LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
 import {
   DEFAULT_RETENTION_LOOKBACK_DAYS,
+  MAX_RETENTION_LOOKBACK_DAYS,
   isAttendanceDateNearRetentionWindow,
   isRetentionTriggerDate,
   normalizeRetentionLookbackDays,
@@ -15,7 +19,7 @@ import {
   calendarDayDistance,
   hasNonLtpAttendanceAfterTrigger,
 } from "./retentionDates";
-import type { RetentionCandidate, RetentionContext, RetentionPlaybook } from "./retentionTypes";
+import type { RetentionCandidate, RetentionContext, RetentionPlaybook, RetentionSequenceStep } from "./retentionTypes";
 import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./retentionPodplayBatch";
 
 export type RetentionSkipReason =
@@ -76,6 +80,7 @@ export interface RetentionGenerationResult {
 
 export interface RetentionRegenerationResult {
   candidate_id: string;
+  player_id?: string;
   status: RetentionResultStatus;
   reason: string | null;
   body: string | null;
@@ -320,6 +325,10 @@ export async function generateRetentionDrafts(
   const playbooks = (playbookResult.data ?? []) as RetentionPlaybook[];
   const playbook = playbooks.find((item) => item.key === "ltp_followup");
   if (!playbook) return result;
+  await requireRetentionSequenceReady();
+  playbook.ltp_sequence_config = validateLtpSequenceConfig(
+    playbook.ltp_sequence_config ?? DEFAULT_LTP_SEQUENCE_CONFIG,
+  );
   const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
   if (playbook.promo_code) {
     const couponKey = `${clubId}:${playbook.promo_code}`;
@@ -405,6 +414,56 @@ export async function generateRetentionDrafts(
   const playerMap = new Map(players.map((player) => [player.id, player]));
 
   const returned = freshCandidates.filter((candidate) => candidate.alreadyReturned);
+  if (playbook.key === "ltp_followup") {
+    const eligible: typeof freshCandidates = [];
+    for (const candidate of freshCandidates.filter((item) => !item.alreadyReturned)) {
+      const player = playerMap.get(candidate.playerId);
+      if (!player) { skip("missing_player"); continue; }
+      const eligibilityReason = getTextEligibilitySkipReason(player);
+      if (eligibilityReason) { skip(eligibilityReason); continue; }
+      if (stableBucket(`${candidate.playerId}:${playbook.key}`) < Number(playbook.holdout_pct ?? 0) * 100) {
+        skip("holdout");
+        continue;
+      }
+      eligible.push(candidate);
+    }
+    const safeReturned: typeof returned = [];
+    for (const candidate of returned) {
+      const player = playerMap.get(candidate.playerId);
+      if (player?.opted_out === true) {
+        skip("opted_out");
+        continue;
+      }
+      skip("already_returned");
+      safeReturned.push(candidate);
+    }
+    const ltpBatch = await createInitialLtpCandidateBatch(
+      clubId,
+      [...eligible, ...safeReturned],
+      playerMap,
+      lookbackDays,
+    );
+    if (ltpBatch.failures.length) {
+      for (const failure of ltpBatch.failures) recordError(`${failure.candidate_id}: ${failure.error}`);
+      return result;
+    }
+    for (const draft of ltpBatch.results) {
+      const playerId = draft.player_id ?? "";
+      const player = playerMap.get(playerId);
+      appendResult(result, {
+        candidate_id: draft.candidate_id,
+        player_id: playerId,
+        player_name: player?.name ?? null,
+        status: draft.status,
+        reason: draft.reason,
+        body: draft.body,
+        context: draft.context,
+        ...(draft.validation_errors?.length ? { validation_errors: draft.validation_errors } : {}),
+      });
+    }
+    return result;
+  }
+
   for (const candidate of returned) {
     const player = playerMap.get(candidate.playerId);
     if (!player) { skip("missing_player"); continue; }
@@ -570,6 +629,16 @@ export async function regenerateRetentionCandidate(
   clubId: string,
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
+  const { data: row, error } = await supabase.from("retention_candidates")
+    .select("playbook_key").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
+  if (error) throw new Error(error.message);
+  if (row?.playbook_key === "ltp_followup") {
+    const result = await regenerateLtpCandidateBatch(clubId, [candidateId]);
+    if (result.failures.length) {
+      throw Object.assign(new Error(result.failures[0].error), { status: result.failures[0].http_status });
+    }
+    return result.results[0];
+  }
   return rebuildRetentionCandidate(clubId, candidateId, "regenerate");
 }
 
@@ -595,6 +664,749 @@ export interface RetentionContextRetryBatchResult {
 }
 
 const activeContextRetries = new Set<string>();
+const activeLtpCandidateBatches = new Set<string>();
+
+async function requireRetentionSequenceReady(): Promise<void> {
+  const { data, error } = await supabase.rpc("retention_sequence_ready");
+  if (error || data !== true) {
+    throw Object.assign(new Error("Apply migration 013_retention_ltp_sequence.sql in the existing Supabase SQL Editor before LTP sequence operations"), { status: 503 });
+  }
+}
+
+interface LtpCandidateBatchInput {
+  id: string;
+  player_id: string;
+  playbook_key: string;
+  trigger_event_id: string;
+  context: RetentionContext;
+  status: RetentionCandidate["status"];
+  message_id: string | null;
+  updated_at: string;
+  step?: RetentionSequenceStep;
+  sequence_id?: string | null;
+  attendance_cutoff?: string;
+}
+
+interface LtpBatchWriteItem {
+  id: string;
+  club_id: string;
+  player_id: string;
+  playbook_key: string;
+  trigger_event_id: string;
+  step: RetentionSequenceStep;
+  operation: "create" | "regenerate" | "reshuffle" | "retry_context";
+  expected_message_id: string | null;
+  expected_body: string | null;
+  expected_context: RetentionContext | null;
+  expected_updated_at: string | null;
+  context: RetentionContext;
+  status: RetentionCandidate["status"];
+  body: string | null;
+  capacity_event_id: string | null;
+  open_spots: number | null;
+  event_start_time: string | null;
+}
+
+function ltpCandidateOrder(a: LtpCandidateBatchInput, b: LtpCandidateBatchInput): number {
+  return String(a.context?.trigger?.date ?? "").localeCompare(String(b.context?.trigger?.date ?? ""))
+    || String(a.id).localeCompare(String(b.id));
+}
+
+function ltpSendDate(): Date {
+  return sanitizeScheduledSendAt(new Date(Date.now() + 60_000)) ?? new Date(Date.now() + 60_000);
+}
+
+async function readLtpPlaybook(): Promise<RetentionPlaybook> {
+  const { data, error } = await supabase.from("retention_playbooks").select("*")
+    .eq("key", "ltp_followup").maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data?.enabled) throw Object.assign(new Error("LTP follow-up playbook is missing or disabled"), { status: 409 });
+  const playbook = data as RetentionPlaybook;
+  playbook.ltp_sequence_config = validateLtpSequenceConfig(
+    playbook.ltp_sequence_config ?? DEFAULT_LTP_SEQUENCE_CONFIG,
+  );
+  return playbook;
+}
+
+function ltpFailedContext(
+  prior: RetentionContext,
+  trigger: { event_id: string; name: string; date: string },
+  firstName: string,
+  error: unknown,
+  lookbackDays: number,
+  step: RetentionSequenceStep,
+  seedNonce: number,
+): { context: RetentionContext; status: RetentionCandidate["status"] } {
+  const failure = contextFailure(error);
+  return {
+    context: {
+      ...prior,
+      trigger,
+      player_first_name: firstName,
+      next_program: null,
+      variant: "no_program",
+      date_phrase: `on ${formatLtpDateSafe(trigger.date)}`,
+      send_date_et: toEtDate(ltpSendDate()),
+      lookback_days: lookbackDays,
+      stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+      reason: failure.reason,
+      errors: failure.errors,
+      diagnostics: { ...(prior.diagnostics ?? {}), sequence_context_failure: failure.diagnostics },
+      validation_errors: [],
+      ltp_text: {
+        step,
+        seed_nonce: seedNonce,
+        slot_indices: {},
+        slot_templates: {},
+        opener: `Hi ${firstName}, it's PB Club.`,
+        ltp_date: formatLtpDateSafe(trigger.date),
+        when: null,
+      },
+    },
+    status: "needs_context",
+  };
+}
+
+function formatLtpDateSafe(date: string): string {
+  try {
+    return formatLtpDate(date);
+  } catch {
+    return date;
+  }
+}
+
+export interface LtpSequenceBatchResult {
+  schema_ready: true;
+  results: RetentionRegenerationResult[];
+  failures: { candidate_id: string; error: string; http_status: number }[];
+  podplay: RetentionPodplayTelemetry;
+}
+
+interface LtpBatchOptions {
+  reshuffle?: boolean;
+  retryContext?: boolean;
+}
+
+function ltpErrorStatus(error: unknown): number {
+  const status = (error as { status?: unknown } | null)?.status;
+  return typeof status === "number" ? status : 500;
+}
+
+async function readLtpCandidatesForBatch(
+  clubId: string,
+  candidateIds: string[],
+  options: LtpBatchOptions,
+) {
+  const { data, error } = await supabase.from("retention_candidates").select("*")
+    .eq("club_id", clubId).eq("playbook_key", "ltp_followup").in("id", candidateIds);
+  if (error) throw new Error(error.message);
+  if ((data ?? []).length !== candidateIds.length) {
+    throw Object.assign(new Error("One or more LTP sequence candidates were not found for this club"), { status: 404 });
+  }
+  const candidateMap = new Map((data ?? []).map((row: any) => [String(row.id), row as LtpCandidateBatchInput]));
+  const candidates = candidateIds.map((id) => candidateMap.get(id)!);
+  const playerRows = await Promise.all(candidates.map((candidate) => supabase.from("players")
+    .select("id,opted_out").eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle()));
+  const optedOutCandidateIds: string[] = [];
+  for (let index = 0; index < candidates.length; index++) {
+    const { data: player, error: playerError } = playerRows[index];
+    if (playerError) throw new Error(playerError.message);
+    if (!player) throw Object.assign(new Error(`Candidate ${candidates[index].id} player was not found`), { status: 409 });
+    if (player.opted_out === true) {
+      await transitionLtpSequence(
+        clubId, candidates[index].player_id, "ltp_followup", "exited_opt_out", "player_opted_out",
+      );
+      optedOutCandidateIds.push(candidates[index].id);
+    }
+  }
+  if (optedOutCandidateIds.length) {
+    throw Object.assign(new Error(
+      `LTP regeneration is blocked because the player opted out: ${optedOutCandidateIds.join(", ")}`,
+    ), { status: 409 });
+  }
+  for (const candidate of candidates) {
+    const step = candidate.step ?? candidate.context?.ltp_text?.step ?? 1;
+    if (step !== 1 && step !== 2) throw Object.assign(new Error(`Candidate ${candidate.id} has an invalid LTP step`), { status: 409 });
+    if (options.retryContext) {
+      if (candidate.status !== "needs_context") throw Object.assign(new Error(`Candidate ${candidate.id} no longer needs context`), { status: 409 });
+      continue;
+    }
+    if (candidate.status !== "drafted") throw Object.assign(new Error(`Candidate ${candidate.id} is not a drafted, editable LTP message`), { status: 409 });
+    if (candidate.message_id == null) throw Object.assign(new Error(`Candidate ${candidate.id} has no pending draft message`), { status: 409 });
+    const { data: message, error: messageError } = await supabase.from("messages")
+      .select("id,body,status,approved_at,approved_by,approved_body,scheduled_send_at,dispatch_claimed_at,sent_at,simulated,retention_delivery_kind")
+      .eq("id", candidate.message_id).maybeSingle();
+    if (messageError) throw new Error(messageError.message);
+    if (!message || message.status !== "pending" || message.approved_at != null
+      || message.approved_by != null || message.approved_body != null || message.scheduled_send_at != null
+      || message.dispatch_claimed_at != null || message.sent_at != null || message.simulated
+      || message.retention_delivery_kind === "test") {
+      throw Object.assign(new Error(`Candidate ${candidate.id} message is approved, scheduled, processed, or otherwise immutable`), { status: 409 });
+    }
+    (candidate as any).expected_message = message;
+  }
+  return candidates;
+}
+
+async function buildLtpBatchWriteItems(
+  clubId: string,
+  candidates: LtpCandidateBatchInput[],
+  playbook: RetentionPlaybook,
+  client: RetentionPodplayBatchClient,
+  operation: "create" | "regenerate" | "reshuffle" | "retry_context",
+): Promise<{
+  items: LtpBatchWriteItem[];
+  results: RetentionRegenerationResult[];
+  transitions: { player_id: string; booked_event_id: string | null }[];
+  failures: { candidate_id: string; error: string; http_status: number }[];
+}> {
+  const sorted = [...candidates].sort(ltpCandidateOrder);
+  const socialEventsCache = new Map<string, Promise<any[]>>();
+  const socialSignupsCache = new Map<string, Promise<string[]>>();
+  const clubCache = new Map<string, Promise<RetentionLiveClub>>();
+  const triggerCache = new Map<string, Promise<VerifiedRetentionTrigger>>();
+  const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
+  const bookingOptions: LtpBookingBatchOptions = {
+    client,
+    clubCache,
+    eventsCache: socialEventsCache,
+    signupsCache: socialSignupsCache,
+  };
+  const allocatedCapacityByEvent = new Map<string, number>();
+  const items: LtpBatchWriteItem[] = [];
+  const results: RetentionRegenerationResult[] = [];
+  const transitions: { player_id: string; booked_event_id: string | null }[] = [];
+  const failures: { candidate_id: string; error: string; http_status: number }[] = [];
+  for (const candidate of sorted) {
+    const previousContext = candidate.context ?? {} as RetentionContext;
+    const step = candidate.step ?? previousContext.ltp_text?.step ?? 1;
+    const lookbackDays = normalizeRetentionLookbackDays(Number(
+      previousContext.lookback_days ?? (previousContext.stale ? MAX_RETENTION_LOOKBACK_DAYS : DEFAULT_RETENTION_LOOKBACK_DAYS),
+    ));
+    const [{
+      data: player,
+      error: playerError,
+    }, {
+      data: message,
+      error: messageError,
+    }] = await Promise.all([
+      supabase.from("players").select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id")
+        .eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle(),
+      candidate.message_id
+        ? supabase.from("messages").select("id,body,status,approved_at,approved_by,approved_body,scheduled_send_at,dispatch_claimed_at,sent_at").eq("id", candidate.message_id).maybeSingle()
+        : Promise.resolve({ data: null, error: null }),
+    ]);
+    if (playerError) throw new Error(playerError.message);
+    if (messageError) throw new Error(messageError.message);
+    if (!player) throw Object.assign(new Error(`Candidate ${candidate.id} player was not found`), { status: 409 });
+    if (player.opted_out === true) {
+      if (candidate.sequence_id) {
+        await transitionLtpSequence(
+          clubId, candidate.player_id, "ltp_followup", "exited_opt_out", "player_opted_out",
+        );
+      }
+      const reason = "opted_out";
+      results.push({
+        candidate_id: candidate.id,
+        player_id: candidate.player_id,
+        status: "skipped",
+        reason,
+        body: null,
+        context: { ...previousContext, reason, errors: ["Player opted out of SMS"] },
+      });
+      if (operation !== "create") {
+        failures.push({
+          candidate_id: candidate.id,
+          error: "LTP regeneration is blocked because the player opted out",
+          http_status: 409,
+        });
+      }
+      continue;
+    }
+
+    let trigger: VerifiedRetentionTrigger = {
+      name: previousContext.trigger?.name ?? "Learn to Play",
+      date: previousContext.trigger?.date ?? "",
+      start_time: "",
+    };
+    let nextContext: RetentionContext = previousContext;
+    let status: RetentionCandidate["status"] = "needs_context";
+    let body: string | null = null;
+    let reason: string | null = null;
+    const sendAt = ltpSendDate();
+    const selectedOperation = operation;
+    try {
+      trigger = await verifyRetentionTriggerEvent(
+        clubId, candidate.trigger_event_id, clubCache, triggerCache, client,
+      );
+      if (!isLearnToPlayName(trigger.name)
+        || (previousContext.trigger?.date && trigger.date !== previousContext.trigger.date)) {
+        throw Object.assign(new Error("The live trigger no longer matches the saved Learn to Play event date"), { status: 409 });
+      }
+      const attendanceCutoff = candidate.attendance_cutoff ?? trigger.start_time;
+      const { data: attendance, error: attendanceError } = await supabase.from("attendances")
+      .select("event_id,program_name,attended_at,players!inner(club_id)").eq("player_id", candidate.player_id)
+        .eq("players.club_id", clubId);
+      if (attendanceError) throw new Error(attendanceError.message);
+      const subsequentAttendance = (attendance ?? []).filter((row: any) =>
+        Number.isFinite(Date.parse(attendanceCutoff))
+        && Number.isFinite(Date.parse(String(row.attended_at)))
+        && Date.parse(String(row.attended_at)) > Date.parse(attendanceCutoff),
+      );
+      const laterRows = subsequentAttendance.map((row: any) => ({
+        date: toEtDate(String(row.attended_at)),
+        program_name: row.program_name ?? null,
+        event_id: row.event_id ?? null,
+      }));
+      if (laterRows.length) {
+        const booking = laterRows[0];
+        nextContext = {
+          ...previousContext,
+          trigger: { event_id: candidate.trigger_event_id, name: trigger.name, date: trigger.date },
+          player_first_name: player.name?.trim().split(/\s+/)[0] ?? "",
+          variant: "no_program",
+          next_program: null,
+          promo: null,
+          booked_event: null,
+          reason: "already_returned",
+          errors: [],
+          diagnostics: { ...(previousContext.diagnostics ?? {}), attendance_since_trigger: laterRows },
+          validation_errors: [],
+          send_date_et: toEtDate(sendAt),
+          lookback_days: lookbackDays,
+          stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+          ltp_text: {
+            step,
+            seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
+            slot_indices: {},
+            slot_templates: {},
+            opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
+            ltp_date: formatLtpDateSafe(trigger.date),
+            when: null,
+          },
+        };
+        status = "needs_context";
+        reason = "already_returned";
+        transitions.push({ player_id: candidate.player_id, booked_event_id: booking.event_id });
+      } else {
+        if (candidate.attendance_cutoff) {
+          const recentBooking = await checkLtpBookingSince(
+            clubId, candidate.player_id, candidate.attendance_cutoff, bookingOptions,
+          );
+          if (recentBooking) {
+            nextContext = {
+              ...previousContext,
+              trigger: { event_id: candidate.trigger_event_id, name: trigger.name, date: trigger.date },
+              player_first_name: player.name?.trim().split(/\s+/)[0] ?? "",
+              next_program: null,
+              variant: "no_program",
+              promo: null,
+              booking_url: "https://pbclub.podplay.app",
+              reason: "already_booked",
+              errors: [],
+              diagnostics: { ...(previousContext.diagnostics ?? {}), exited_on_booking_since_step1: recentBooking },
+              validation_errors: [],
+              send_date_et: toEtDate(sendAt),
+              lookback_days: lookbackDays,
+              stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+              ltp_text: {
+                step,
+                seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
+                slot_indices: {},
+                slot_templates: {},
+                opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
+                ltp_date: formatLtpDateSafe(trigger.date),
+                when: null,
+              },
+            };
+            status = "needs_context";
+            reason = "already_booked";
+            transitions.push({ player_id: candidate.player_id, booked_event_id: recentBooking.booked_event_id });
+          }
+        }
+        if (reason !== "already_booked") {
+        const couponKey = `${clubId}:${playbook.promo_code ?? "LTPNEXT25"}`;
+        if (step === 1 && !couponCache.has(couponKey)) {
+          couponCache.set(couponKey, validateRetentionCoupon(
+            clubId, playbook.promo_code ?? "LTPNEXT25", client.fetch,
+          ));
+        }
+        const sequencePlaybook: RetentionPlaybook = step === 2
+          ? { ...playbook, promo_code: null, offer_text: null }
+          : playbook;
+        const context = await buildRetentionContext({
+          clubId,
+          player,
+          playbook: sequencePlaybook,
+          trigger: { event_id: candidate.trigger_event_id, name: trigger.name, date: trigger.date },
+          classmatesExternalIds: () => loadClassmatesExternalIds(clubId, candidate.trigger_event_id, candidate.player_id),
+          socialEventsCache,
+          socialSignupsCache,
+          clubCache,
+          couponCache,
+          batchClient: client,
+          allocatedCapacityByEvent,
+          sequenceStep: step,
+        });
+        nextContext = withGenerationMetadata(context, trigger, lookbackDays, sendAt);
+        nextContext.trigger.event_id = candidate.trigger_event_id;
+        if (nextContext.already_booked && nextContext.booked_event) {
+          const bookedEvent = nextContext.booked_event;
+          status = "needs_context";
+          reason = "already_booked";
+          nextContext = {
+            ...nextContext,
+            reason,
+            errors: [],
+            diagnostics: { ...(nextContext.diagnostics ?? {}), exited_on_booking: nextContext.booked_event },
+            validation_errors: [],
+            ltp_text: {
+              step,
+              seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
+              slot_indices: {},
+              slot_templates: {},
+              opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
+              ltp_date: formatLtpDateSafe(trigger.date),
+              when: null,
+            },
+          };
+          transitions.push({ player_id: candidate.player_id, booked_event_id: bookedEvent.event_id });
+        } else {
+          const promo = step === 1 ? (playbook.promo_code ?? "LTPNEXT25") : null;
+          const built = buildLtpStepText({
+            candidateId: candidate.id,
+            seedNonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
+            step,
+            context: nextContext,
+            promoCode: promo,
+            config: playbook.ltp_sequence_config,
+            preferredSlotIndices: selectedOperation !== "reshuffle"
+              && previousContext.ltp_text?.step === step
+              ? previousContext.ltp_text.slot_indices
+              : undefined,
+          });
+          nextContext = built.context;
+          const validationErrors = validateRetentionTextBody(built.body, nextContext, playbook);
+          if (validationErrors !== built.body) throw new Error("LTP sequence text validator returned an unexpected body");
+          const validation = validateLtpBodyForErrors(built.body, nextContext, playbook);
+          if (validation.length) {
+            status = "manual_edit";
+            reason = "text_validation_failed";
+            nextContext = {
+              ...nextContext,
+              reason,
+              errors: validation,
+              validation_errors: validation,
+              generated_preview: built.body,
+            };
+          } else {
+            status = "drafted";
+            body = built.body;
+          }
+          if (nextContext.next_program) {
+            allocatedCapacityByEvent.set(
+              nextContext.next_program.event_id,
+              (allocatedCapacityByEvent.get(nextContext.next_program.event_id) ?? 0) + 1,
+            );
+          }
+        }
+        }
+      }
+    } catch (error) {
+      const failure = contextFailure(error);
+      const failed = ltpFailedContext(previousContext, {
+        event_id: candidate.trigger_event_id, name: trigger.name, date: trigger.date || previousContext.trigger?.date || "",
+      }, player.name?.trim().split(/\s+/)[0] ?? "", error, lookbackDays, step,
+      optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation));
+      nextContext = {
+        ...failed.context,
+        reason: failure.reason,
+        errors: failure.errors,
+        diagnostics: {
+          ...(failed.context.diagnostics ?? {}),
+          sequence_context_failure: failure.diagnostics,
+        },
+      };
+      status = "needs_context";
+      reason = failure.reason;
+      body = null;
+    }
+    const slot = nextContext.next_program;
+    const item: LtpBatchWriteItem = {
+      id: candidate.id,
+      club_id: clubId,
+      player_id: candidate.player_id,
+      playbook_key: "ltp_followup",
+      trigger_event_id: candidate.trigger_event_id,
+      step,
+      operation: selectedOperation,
+      expected_message_id: selectedOperation === "create" ? null : candidate.message_id,
+      expected_body: selectedOperation === "create" ? null : message?.body ?? null,
+      expected_context: selectedOperation === "create" ? null : previousContext,
+      expected_updated_at: selectedOperation === "create" ? null : candidate.updated_at,
+      context: nextContext,
+      status,
+      body,
+      capacity_event_id: slot?.event_id ?? null,
+      open_spots: slot?.spots_remaining ?? null,
+      event_start_time: slot?.start_time ?? null,
+    };
+    items.push(item);
+    results.push({
+      candidate_id: candidate.id,
+      player_id: candidate.player_id,
+      status: reason === "already_booked" || reason === "already_returned"
+        ? "skipped"
+        : status as RetentionResultStatus,
+      reason,
+      body,
+      context: nextContext,
+      ...(status === "manual_edit" ? { validation_errors: nextContext.validation_errors } : {}),
+    });
+  }
+  return { items, results, transitions, failures };
+}
+
+function optionsNonce(previousNonce: number | undefined, operation: "create" | "regenerate" | "reshuffle" | "retry_context"): number {
+  const nonce = Number.isSafeInteger(previousNonce) && Number(previousNonce) >= 0 ? Number(previousNonce) : 0;
+  return operation === "reshuffle" ? nonce + 1 : operation === "create" ? 0 : nonce;
+}
+
+function validateLtpBodyForErrors(body: string, context: RetentionContext, playbook: RetentionPlaybook): string[] {
+  try {
+    validateRetentionTextBody(body, context, playbook);
+    return [];
+  } catch (error) {
+    return error instanceof RetentionTextValidationError ? error.validation_errors : [errorMessage(error)];
+  }
+}
+
+async function transitionLtpSequenceBooked(clubId: string, playerId: string, eventId: string | null): Promise<void> {
+  await transitionLtpSequence(clubId, playerId, "ltp_followup", "exited_booked", "booked_after_ltp", eventId);
+}
+
+async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[]): Promise<void> {
+  const { error } = await supabase.rpc("retention_sequence_save_batch", {
+    p_club_id: clubId,
+    p_items: items,
+  });
+  if (error) {
+    const status = /capacity_exhausted|insufficient_capacity/i.test(error.message) ? 409 : 500;
+    throw Object.assign(new Error(error.message), { status });
+  }
+}
+
+async function runLtpCandidateBatch(
+  clubId: string,
+  candidateIds: string[],
+  options: LtpBatchOptions = {},
+): Promise<LtpSequenceBatchResult> {
+  if (!candidateIds.length || candidateIds.length > 50 || new Set(candidateIds).size !== candidateIds.length) {
+    throw Object.assign(new Error("Provide 1–50 distinct candidate IDs"), { status: 400 });
+  }
+  if (activeLtpCandidateBatches.has(clubId)) {
+    throw Object.assign(new Error("An LTP candidate batch is already running for this club"), { status: 409 });
+  }
+  activeLtpCandidateBatches.add(clubId);
+  try {
+    await requireRetentionSequenceReady();
+    const [candidates, playbook] = await Promise.all([
+      readLtpCandidatesForBatch(clubId, candidateIds, options),
+      readLtpPlaybook(),
+    ]);
+    const client = new RetentionPodplayBatchClient();
+    let items: LtpBatchWriteItem[];
+    let results: RetentionRegenerationResult[];
+    let transitions: { player_id: string; booked_event_id: string | null }[];
+    let failures: { candidate_id: string; error: string; http_status: number }[];
+    try {
+      ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(
+        clubId, candidates, playbook, client,
+        options.retryContext ? "retry_context" : options.reshuffle ? "reshuffle" : "regenerate",
+      ));
+    } catch (error) {
+      const message = errorMessage(error);
+      return {
+        schema_ready: true,
+        results: [],
+        failures: candidateIds.map((candidate_id) => ({
+          candidate_id, error: message, http_status: ltpErrorStatus(error),
+        })),
+        podplay: client.telemetry,
+      };
+    }
+    try {
+      if (items.length) await saveLtpSequenceBatch(clubId, items);
+      for (const transition of transitions) {
+        await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+      }
+      return { schema_ready: true, results, failures, podplay: client.telemetry };
+    } catch (error) {
+      const message = errorMessage(error);
+      return {
+        schema_ready: true,
+        results: [],
+        failures: candidateIds.map((candidate_id) => ({
+          candidate_id, error: message, http_status: ltpErrorStatus(error),
+        })),
+        podplay: client.telemetry,
+      };
+    }
+  } finally {
+    activeLtpCandidateBatches.delete(clubId);
+  }
+}
+
+async function createInitialLtpCandidateBatch(
+  clubId: string,
+  sourceCandidates: Array<{
+    playerId: string;
+    trigger: any;
+    verifiedDate: string;
+    verifiedName: string;
+    alreadyReturned: boolean;
+  }>,
+  players: Map<string, any>,
+  lookbackDays: number,
+): Promise<LtpSequenceBatchResult> {
+  if (!sourceCandidates.length) {
+    return { schema_ready: true, results: [], failures: [], podplay: new RetentionPodplayBatchClient().telemetry };
+  }
+  const candidates: LtpCandidateBatchInput[] = sourceCandidates.map((source) => ({
+    id: randomUUID(),
+    player_id: source.playerId,
+    playbook_key: "ltp_followup",
+    trigger_event_id: String(source.trigger.event_id),
+    context: {
+      trigger: { event_id: String(source.trigger.event_id), name: source.verifiedName, date: source.verifiedDate },
+      player_first_name: players.get(source.playerId)?.name?.trim().split(/\s+/)[0] ?? "",
+      next_program: null,
+      classmates_signed_up: 0,
+      already_booked: false,
+      booked_event: null,
+      promo: null,
+      coupon_warning: null,
+      evaluated_at: new Date().toISOString(),
+      lookback_days: lookbackDays,
+      stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+    },
+    status: "drafted",
+    message_id: null,
+    updated_at: "",
+    step: 1,
+  }));
+  const playbook = await readLtpPlaybook();
+  const client = new RetentionPodplayBatchClient();
+  let items: LtpBatchWriteItem[];
+  let results: RetentionRegenerationResult[];
+  let transitions: { player_id: string; booked_event_id: string | null }[];
+  let failures: { candidate_id: string; error: string; http_status: number }[];
+  try {
+    ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(clubId, candidates, playbook, client, "create"));
+    if (items.length) await saveLtpSequenceBatch(clubId, items);
+    for (const transition of transitions) {
+      await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+    }
+    return { schema_ready: true, results, failures, podplay: client.telemetry };
+  } catch (error) {
+    return {
+      schema_ready: true,
+      results: [],
+      failures: candidates.map((candidate) => ({
+        candidate_id: candidate.id, error: errorMessage(error), http_status: ltpErrorStatus(error),
+      })),
+      podplay: client.telemetry,
+    };
+  }
+}
+
+/** Rebuilds a whole sequence batch atomically; it never approves, schedules, or sends. */
+export async function regenerateLtpCandidateBatch(
+  clubId: string,
+  candidateIds: string[],
+): Promise<LtpSequenceBatchResult> {
+  return runLtpCandidateBatch(clubId, candidateIds);
+}
+
+/** Drafted-only deterministic phrase reshuffle, protected by the migration CAS write. */
+export async function reshuffleLtpCandidate(
+  clubId: string,
+  candidateId: string,
+): Promise<RetentionRegenerationResult> {
+  const result = await runLtpCandidateBatch(clubId, [candidateId], { reshuffle: true });
+  if (result.failures.length) {
+    throw Object.assign(new Error(result.failures[0].error), { status: result.failures[0].http_status });
+  }
+  return result.results[0];
+}
+
+/** Creates unscheduled step-2 drafts only from migration-gated real step-1 delivery cohorts. */
+export async function generateDueLtpStep2Drafts(clubId: string): Promise<LtpSequenceBatchResult> {
+  await requireRetentionSequenceReady();
+  if (activeLtpCandidateBatches.has(clubId)) {
+    throw Object.assign(new Error("An LTP candidate batch is already running for this club"), { status: 409 });
+  }
+  activeLtpCandidateBatches.add(clubId);
+  try {
+    const { data, error } = await supabase.rpc("retention_sequence_due_step2", { p_club_id: clubId });
+    if (error) throw new Error(error.message);
+    if (data != null && !Array.isArray(data)) throw new Error("Step-2 due-candidate RPC returned an invalid payload");
+    const dueRows = (data ?? []) as any[];
+    if (!dueRows.length) {
+      return { schema_ready: true, results: [], failures: [], podplay: new RetentionPodplayBatchClient().telemetry };
+    }
+    if (dueRows.length > 50) throw Object.assign(new Error("The step-2 due cohort exceeds the atomic batch limit"), { status: 409 });
+    const candidates: LtpCandidateBatchInput[] = dueRows.map((row) => ({
+      id: randomUUID(),
+      player_id: String(row.player_id),
+      playbook_key: "ltp_followup",
+      trigger_event_id: String(row.trigger_event_id),
+      context: row.context as RetentionContext,
+      status: "sent",
+      message_id: null,
+      updated_at: "",
+      step: 2,
+      sequence_id: row.sequence_id ?? null,
+      attendance_cutoff: String(row.step1_sent_at),
+    }));
+    for (let index = 0; index < dueRows.length; index++) {
+      const row = dueRows[index];
+      if (row.step1_delivery_kind !== "real"
+        || !row.step1_sent_at || !Number.isFinite(Date.parse(String(row.step1_sent_at)))
+        || String(row.step) !== "1" || !row.context?.trigger?.date) {
+        throw Object.assign(new Error(`Due step-2 cohort row ${row.id ?? index} lacks verified real step-1 facts`), { status: 409 });
+      }
+    }
+    const playbook = await readLtpPlaybook();
+    const client = new RetentionPodplayBatchClient();
+    let items: LtpBatchWriteItem[];
+    let results: RetentionRegenerationResult[];
+    let transitions: { player_id: string; booked_event_id: string | null }[];
+    let failures: { candidate_id: string; error: string; http_status: number }[];
+    try {
+      ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(
+        clubId, candidates, playbook, client, "create",
+      ));
+      if (items.length) await saveLtpSequenceBatch(clubId, items);
+      for (const transition of transitions) {
+        await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+      }
+      return { schema_ready: true, results, failures, podplay: client.telemetry };
+    } catch (failure) {
+      const message = errorMessage(failure);
+      return {
+        schema_ready: true,
+        results: [],
+        failures: candidates.map((candidate) => ({
+          candidate_id: candidate.id, error: message, http_status: ltpErrorStatus(failure),
+        })),
+        podplay: client.telemetry,
+      };
+    }
+  } finally {
+    activeLtpCandidateBatches.delete(clubId);
+  }
+}
 
 /** Eligibility and schema are checked before any PodPlay or model request. */
 export async function retryRetentionContextBatch(
@@ -614,10 +1426,13 @@ export async function retryRetentionContextBatch(
       throw Object.assign(new Error("Apply retention migration 012 in the existing Supabase SQL Editor before retrying context"), { status: 503 });
     }
     const { data: candidates, error } = await supabase.from("retention_candidates")
-      .select("id,status,context").eq("club_id", clubId).in("id", candidateIds);
+      .select("id,status,context,playbook_key").eq("club_id", clubId).in("id", candidateIds);
     if (error) throw new Error(error.message);
     if (candidates?.length !== candidateIds.length || candidates.some((candidate: any) => !canRetryRetentionContext(candidate))) {
       throw Object.assign(new Error("Every requested candidate must still need context with reason context_lookup_failed or no_next_program"), { status: 409 });
+    }
+    if (candidates.every((candidate: any) => candidate.playbook_key === "ltp_followup")) {
+      return runLtpCandidateBatch(clubId, candidateIds, { retryContext: true });
     }
     const batch: RetentionRebuildBatch = {
       client: new RetentionPodplayBatchClient(),

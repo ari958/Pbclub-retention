@@ -6,6 +6,15 @@ import { isInsideSendWindow } from "./playerTiming";
 import { supabase } from "./supabaseClient";
 import { validateRetentionCoupon } from "./retentionCoupons";
 import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
+import {
+  confirmLtpRecipientDelivery,
+  applyTwilio21610OptOut,
+  recheckLtpSequenceDispatch,
+  recordLtpSequenceSend,
+  returnLtpSequenceForSessionReview,
+  transitionLtpSequence,
+  type LtpBookingBatchOptions,
+} from "./ltpSequenceLifecycle";
 
 export function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -18,6 +27,7 @@ export function getTwilioClient() {
 
 let testClientFactory: (() => ReturnType<typeof twilio>) | undefined;
 let testClock: (() => Date) | undefined;
+let testLtpBatchOptionsFactory: (() => LtpBookingBatchOptions) | undefined;
 
 /** Test-only transport seam; production callers cannot override Twilio. */
 export function setTwilioClientFactoryForTests(factory: (() => ReturnType<typeof twilio>) | null): void {
@@ -34,7 +44,20 @@ export function setTwilioClockForTests(clock: (() => Date) | null): void {
   testClock = clock ?? undefined;
 }
 
+/** Test-only PodPlay fixture seam; live dispatch uses the shared production client. */
+export function setLtpSequenceBatchOptionsFactoryForTests(
+  factory: (() => LtpBookingBatchOptions) | null,
+): void {
+  if (process.env.NODE_ENV !== "test") {
+    throw new Error("LTP sequence test fixtures can only be configured under NODE_ENV=test");
+  }
+  testLtpBatchOptionsFactory = factory ?? undefined;
+}
+
 const currentTime = () => testClock ? testClock() : new Date();
+
+const ltpBatchOptionsForDispatch = (): LtpBookingBatchOptions =>
+  testLtpBatchOptionsFactory ? testLtpBatchOptionsFactory() : {};
 
 /**
  * Send an SMS via Twilio (live) or log a dry-run (when SMS_LIVE !== "true").
@@ -53,7 +76,7 @@ export interface SendContext {
 export class SmsPolicyBlockedError extends Error {
   readonly code = "SMS_POLICY_BLOCKED";
 
-  constructor(message: string) {
+  constructor(message: string, readonly sequenceAlreadyExited = false) {
     super(message);
     this.name = "SmsPolicyBlockedError";
   }
@@ -71,7 +94,15 @@ export class SmsDispatchClaimError extends Error {
 export class SmsDispatchClaimedError extends Error {
   readonly code = "SMS_DISPATCH_CLAIMED";
 
-  constructor(message: string, readonly messageId: string, readonly claimToken: string, cause?: unknown) {
+  constructor(
+    message: string,
+    readonly messageId: string,
+    readonly claimToken: string,
+    cause?: unknown,
+    readonly sequenceClaimedAt?: string,
+    readonly playerId?: string,
+    readonly clubId?: string | null,
+  ) {
     super(message, { cause });
     this.name = "SmsDispatchClaimedError";
   }
@@ -85,33 +116,70 @@ export function isSmsDispatchClaimError(error: unknown): error is SmsDispatchCla
   return error instanceof SmsDispatchClaimError;
 }
 
-export function getSmsDispatchClaim(error: unknown): { messageId: string; claimToken: string } | null {
+export function getSmsDispatchClaim(error: unknown): {
+  messageId: string;
+  claimToken: string;
+  sequenceClaimedAt?: string;
+  playerId?: string;
+  clubId?: string | null;
+} | null {
   return error instanceof SmsDispatchClaimedError
-    ? { messageId: error.messageId, claimToken: error.claimToken }
+    ? {
+        messageId: error.messageId,
+        claimToken: error.claimToken,
+        ...(error.sequenceClaimedAt ? { sequenceClaimedAt: error.sequenceClaimedAt } : {}),
+        ...(error.playerId ? { playerId: error.playerId } : {}),
+        ...(error.clubId !== undefined ? { clubId: error.clubId } : {}),
+      }
     : null;
+}
+
+function twilioErrorCode(error: unknown): string | undefined {
+  if (typeof error === "string" || typeof error === "number") return String(error).trim();
+  const seen = new Set<unknown>();
+  let current: any = error;
+  let code: string | undefined;
+  while (current && (typeof current === "object" || typeof current === "function") && !seen.has(current)) {
+    seen.add(current);
+    if (current.code !== undefined && current.code !== null) code = String(current.code).trim();
+    current = current.cause;
+  }
+  return code;
+}
+
+export function isTwilio21610(error: unknown): boolean {
+  return twilioErrorCode(error) === "21610";
 }
 
 export async function recordSmsDispatchFailure(error: unknown): Promise<boolean> {
   const claim = getSmsDispatchClaim(error);
   if (!claim) return false;
+  const code = twilioErrorCode(error);
 
-  const { data, error: updateError } = await supabase
+  let failureQuery = supabase
     .from("messages")
     .update({
       status: "failed",
-      error_code: (error as any)?.cause?.code?.toString?.() ?? (error as any)?.code?.toString?.(),
+      error_code: code,
       error_message: error instanceof Error ? error.message : "Unknown dispatch error",
     })
     .eq("id", claim.messageId)
-    .eq("status", "pending")
-    .eq("dispatch_token", claim.claimToken)
-    .select("id")
-    .maybeSingle();
+    .eq("status", "pending");
+  failureQuery = claim.sequenceClaimedAt
+    ? failureQuery.eq("dispatch_claimed_at", claim.sequenceClaimedAt).is("dispatch_token", null)
+    : failureQuery.eq("dispatch_token", claim.claimToken);
+  const { data, error: updateError } = await failureQuery.select("id").maybeSingle();
 
   if (updateError) {
     logger.error({ messageId: claim.messageId, err: updateError.message }, "Could not record failed SMS dispatch");
-    return false;
   }
+  if (isTwilio21610(error)) {
+    if (!claim.playerId) {
+      throw new Error("Twilio 21610 was received, but the claimed message has no resolved player for opt-out");
+    }
+    await applyTwilio21610OptOut(claim.playerId, "twilio_error_21610");
+  }
+  if (updateError) return false;
   return !!data;
 }
 
@@ -191,6 +259,9 @@ export async function sendViaTwilio(
     player.club_id,
     message.approved_at,
   );
+  const ltpCandidate = retentionCandidate?.playbook_key === "ltp_followup"
+    ? retentionCandidate as any
+    : null;
   const promoCode = (retentionCandidate?.context as any)?.promo?.code;
 
   if (!isInsideSendWindow(currentTime())) {
@@ -244,18 +315,64 @@ export async function sendViaTwilio(
 
   const claimToken = randomUUID();
   const claimedAt = currentTime().toISOString();
-  const { data: claimed, error: claimError } = await supabase
-    .from("messages")
-    .update({ dispatch_claimed_at: claimedAt, dispatch_token: claimToken })
-    .eq("id", context.messageId)
-    .eq("status", "pending")
-    .eq("approved_at", message.approved_at)
-    .eq("approved_by", message.approved_by)
-    .eq("approved_body", message.approved_body)
-    .is("dispatch_claimed_at", null)
-    .is("dispatch_token", null)
-    .select("id")
-    .maybeSingle();
+  let claimed: any;
+  let claimError: any;
+  if (ltpCandidate) {
+    try {
+      const firstCheck = await recheckLtpSequenceDispatch(
+        ltpCandidate,
+        ltpBatchOptionsForDispatch(),
+        message.approved_body,
+      );
+      if (firstCheck.booked) {
+        await transitionLtpSequence(
+          player.club_id,
+          playerId,
+          "ltp_followup",
+          "exited_booked",
+          "booking_since_step_trigger_or_real_send",
+          firstCheck.booked.booked_event_id,
+        );
+        throw new SmsPolicyBlockedError("Player booked a session after this LTP step was triggered", true);
+      }
+      if (firstCheck.reason === "session_changed") {
+        await returnLtpSequenceForSessionReview(ltpCandidate.club_id, ltpCandidate.id, null);
+        throw new SmsPolicyBlockedError("Approved LTP session changed; the draft was returned for review");
+      }
+    } catch (error) {
+      if (error instanceof SmsPolicyBlockedError) throw error;
+      throw new SmsPolicyBlockedError(
+        `LTP sequence eligibility could not be verified immediately before claim: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const { data, error } = await supabase.rpc("retention_sequence_claim", {
+      p_club_id: player.club_id,
+      p_candidate_id: ltpCandidate.id,
+      p_message_id: context.messageId,
+      p_expected_body: message.body ?? "",
+      p_claimed_at: claimedAt,
+      p_expected_context: ltpCandidate.context,
+      p_expected_updated_at: ltpCandidate.updated_at,
+    });
+    claimed = data;
+    claimError = error;
+  } else {
+    const { data, error } = await supabase
+      .from("messages")
+      .update({ dispatch_claimed_at: claimedAt, dispatch_token: claimToken })
+      .eq("id", context.messageId)
+      .eq("status", "pending")
+      .eq("approved_at", message.approved_at)
+      .eq("approved_by", message.approved_by)
+      .eq("approved_body", message.approved_body)
+      .is("dispatch_claimed_at", null)
+      .is("dispatch_token", null)
+      .select("id")
+      .maybeSingle();
+    claimed = data;
+    claimError = error;
+  }
   if (claimError || !claimed) {
     throw new SmsDispatchClaimError(`Message dispatch claim failed: ${claimError?.message ?? "message is no longer dispatchable"}`);
   }
@@ -275,7 +392,10 @@ export async function sendViaTwilio(
     if (!isRetentionOnlyMode() && requiresMarketingConsent() && !isTextEligible(finalPlayer)) {
       throw new SmsPolicyBlockedError("Player marketing-consent eligibility changed before SMS dispatch");
     }
-    if (typeof promoCode === "string" && promoCode.trim()) {
+    if (
+      typeof promoCode === "string" && promoCode.trim()
+      && !(ltpCandidate && ltpCandidate.step === 2)
+    ) {
       let coupon;
       try {
         coupon = await validateRetentionCoupon(player.club_id, promoCode);
@@ -298,17 +418,69 @@ export async function sendViaTwilio(
       throw new SmsPolicyBlockedError(`SMS kill switch blocked dispatch: ${lastChanceError?.message ?? "engaged or unavailable"}`);
     }
 
+    if (ltpCandidate) {
+      let finalCheck;
+      try {
+        // Build fresh caches for the second authoritative lookup; first-pass
+        // provider results must not authorize the final transport check.
+        finalCheck = await recheckLtpSequenceDispatch(
+          ltpCandidate,
+          ltpBatchOptionsForDispatch(),
+          message.approved_body,
+        );
+      } catch (error) {
+        throw new SmsPolicyBlockedError(
+          `LTP sequence eligibility could not be reverified immediately before transport: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (finalCheck.booked) {
+        try {
+          await transitionLtpSequence(
+            player.club_id,
+            playerId,
+            "ltp_followup",
+            "exited_booked",
+            "booking_since_step_trigger_or_real_send",
+            finalCheck.booked.booked_event_id,
+          );
+        } catch (error) {
+          throw new SmsPolicyBlockedError(
+            `LTP booking was found but its sequence exit could not be recorded: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        throw new SmsPolicyBlockedError("Player booked a session after this LTP step was triggered", true);
+      }
+      if (finalCheck.reason === "session_changed") {
+        try {
+          await returnLtpSequenceForSessionReview(ltpCandidate.club_id, ltpCandidate.id, claimedAt);
+        } catch (error) {
+          throw new SmsPolicyBlockedError(
+            `The LTP session changed but could not be returned for review: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        throw new SmsPolicyBlockedError("Approved LTP session changed; the draft was returned for review");
+      }
+    }
+
     if (!smsLive) {
       logger.info({ messageId: context.messageId, isTest }, "[SMS DRY-RUN] approved dispatch simulated");
       const sentAt = currentTime().toISOString();
-      const { data: updated, error: updateError } = await supabase
+      const simulatedValues: Record<string, unknown> = {
+        status: "sent",
+        twilio_message_sid: "SIMULATED",
+        simulated: true,
+        sent_at: sentAt,
+      };
+      if (ltpCandidate) simulatedValues.retention_delivery_kind = "simulated";
+      let updateQuery = supabase
         .from("messages")
-        .update({ status: "sent", twilio_message_sid: "SIMULATED", simulated: true, sent_at: sentAt })
+        .update(simulatedValues)
         .eq("id", context.messageId)
-        .eq("status", "pending")
-        .eq("dispatch_token", claimToken)
-        .select("id")
-        .maybeSingle();
+        .eq("status", "pending");
+      updateQuery = ltpCandidate
+        ? updateQuery.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
+        : updateQuery.eq("dispatch_token", claimToken);
+      const { data: updated, error: updateError } = await updateQuery.select("id").maybeSingle();
       if (updateError || !updated) throw new Error(`Could not record simulated dispatch: ${updateError?.message ?? "claim no longer owns the pending message"}`);
       const { error: candidateError } = await supabase
         .from("retention_candidates")
@@ -317,6 +489,13 @@ export async function sendViaTwilio(
         .eq("status", "approved");
       if (candidateError && !/does not exist|schema cache/i.test(candidateError.message)) {
         logger.error({ messageId: context.messageId, err: candidateError.message }, "Could not record linked retention candidate as simulated-sent");
+      }
+      if (ltpCandidate) {
+        try {
+          await recordLtpSequenceSend(player.club_id, context.messageId, "simulated");
+        } catch (error) {
+          logger.error({ messageId: context.messageId, err: error }, "Simulated LTP delivery persisted but its sequence bookkeeping failed");
+        }
       }
       return { sid: "SIMULATED", simulated: true, isTest };
     }
@@ -357,13 +536,29 @@ export async function sendViaTwilio(
       throw new Error(`SMS may have been delivered but contact ledger write failed: ${ledgerError.message}`);
     }
 
-    const { data: updated, error: messageUpdateError } = await supabase
+    let messageUpdateQuery = supabase
       .from("messages")
-      .update({ status: "sent", twilio_message_sid: msg.sid, simulated: false, sent_at: sentAt })
+      .update({
+        status: "sent",
+        twilio_message_sid: msg.sid,
+        simulated: false,
+        sent_at: sentAt,
+        ...(ltpCandidate
+          ? {
+              ...(isTest
+                ? { retention_delivery_kind: "test" }
+                : msg.status === "delivered" ? { retention_delivery_kind: "real" } : {}),
+              ...(msg.status === "delivered" ? { delivery_status: "delivered", delivered_at: sentAt } : {}),
+            }
+          : {}),
+      })
       .eq("id", context.messageId)
-      .eq("status", "pending")
-      .eq("dispatch_token", claimToken)
-      .select("id")
+      .eq("status", "pending");
+    messageUpdateQuery = ltpCandidate
+      ? messageUpdateQuery.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
+      : messageUpdateQuery.eq("dispatch_token", claimToken);
+    const { data: updated, error: messageUpdateError } = await messageUpdateQuery
+      .select(ltpCandidate ? "id,delivery_status,delivered_at" : "id")
       .maybeSingle();
     if (messageUpdateError || !updated) {
       throw new Error(`SMS may have been delivered but message bookkeeping failed: ${messageUpdateError?.message ?? "claim no longer owns the pending message"}`);
@@ -376,6 +571,32 @@ export async function sendViaTwilio(
       .eq("status", "approved");
     if (candidateError && !/does not exist|schema cache/i.test(candidateError.message)) {
       logger.error({ messageId: context.messageId, err: candidateError.message }, "Could not record linked retention candidate as sent");
+    }
+
+    if (ltpCandidate && isTest) {
+      try {
+        await recordLtpSequenceSend(player.club_id, context.messageId, "test");
+      } catch (error) {
+        logger.error({ messageId: context.messageId, err: error }, "Redirected LTP test delivery persisted but its sequence bookkeeping failed");
+      }
+    } else if (ltpCandidate && msg.status === "delivered") {
+      try {
+        await confirmLtpRecipientDelivery(context.messageId);
+      } catch (error) {
+        logger.error({ messageId: context.messageId, err: error }, "Delivered LTP message persisted but its real-delivery bookkeeping failed");
+        throw new Error(`LTP SMS was delivered but its sequence could not be updated: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } else if (
+      ltpCandidate
+      && !isTest
+      && (updated as any)?.delivery_status === "delivered"
+      && (updated as any)?.delivered_at
+    ) {
+      try {
+        await confirmLtpRecipientDelivery(context.messageId);
+      } catch (error) {
+        logger.error({ messageId: context.messageId, err: error }, "Earlier Twilio delivery receipt could not be applied to the LTP sequence");
+      }
     }
 
     if (!isTest) {
@@ -391,12 +612,23 @@ export async function sendViaTwilio(
     return { sid: msg.sid, simulated: false, isTest };
   } catch (error: any) {
     if (error instanceof SmsPolicyBlockedError) {
-      const { error: releaseError } = await supabase
+      const releaseValues = error.sequenceAlreadyExited
+        ? {
+            status: "skipped",
+            error_message: "LTP player booked a session before message transport",
+            dispatch_claimed_at: null,
+            dispatch_token: null,
+          }
+        : { dispatch_claimed_at: null, dispatch_token: null };
+      let releaseQuery = supabase
         .from("messages")
-        .update({ dispatch_claimed_at: null, dispatch_token: null })
+        .update(releaseValues)
         .eq("id", context.messageId)
-        .eq("status", "pending")
-        .eq("dispatch_token", claimToken);
+        .eq("status", "pending");
+      releaseQuery = ltpCandidate
+        ? releaseQuery.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
+        : releaseQuery.eq("dispatch_token", claimToken);
+      const { error: releaseError } = await releaseQuery;
       if (releaseError) {
         logger.error({ messageId: context.messageId, err: releaseError.message }, "Could not release message claim after pre-transport policy block");
       }
@@ -407,6 +639,9 @@ export async function sendViaTwilio(
       context.messageId,
       claimToken,
       error,
+      ltpCandidate ? claimedAt : undefined,
+      playerId,
+      player.club_id,
     );
   }
 }

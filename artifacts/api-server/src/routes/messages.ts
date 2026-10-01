@@ -5,6 +5,7 @@ import {
   composeApprovedMessageBody,
   isSmsDispatchClaimError,
   isSmsPolicyBlockedError,
+  isTwilio21610,
   recordSmsDispatchFailure,
   sendViaTwilio,
 } from "../lib/twilio";
@@ -14,6 +15,13 @@ import { findActiveExpectation, resolveExpectation } from "../lib/replyExpectati
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, isTextEligible, parkInRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
 import { RetentionDispatchAuthorizationError, verifyRetentionCandidateDispatch } from "../lib/retentionDispatch";
+import {
+  applyTwilio21610OptOut,
+  confirmLtpRecipientDelivery,
+  permanentlyOptOutPlayerAndExitLtpSequence,
+  SmsOptOutPersistenceError,
+  transitionLtpSequence,
+} from "../lib/ltpSequenceLifecycle";
 
 const router: IRouter = Router();
 
@@ -480,18 +488,101 @@ router.post("/messages/webhook/status", async (req, res) => {
     delivery_status: MessageStatus,
   };
 
-  if (MessageStatus === "delivered") {
-    update.delivered_at = new Date().toISOString();
+  const deliveredAt = MessageStatus === "delivered" ? new Date().toISOString() : null;
+  if (deliveredAt) {
+    update.delivered_at = deliveredAt;
   } else if (MessageStatus === "failed" || MessageStatus === "undelivered") {
     update.status = MessageStatus;
     if (ErrorCode) update.error_code = ErrorCode;
     if (ErrorMessage) update.error_message = ErrorMessage;
   }
 
-  await supabase
-    .from("messages")
-    .update(update)
-    .eq("twilio_message_sid", messageSid);
+  let affected: any;
+  let statusError: { message: string } | null = null;
+  try {
+    const result = await supabase
+      .from("messages")
+      .update(update)
+      .eq("twilio_message_sid", messageSid)
+      .select("id,player_id,conversation_id");
+    affected = result.data;
+    statusError = result.error;
+  } catch (error) {
+    statusError = { message: error instanceof Error ? error.message : String(error) };
+  }
+  if (statusError) {
+    req.log.error({ err: statusError.message, MessageSid }, "Could not persist Twilio delivery status");
+  }
+
+  if (isTwilio21610(ErrorCode)) {
+    let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
+    if (!messages.length) {
+      const { data: linked, error: lookupError } = await supabase
+        .from("messages")
+        .select("id,player_id,conversation_id")
+        .eq("twilio_message_sid", messageSid)
+        .maybeSingle();
+      if (lookupError) {
+        req.log.error({ err: lookupError.message, MessageSid }, "Could not resolve message for Twilio opt-out");
+        res.status(500).send("Could not resolve the player for Twilio opt-out");
+        return;
+      }
+      if (linked) messages = [linked];
+    }
+    const playerIds = new Set<string>();
+    for (const message of messages) {
+      if (message?.player_id) {
+        playerIds.add(String(message.player_id));
+        continue;
+      }
+      if (message?.conversation_id) {
+        const { data: conversation, error: conversationError } = await supabase
+          .from("conversations")
+          .select("player_id")
+          .eq("id", message.conversation_id)
+          .maybeSingle();
+        if (conversationError) {
+          req.log.error({ err: conversationError.message, MessageSid }, "Could not resolve conversation player for Twilio opt-out");
+          res.status(500).send("Could not resolve the player for Twilio opt-out");
+          return;
+        }
+        if (conversation?.player_id) playerIds.add(String(conversation.player_id));
+      }
+    }
+    if (!playerIds.size) {
+      req.log.error({ MessageSid }, "Twilio opt-out status did not resolve a linked player");
+      res.status(500).send("Could not resolve the player for Twilio opt-out");
+      return;
+    }
+    try {
+      for (const playerId of playerIds) {
+        await applyTwilio21610OptOut(playerId, "twilio_error_21610");
+      }
+    } catch (error) {
+      req.log.error({ err: error, MessageSid }, "Could not persist the Twilio 21610 opt-out");
+      res.status(500).send(
+        error instanceof SmsOptOutPersistenceError && error.playerOptOutPersisted
+          ? "Player opt-out was saved, but LTP sequence exit failed; retry required"
+          : "Could not persist the player opt-out; retry required",
+      );
+      return;
+    }
+    if (statusError) {
+      res.status(500).send("Player opt-out was saved, but Twilio delivery status persistence failed; retry required");
+      return;
+    }
+  }
+
+  if (deliveredAt && affected) {
+    for (const message of (Array.isArray(affected) ? affected : [affected])) {
+      if (!message?.id) continue;
+      try {
+        await confirmLtpRecipientDelivery(message.id);
+      } catch (error) {
+        req.log.error({ err: error, message_id: message.id }, "Confirmed LTP delivery could not be applied to its sequence");
+      }
+    }
+  }
 
   res.status(204).send();
 });
@@ -532,10 +623,17 @@ router.post("/messages/webhook/inbound", async (req, res) => {
 
   // ── STOP: opt out ──
   if (isStop) {
-    await supabase
-      .from("players")
-      .update({ sms_opt_in: false, opted_out: true })
-      .eq("id", player.id);
+    try {
+      await permanentlyOptOutPlayerAndExitLtpSequence(player.id, player.club_id, "inbound_stop");
+    } catch (error) {
+      req.log.error({ err: error, player_id: player.id }, "Could not mark the player's LTP sequence permanently opted out");
+      res.status(503).json({
+        error: error instanceof SmsOptOutPersistenceError && error.playerOptOutPersisted
+          ? "STOP was saved, but the LTP sequence exit failed; retry required"
+          : "Could not persist STOP; retry required",
+      });
+      return;
+    }
 
     // Cancel all pending queued messages for this player
     const { data: convs } = await supabase
@@ -576,6 +674,20 @@ router.post("/messages/webhook/inbound", async (req, res) => {
     res.setHeader("Content-Type", "text/xml");
     res.status(200).send("<Response></Response>");
     return;
+  }
+
+  // A conversational reply pauses all remaining LTP steps, including when
+  // this reply is consumed by the separate session-feedback flow below.
+  try {
+    await transitionLtpSequence(
+      player.club_id,
+      player.id,
+      "ltp_followup",
+      "paused_reply",
+      "inbound_reply",
+    );
+  } catch (error) {
+    req.log.error({ err: error, player_id: player.id }, "Could not pause the player's LTP sequence after a reply");
   }
 
   // ── Session feedback reply ──
