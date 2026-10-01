@@ -1,6 +1,18 @@
+import type { RequestHandler } from "express";
+
 /** Retention-first defaults. Legacy features stay in place and can be unparked. */
 export const isRetentionOnlyMode = () => process.env.RETENTION_ONLY_MODE !== "false";
 export const requiresMarketingConsent = () => process.env.REQUIRE_MARKETING_CONSENT === "true";
+
+export function parkInRetentionOnlyMode(error: string): RequestHandler {
+  return (_req, res, next) => {
+    if (!isRetentionOnlyMode()) {
+      next();
+      return;
+    }
+    res.status(423).json({ error });
+  };
+}
 
 export interface TextEligibility {
   phone?: string | null;

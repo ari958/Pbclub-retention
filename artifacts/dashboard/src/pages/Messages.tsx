@@ -130,24 +130,45 @@ function StatusBadge({
 export default function Messages() {
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [drawerPlayerId, setDrawerPlayerId] = useState<string | null>(null);
   const [tab, setTab] = useState<FilterTab>("all");
   const club = useClub();
 
-  const fetchData = async () => {
-    const msgRes = await supabase
-      .from("messages")
-      .select(
-        "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
-      )
-      .order("id", { ascending: false })
-      .limit(200)
-      .returns<MessageRow[]>();
-    if (msgRes.data) setMessages(msgRes.data);
-    setLoading(false);
-  };
-
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    let active = true;
+    const fetchData = async () => {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const { data, error } = await supabase
+          .from("messages")
+          .select(
+            "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, players!player_id!inner(club_id), conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
+          )
+          .eq("players.club_id", club.id)
+          .order("id", { ascending: false })
+          .limit(200)
+          .abortSignal(controller.signal)
+          .returns<MessageRow[]>();
+        if (error) throw error;
+        if (active) setMessages(data ?? []);
+      } catch (error) {
+        if (active && !controller.signal.aborted) {
+          setMessages([]);
+          setLoadError(error instanceof Error ? error.message : "Unable to load messages.");
+        }
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    fetchData();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [club.id]);
 
   const filtered = messages.filter((m) => {
     if (tab === "outbound") return m.direction === "outbound";
@@ -280,6 +301,12 @@ export default function Messages() {
                         Loading…
                       </td>
                     </tr>
+                  ) : loadError ? (
+                    <tr>
+                      <td colSpan={6} role="alert" style={{ padding: "32px 16px", textAlign: "center", color: D.redText, fontSize: 13 }}>
+                        Messages could not be loaded: {loadError}
+                      </td>
+                    </tr>
                   ) : filtered.length === 0 ? (
                     <tr>
                       <td colSpan={6} style={{ padding: "32px 16px", textAlign: "center", color: D.faint, fontSize: 13 }}>
@@ -303,7 +330,7 @@ export default function Messages() {
                       const rowBg = isReply ? "rgba(46,160,67,0.03)" : "transparent";
                       return (
                         <tr
-                          key={m.id}
+                          key={`${m.id}-${i}`}
                           style={{
                             borderBottom: i < filtered.length - 1 ? `1px solid ${D.border}` : "none",
                             borderLeft: rowLeftBorder,

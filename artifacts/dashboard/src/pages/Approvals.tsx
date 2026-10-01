@@ -4,13 +4,13 @@ import { ApprovalCard, btn } from "@/components/ApprovalCard";
 import { useToast } from "@/components/Toast";
 import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
-import { retentionApi, ApiError, type ApprovalsResponse, type Candidate } from "@/lib/retentionApi";
+import { requestApprovalList } from "@/lib/approvalListRequest";
+import { retentionApi, ApiError, type ApprovalListStatus, type ApprovalsResponse, type Candidate } from "@/lib/retentionApi";
 
 const D = { bg: "#161b22", card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", orange: "#d4813a", orangeBg: "rgba(212,129,58,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
 const mono = "var(--font-mono)";
 const POLL_MS = 10000;
-type StatusFilter = "all" | "drafted" | "approved" | "skipped" | "sent";
 
 export default function Approvals() {
   const club = useClub();
@@ -22,14 +22,20 @@ export default function Approvals() {
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [operator, setOperator] = useState("");
-  const [filter, setFilter] = useState<StatusFilter>("all");
+  const [filter, setFilter] = useState<ApprovalListStatus>("all");
+  const [loadedFilter, setLoadedFilter] = useState<ApprovalListStatus | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkKey, setBulkKey] = useState<string | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
   const seq = useRef(0);
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
-  const [snap, setSnap] = useState<{ ids: string[]; bodies: Record<string, string>; excludedEditing: string[] } | null>(null);
+  const [snap, setSnap] = useState<{
+    ids: string[];
+    bodies: Record<string, string>;
+    excludedEditing: string[];
+    candidates: Candidate[];
+  } | null>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
   const setEditing = useCallback((id: string, on: boolean) => {
@@ -39,13 +45,13 @@ export default function Approvals() {
   const load = useCallback(async () => {
     const my = ++seq.current;
     try {
-      const r = await retentionApi.list(slug);
+      const r = await requestApprovalList(slug, filter, retentionApi.list);
       if (my !== seq.current) return;
-      setData(r); setLoadError(null); setUpdatedAt(new Date());
+      setData(r); setLoadedFilter(filter); setLoadError(null); setUpdatedAt(new Date());
     } catch (e) {
       if (my === seq.current) setLoadError(e instanceof Error ? e.message : "Failed to load");
     } finally { if (my === seq.current) setLoading(false); }
-  }, [slug]);
+  }, [slug, filter]);
 
   useEffect(() => {
     load();
@@ -57,10 +63,10 @@ export default function Approvals() {
 
   // Drop selections that are no longer drafted.
   useEffect(() => {
-    if (!data) return;
+    if (!data || (loadedFilter !== "all" && loadedFilter !== "drafted")) return;
     const drafted = new Set(data.candidates.filter((c) => c.status === "drafted").map((c) => c.id));
     setSelected((s) => { const n = new Set([...s].filter((id) => drafted.has(id))); return n.size === s.size ? s : n; });
-  }, [data]);
+  }, [data, loadedFilter]);
 
   const withBusy = async (id: string, fn: () => Promise<unknown>, ok: string) => {
     setBusy((b) => new Set(b).add(id));
@@ -103,16 +109,23 @@ export default function Approvals() {
   }, [data, filter]);
 
   const counts = useMemo(() => {
-    const r: Record<string, number> = { drafted: 0, approved: 0, skipped: 0, sent: 0 };
-    for (const c of data?.candidates ?? []) r[c.status] = (r[c.status] ?? 0) + 1;
-    return r;
-  }, [data]);
+    if (data?.counts) return data.counts;
+    if (!data || loadedFilter !== "all") return null;
+    const result: Partial<Record<ApprovalListStatus, number>> = { drafted: 0, approved: 0 };
+    for (const c of data.candidates) {
+      if (c.status === "drafted" || c.status === "approved") result[c.status] = (result[c.status] ?? 0) + 1;
+    }
+    return result;
+  }, [data, loadedFilter]);
 
-  const byId = useMemo(() => new Map((data?.candidates ?? []).map((c) => [c.id, c])), [data]);
-  const bulkCands = (snap?.ids ?? []).map((id) => byId.get(id)).filter((c): c is Candidate => !!c);
+  const bulkCands = snap?.candidates ?? [];
 
   const openBulk = (key: string) => {
-    setSnap(snapshotBulk(data?.candidates ?? [], selected, key, editingIds));
+    const snapshot = snapshotBulk(data?.candidates ?? [], selected, key, editingIds);
+    setSnap({
+      ...snapshot,
+      candidates: (data?.candidates ?? []).filter((candidate) => snapshot.ids.includes(candidate.id)),
+    });
     setBulkKey(key);
   };
   const closeBulk = () => { setBulkKey(null); setSnap(null); };
@@ -204,10 +217,10 @@ export default function Approvals() {
           </div>
 
           <div style={{ display: "flex", borderBottom: `1px solid ${D.border}` }}>
-            {(["all", "drafted", "approved", "skipped", "sent"] as StatusFilter[]).map((k) => (
+            {(["all", "drafted", "approved", "skipped", "sent"] as ApprovalListStatus[]).map((k) => (
               <button key={k} onClick={() => setFilter(k)} data-testid={`tab-${k}`}
                 style={{ padding: "8px 14px", background: "transparent", border: "none", borderBottom: filter === k ? `2px solid ${D.accent}` : "2px solid transparent", color: filter === k ? D.text : D.muted, fontSize: 13, cursor: "pointer", marginBottom: -1 }}>
-                {k}{k !== "all" && <span style={{ fontFamily: mono, fontSize: 10, marginLeft: 6, color: D.faint }}>{counts[k] ?? 0}</span>}
+                {k}<span data-testid={`count-${k}`} style={{ fontFamily: mono, fontSize: 10, marginLeft: 6, color: D.faint }}>{counts?.[k] ?? "—"}</span>
               </button>
             ))}
           </div>
@@ -223,7 +236,7 @@ export default function Approvals() {
             </div>
           ) : groups.size === 0 ? (
             <div style={{ padding: "48px 20px", textAlign: "center", color: D.faint, fontSize: 13, background: D.card, border: `1px dashed ${D.border}`, borderRadius: 8 }} data-testid="empty-approvals">
-              No {filter === "all" ? "" : filter + " "}drafts. Use Generate drafts to create drafts from recent Learn to Play attendance. Drafts are never sent until approved.
+              {filter === "all" ? "No retention messages yet." : filter === "drafted" ? "No drafts." : `No ${filter} messages.`}
             </div>
           ) : (
             [...groups.entries()].map(([key, list]) => {

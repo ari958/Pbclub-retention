@@ -154,9 +154,26 @@ export type RetentionReviewMode = {
   kill_switch?: boolean | null;
 };
 
+/**
+ * Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.
+ */
+export interface RetentionApprovalCounts {
+  /** @minimum 0 */
+  all: number;
+  /** @minimum 0 */
+  drafted: number;
+  /** @minimum 0 */
+  approved: number;
+  /** @minimum 0 */
+  skipped: number;
+  /** @minimum 0 */
+  sent: number;
+}
+
 export interface RetentionReview {
   schema_ready: boolean;
   error?: string;
+  counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];
   candidates: RetentionCandidate[];
   warnings: string[];
@@ -187,6 +204,17 @@ export type RetentionClubParameter = string;
  */
 export type RetentionSlugParameter = string;
 
+export type RetentionApprovalStatusParameter =
+  (typeof RetentionApprovalStatusParameter)[keyof typeof RetentionApprovalStatusParameter];
+
+export const RetentionApprovalStatusParameter = {
+  all: "all",
+  drafted: "drafted",
+  approved: "approved",
+  skipped: "skipped",
+  sent: "sent",
+} as const;
+
 export type ListRetentionApprovalsParams = {
   /**
    * Club UUID; supply either clubId or slug
@@ -196,6 +224,10 @@ export type ListRetentionApprovalsParams = {
    * Club slug; supply either clubId or slug
    */
   slug?: RetentionSlugParameter;
+  /**
+   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+   */
+  status?: RetentionApprovalStatusParameter;
 };
 
 export type GenerateRetentionDraftsParams = {

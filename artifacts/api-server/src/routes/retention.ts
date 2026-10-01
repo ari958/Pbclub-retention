@@ -8,6 +8,12 @@ import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
 import { isStaleReviewedBodyError } from "../lib/retentionApproval";
 import type { RetentionCandidate, RetentionContext, RetentionMessage, RetentionPlaybook } from "../lib/retentionTypes";
+import {
+  applyCandidateStatusFilter,
+  CANDIDATE_STATUSES,
+  decorateApprovalCandidates,
+  parseApprovalListStatus,
+} from "../lib/retentionApprovals";
 
 const router: IRouter = Router();
 const ExpectedBodySchema = z.string().refine((value) => value.trim().length > 0);
@@ -74,6 +80,21 @@ async function fetchByIds(table: "players" | "messages", select: string, ids: st
   return results;
 }
 
+async function fetchCandidateCounts(clubId: string) {
+  const countFor = async (status?: (typeof CANDIDATE_STATUSES)[number]) => {
+    let query = supabase.from("retention_candidates").select("id", { count: "exact", head: true }).eq("club_id", clubId);
+    if (status) query = query.eq("status", status);
+    const { count, error } = await query;
+    if (error) throw new Error(error.message);
+    return count ?? 0;
+  };
+  const [all, drafted, approved, skipped, sent] = await Promise.all([
+    countFor(),
+    ...CANDIDATE_STATUSES.map((status) => countFor(status)),
+  ]);
+  return { all, drafted, approved, skipped, sent };
+}
+
 async function loadCandidate(clubId: string, id: string) {
   const { data, error } = await supabase.from("retention_candidates").select("*").eq("id", id).eq("club_id", clubId).maybeSingle();
   if (error) throw new Error(error.message);
@@ -102,19 +123,28 @@ async function approveCandidate(clubId: string, candidate: RetentionCandidate, a
   return data;
 }
 
-router.get("/retention/approvals", requireClub, async (req, res) => {
+router.get("/retention/approvals", requireClub, async (req, res): Promise<void> => {
   const clubId = (req as ClubScopedRequest).clubId;
+  const parsedStatus = parseApprovalListStatus(req.query.status);
+  if (!parsedStatus.success) {
+    res.status(400).json({ error: "status must be one of all, drafted, approved, skipped, sent" });
+    return;
+  }
+  const status = parsedStatus.data;
   try {
     const { data: playbooks, error: playbookError } = await supabase.from("retention_playbooks").select("*").order("key");
     if (playbookError) throw new Error(playbookError.message);
-    const candidates = await fetchAllRows<RetentionCandidate>((from, to) => supabase.from("retention_candidates")
-      .select("*").eq("club_id", clubId).in("status", ["drafted", "approved"])
-      .order("created_at", { ascending: false }).range(from, to));
+    const candidates = await fetchAllRows<RetentionCandidate>((from, to) => {
+      let query = supabase.from("retention_candidates").select("*").eq("club_id", clubId);
+      query = applyCandidateStatusFilter(query, status);
+      return query.order("created_at", { ascending: false }).range(from, to);
+    });
+    const counts = await fetchCandidateCounts(clubId);
     const playerIds = [...new Set(candidates.map((c) => c.player_id))];
     const messageIds = [...new Set(candidates.map((c) => c.message_id).filter(Boolean))] as string[];
     const [playerRows, messageRows] = await Promise.all([
       fetchByIds("players", "id,name", playerIds, clubId),
-      fetchByIds("messages", "id,body,status,approved_at,approved_by,scheduled_send_at,sent_at", messageIds),
+      fetchByIds("messages", "id,body,status,approved_at,approved_by,scheduled_send_at,sent_at,simulated", messageIds),
     ]);
     const players = new Map(playerRows.map((row: any) => [row.id, row]));
     const messages = new Map(messageRows.map((row: any) => [row.id, row]));
@@ -130,12 +160,11 @@ router.get("/retention/approvals", requireClub, async (req, res) => {
     res.json({
       schema_ready: true,
       playbooks: (playbooks ?? []) as RetentionPlaybook[],
-      candidates: candidates.map((candidate) => ({
-        ...candidate,
-        player: { name: players.get(candidate.player_id)?.name ?? "Unknown" },
-        message: (candidate.message_id ? messages.get(candidate.message_id) : null) as RetentionMessage | null,
-        context: candidate.context,
-      })),
+      candidates: decorateApprovalCandidates(candidates, players, messages) as (RetentionCandidate & {
+        player: { name: string };
+        message: RetentionMessage | null;
+      })[],
+      counts,
       warnings,
       mode: {
         retention_only: mode.retention_only,

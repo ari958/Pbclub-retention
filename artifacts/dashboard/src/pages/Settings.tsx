@@ -592,7 +592,9 @@ export default function Settings() {
     finally { setTemplatesLoading(false); }
   }, [club.slug]);
 
-  useEffect(() => { fetchTemplates(); }, [fetchTemplates]);
+  useEffect(() => {
+    if (!RETENTION) fetchTemplates();
+  }, [fetchTemplates]);
 
   const saveSchedule = async () => {
     setSaving(true);
@@ -823,7 +825,7 @@ export default function Settings() {
           {!RETENTION && <RecapMilestonesPanel />}
 
           {/* ── Message Templates ── */}
-          <div style={cardStyle}>
+          {!RETENTION && <div style={cardStyle}>
             <div style={{ ...cardHeadStyle, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
               <span>Message Templates</span>
               {!editorOpen && (
@@ -1095,7 +1097,7 @@ export default function Settings() {
                 )}
               </div>
             </div>
-          </div>
+          </div>}
         </main>
       </div>
     </div>

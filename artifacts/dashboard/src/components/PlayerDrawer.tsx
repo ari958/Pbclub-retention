@@ -4,6 +4,7 @@ import { useToast } from "./Toast";
 import { relativeTime, formatDate, getEngagementState, toTitleCase, STATE_COLORS } from "@/lib/helpers";
 import type { ProgressionStatus } from "@/lib/types";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
+import { RETENTION } from "@/lib/navMode";
 
 interface FullPlayer {
   id: string;
@@ -196,13 +197,15 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
     }
     setLoadingData(true);
 
-    const BASE_SELECT = "id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, coach_assigned_level, coach_level_notes, coach_level_set_at, dupr_rating, dupr_updated_at";
-    const CHURN_SELECT = `${BASE_SELECT}, churn_risk, churn_score`;
+    const BASE_SELECT = RETENTION
+      ? "id, name, skill_level, membership_status, last_visit_date, phone, notes, club_id"
+      : "id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, coach_assigned_level, coach_level_notes, coach_level_set_at, dupr_rating, dupr_updated_at";
+    const PLAYER_SELECT = RETENTION ? BASE_SELECT : `${BASE_SELECT}, churn_risk, churn_score`;
 
     Promise.all([
       supabase
         .from("players")
-        .select(CHURN_SELECT)
+        .select(PLAYER_SELECT)
         .eq("id", playerId)
         .single(),
       supabase
@@ -217,7 +220,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
         .eq("player_id", playerId)
         .order("id", { ascending: false }),
     ]).then(async ([pRes, aRes, cRes]) => {
-      let playerData = pRes.data;
+      let playerData = pRes.data as unknown as FullPlayer | null;
       // Fallback if churn columns don't exist yet (pre-migration)
       if (!playerData && pRes.error?.code === "42703") {
         const fallback = await supabase
@@ -226,10 +229,10 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
           .eq("id", playerId)
           .single()
           .returns<FullPlayer>();
-        playerData = fallback.data;
+        playerData = fallback.data as unknown as FullPlayer | null;
       }
       if (playerData) {
-        const p = playerData as FullPlayer;
+        const p = playerData;
         setPlayer(p);
         setNotesDraft(p.notes ?? "");
         setCoachLevelNotesDraft(p.coach_level_notes ?? "");
@@ -239,13 +242,19 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       if (cRes.data) setConversations(cRes.data as ConversationRow[]);
     }).finally(() => setLoadingData(false));
 
-    // Fetch confidence data via API
-    setLoadingConfidence(true);
-    fetch(clubApiUrl(club.slug, `/api/players/${playerId}/confidence`))
-      .then((r) => r.ok ? r.json() : [])
-      .then((data) => setConfidence(Array.isArray(data) ? data : []))
-      .catch(() => setConfidence([]))
-      .finally(() => setLoadingConfidence(false));
+    if (!RETENTION) {
+      // Fetch confidence data via API
+      setLoadingConfidence(true);
+      fetch(clubApiUrl(club.slug, `/api/players/${playerId}/confidence`))
+        .then((r) => r.ok ? r.json() : [])
+        .then((data) => setConfidence(Array.isArray(data) ? data : []))
+        .catch(() => setConfidence([]))
+        .finally(() => setLoadingConfidence(false));
+    } else {
+      setLoadingConfidence(false);
+      setConfidence([]);
+      setTaxonomy([]);
+    }
 
     // Fetch Court Crew (buddy pairs) in parallel
     setBuddiesLoading(true);
@@ -258,7 +267,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
 
   // Taxonomy depends on clubId — waits until club is known before fetching
   useEffect(() => {
-    if (!playerId || !clubId) return;
+    if (RETENTION || !playerId || !clubId) return;
     supabase
       .from("level_taxonomy")
       .select("level, rank")
@@ -525,27 +534,29 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
             )}
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
-            <button
-              onClick={runAgent}
-              disabled={runningAgent || loadingData}
-              style={{
-                padding: "5px 12px",
-                borderRadius: 4,
-                fontSize: 12,
-                fontWeight: 500,
-                background: "var(--accent)",
-                color: "#fff",
-                border: "none",
-                opacity: runningAgent || loadingData ? 0.65 : 1,
-                cursor: runningAgent || loadingData ? "not-allowed" : "pointer",
-                fontFamily: "var(--font-sans)",
-                display: "flex",
-                alignItems: "center",
-              }}
-            >
-              {runningAgent && <Spinner />}
-              {runningAgent ? "Running…" : "Run Agent"}
-            </button>
+            {!RETENTION && (
+              <button
+                onClick={runAgent}
+                disabled={runningAgent || loadingData}
+                style={{
+                  padding: "5px 12px",
+                  borderRadius: 4,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  background: "var(--accent)",
+                  color: "#fff",
+                  border: "none",
+                  opacity: runningAgent || loadingData ? 0.65 : 1,
+                  cursor: runningAgent || loadingData ? "not-allowed" : "pointer",
+                  fontFamily: "var(--font-sans)",
+                  display: "flex",
+                  alignItems: "center",
+                }}
+              >
+                {runningAgent && <Spinner />}
+                {runningAgent ? "Running…" : "Run Agent"}
+              </button>
+            )}
             <button
               onClick={onClose}
               style={{
@@ -592,6 +603,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                 <span style={{ fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0 }}>Membership</span>
                 <MembershipPill status={player.membership_status} />
               </div>
+              {!RETENTION && <>
               <div style={{ marginBottom: 14 }}>
                 <label
                   style={{
@@ -854,6 +866,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
                   </div>
                 )}
               </div>
+              </>}
 
               {/* Court Crew */}
               <div style={{ marginBottom: 14 }}>
@@ -948,7 +961,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
             </Section>
 
             {/* Churn Risk */}
-            {(player.churn_risk === "high" || player.churn_risk === "medium") && (
+            {!RETENTION && (player.churn_risk === "high" || player.churn_risk === "medium") && (
               <Section title="Churn Risk">
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
                   <span
@@ -980,7 +993,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
             )}
 
             {/* Agent Result inline */}
-            {agentResult && (
+            {!RETENTION && agentResult && (
               <Section title="Generated Message">
                 {editingResult ? (
                   <>

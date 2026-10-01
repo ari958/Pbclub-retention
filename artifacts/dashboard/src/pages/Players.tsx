@@ -13,6 +13,7 @@ import {
   dateOnlyMs,
 } from "@/lib/helpers";
 import type { Player, EngagementState, ProgressionStatus } from "@/lib/types";
+import { RETENTION } from "@/lib/navMode";
 
 const PAGE_SIZE = 50;
 
@@ -268,6 +269,7 @@ export default function Players() {
         .select(
           "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating, churn_risk"
         )
+        .eq("club_id", club.id)
         .range(offset, offset + 999);
       // If churn_risk column not yet migrated, fall back to select without it
       if (error && error.code === "42703") {
@@ -276,6 +278,7 @@ export default function Players() {
           .select(
             "id, external_id, name, skill_level, membership_status, progression_status, last_visit_date, phone, notes, club_id, sms_opt_in, dupr_rating"
           )
+          .eq("club_id", club.id)
           .range(offset, offset + 999);
         if (!fallback || fallback.length === 0) break;
         allPlayers.push(...(fallback as Player[]));
@@ -293,8 +296,9 @@ export default function Players() {
 
     const { data: misfitRows } = await supabase
       .from("session_feedback")
-      .select("player_id")
-      .eq("self_fit", 0);
+      .select("player_id, players!player_id!inner(club_id)")
+      .eq("self_fit", 0)
+      .eq("players.club_id", club.id);
     const counts = new Map<string, number>();
     for (const row of (misfitRows ?? []) as { player_id: string }[]) {
       counts.set(row.player_id, (counts.get(row.player_id) ?? 0) + 1);
@@ -306,7 +310,7 @@ export default function Players() {
     setMisfitPlayerIds(ids);
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => { fetchData(); }, [club.id]);
 
   const handleSort = (col: SortCol) => {
     if (sortCol === col) {
@@ -476,23 +480,25 @@ export default function Players() {
             >
               Export CSV
             </button>
-            <button
-              onClick={() => setBulkModalOpen(true)}
-              style={{
-                padding: "5px 14px",
-                borderRadius: 5,
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: "pointer",
-                border: "none",
-                background: D.accent,
-                color: "#fff",
-                fontFamily: "var(--font-sans)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              Send Bulk Outreach
-            </button>
+            {!RETENTION && (
+              <button
+                onClick={() => setBulkModalOpen(true)}
+                style={{
+                  padding: "5px 14px",
+                  borderRadius: 5,
+                  fontSize: 12,
+                  fontWeight: 500,
+                  cursor: "pointer",
+                  border: "none",
+                  background: D.accent,
+                  color: "#fff",
+                  fontFamily: "var(--font-sans)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                Send Bulk Outreach
+              </button>
+            )}
           </div>
         </header>
 
@@ -542,14 +548,14 @@ export default function Players() {
             </div>
 
             {/* Progress chips */}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            {!RETENTION && <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={{ fontSize: 10, fontFamily: "var(--font-mono)", color: D.faint, letterSpacing: "0.05em", textTransform: "uppercase", marginRight: 2 }}>Progress</span>
               <Chip label="All" active={!progFilter} onClick={() => setProgFilter("")} />
               <Chip label="Needs Attention" active={progFilter === "null"} onClick={() => setProgFilter("null")} />
               <Chip label="Move Up a Level" active={progFilter === "ready-to-advance"} onClick={() => setProgFilter("ready-to-advance")} />
               <Chip label="Still Developing" active={progFilter === "developing"} onClick={() => setProgFilter("developing")} />
               <Chip label="At Their Level" active={progFilter === "at-ceiling"} onClick={() => setProgFilter("at-ceiling")} />
-            </div>
+            </div>}
 
             {/* Member chips */}
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
@@ -728,7 +734,7 @@ export default function Players() {
         onDataChanged={fetchData}
       />
 
-      {bulkModalOpen && (
+      {!RETENTION && bulkModalOpen && (
         <BulkMessageModal
           recipients={displayed}
           filterSummary={filterSummary}

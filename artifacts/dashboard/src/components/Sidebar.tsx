@@ -10,7 +10,7 @@ import { ClubSwitcher } from "./ClubSwitcher";
 //   pulse                  — Pulse retention surfaces only (original nav)
 //   all                    — both sets visible
 //   retention    (default) — Approvals, Players, Messages, Settings; rest parked
-import { NAV_MODE } from "@/lib/navMode";
+import { NAV_MODE, RETENTION } from "@/lib/navMode";
 
 // ─── SVG Icons ────────────────────────────────────────────────────────────────
 
@@ -134,36 +134,68 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
       setUnreadReplies(0);
       return;
     }
+    let active = true;
     const fetchUnread = async () => {
-      const { count } = await supabase
+      const { count, error } = await supabase
         .from("messages")
         .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
         .eq("direction", "inbound")
         .eq("players.club_id", clubId)
         .is("read_at", null);
-      setUnreadReplies(count ?? 0);
+      if (active && !error) setUnreadReplies(count ?? 0);
     };
     fetchUnread();
     const interval = setInterval(fetchUnread, 30000);
-    return () => clearInterval(interval);
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
   }, [clubId]);
 
   useEffect(() => {
     const messagesPath = slug ? `/c/${slug}/messages` : null;
-    if (messagesPath && location.pathname === messagesPath && unreadReplies > 0) {
+    if (messagesPath && clubId && location.pathname === messagesPath && unreadReplies > 0) {
+      let active = true;
       const markRead = async () => {
-        await supabase
-          .from("messages")
-          .update({ read_at: new Date().toISOString() })
-          .eq("direction", "inbound")
-          .is("read_at", null);
-        setUnreadReplies(0);
+        // PostgREST cannot safely apply a joined players.club_id predicate to
+        // an UPDATE. Resolve only this club's unread message IDs first, then
+        // update bounded ID batches while rechecking the unread conditions.
+        for (let batch = 0; batch < 10; batch++) {
+          const { data, error } = await supabase
+            .from("messages")
+            .select("id, players!player_id!inner(club_id)")
+            .eq("direction", "inbound")
+            .eq("players.club_id", clubId)
+            .is("read_at", null)
+            .limit(500);
+          if (error || !data?.length || !active) break;
+          const ids = data.map((row) => row.id);
+          const { error: updateError } = await supabase
+            .from("messages")
+            .update({ read_at: new Date().toISOString() })
+            .in("id", ids)
+            .eq("direction", "inbound")
+            .is("read_at", null);
+          if (updateError) break;
+        }
+        if (active) {
+          const { count, error } = await supabase
+            .from("messages")
+            .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
+            .eq("direction", "inbound")
+            .eq("players.club_id", clubId)
+            .is("read_at", null);
+          if (!error && active) setUnreadReplies(count ?? 0);
+        }
       };
       const timer = setTimeout(markRead, 1500);
-      return () => clearTimeout(timer);
+      return () => {
+        active = false;
+        clearTimeout(timer);
+      };
     }
     return undefined;
-  }, [location.pathname, unreadReplies, slug]);
+  }, [location.pathname, unreadReplies, slug, clubId]);
 
   const messagesBadge = messageCount + unreadReplies;
 
@@ -349,7 +381,7 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
         })}
       </nav>
 
-      <div
+      {!RETENTION && <div
         style={{
           padding: "16px 20px",
           borderTop: "1px solid var(--border-dark)",
@@ -376,7 +408,7 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
             {lastSynced ? `synced ${lastSynced}` : "sync live"}
           </span>
         </div>
-      </div>
+      </div>}
     </aside>
   );
 }

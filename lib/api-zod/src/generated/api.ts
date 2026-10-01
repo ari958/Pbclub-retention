@@ -16,8 +16,10 @@ export const HealthCheckResponse = zod.object({
 });
 
 /**
- * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ * @summary List retention candidates by status with global status counts
  */
+export const listRetentionApprovalsQueryStatusDefault = `all`;
+
 export const ListRetentionApprovalsQueryParams = zod.object({
   clubId: zod.coerce
     .string()
@@ -28,7 +30,23 @@ export const ListRetentionApprovalsQueryParams = zod.object({
     .string()
     .optional()
     .describe("Club slug; supply either clubId or slug"),
+  status: zod
+    .enum(["all", "drafted", "approved", "skipped", "sent"])
+    .default(listRetentionApprovalsQueryStatusDefault)
+    .describe(
+      "Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.",
+    ),
 });
+
+export const listRetentionApprovalsResponseCountsAllMin = 0;
+
+export const listRetentionApprovalsResponseCountsDraftedMin = 0;
+
+export const listRetentionApprovalsResponseCountsApprovedMin = 0;
+
+export const listRetentionApprovalsResponseCountsSkippedMin = 0;
+
+export const listRetentionApprovalsResponseCountsSentMin = 0;
 
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin = 0;
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax = 100;
@@ -38,6 +56,20 @@ export const listRetentionApprovalsResponseCandidatesItemContextClassmatesSigned
 export const ListRetentionApprovalsResponse = zod.object({
   schema_ready: zod.boolean(),
   error: zod.string().optional(),
+  counts: zod
+    .object({
+      all: zod.number().min(listRetentionApprovalsResponseCountsAllMin),
+      drafted: zod.number().min(listRetentionApprovalsResponseCountsDraftedMin),
+      approved: zod
+        .number()
+        .min(listRetentionApprovalsResponseCountsApprovedMin),
+      skipped: zod.number().min(listRetentionApprovalsResponseCountsSkippedMin),
+      sent: zod.number().min(listRetentionApprovalsResponseCountsSentMin),
+    })
+    .optional()
+    .describe(
+      "Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.",
+    ),
   playbooks: zod.array(
     zod.object({
       key: zod.string(),

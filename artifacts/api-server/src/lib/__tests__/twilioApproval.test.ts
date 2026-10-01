@@ -17,6 +17,7 @@ const originalEnv = {
   smsLive: process.env.SMS_LIVE,
   override: process.env.SMS_TEST_OVERRIDE_TO,
   consent: process.env.REQUIRE_MARKETING_CONSENT,
+  retentionOnly: process.env.RETENTION_ONLY_MODE,
 };
 const originalSupabaseFrom = (supabase as any).from;
 const MESSAGE_ID = "00000000-0000-4000-8000-000000000001";
@@ -26,6 +27,8 @@ const CLUB_ID = "00000000-0000-4000-8000-000000000003";
 const state: {
   message: any;
   player: any;
+  candidate: any;
+  candidateError?: { message: string } | null;
   club: DbResult;
   clubReads?: DbResult[];
   casRace: boolean;
@@ -36,6 +39,7 @@ const state: {
 } = {
   message: {},
   player: {},
+  candidate: {},
   club: { data: { sms_kill_switch: false }, error: null },
   casRace: false,
   transportCalls: 0,
@@ -67,7 +71,7 @@ function queryFor(table: string) {
       if (table === "players") return { data: state.player, error: null };
       if (table === "clubs") return state.clubReads?.shift() ?? state.club;
       if (table === "contact_ledger") return { data: null, error: null };
-      if (table === "retention_candidates") return { data: null, error: null };
+      if (table === "retention_candidates") return { data: state.candidate, error: state.candidateError ?? null };
     }
     if (table === "messages" && operation === "update") {
       if (filters.status && state.message.status !== filters.status) {
@@ -104,7 +108,15 @@ function queryFor(table: string) {
   return query;
 }
 
-function reset(options: { approved?: boolean; kill?: DbResult; clubReads?: DbResult[]; casRace?: boolean; transportError?: Error } = {}) {
+function reset(options: {
+  approved?: boolean;
+  kill?: DbResult;
+  clubReads?: DbResult[];
+  casRace?: boolean;
+  transportError?: Error;
+  candidate?: any;
+  candidateError?: { message: string } | null;
+} = {}) {
   state.message = {
     id: MESSAGE_ID,
     body: "Thanks for coming by!",
@@ -127,6 +139,17 @@ function reset(options: { approved?: boolean; kill?: DbResult; clubReads?: DbRes
     sms_consented_at: null,
     club_id: CLUB_ID,
   };
+  state.candidate = options.candidate === undefined
+    ? {
+        id: "00000000-0000-4000-8000-000000000004",
+        message_id: MESSAGE_ID,
+        player_id: PLAYER_ID,
+        club_id: CLUB_ID,
+        status: "approved",
+        context: null,
+      }
+    : options.candidate;
+  state.candidateError = options.candidateError;
   state.club = options.kill ?? { data: { sms_kill_switch: false }, error: null };
   state.clubReads = options.clubReads;
   state.casRace = options.casRace ?? false;
@@ -146,6 +169,7 @@ async function invoke() {
 
 process.env.NODE_ENV = "test";
 process.env.SMS_LIVE = "true";
+process.env.RETENTION_ONLY_MODE = "true";
 delete process.env.REQUIRE_MARKETING_CONSENT;
 setTwilioClockForTests(() => new Date("2026-01-15T17:00:00.000Z")); // Thursday, noon ET.
 setTwilioClientFactoryForTests(() => ({
@@ -166,6 +190,77 @@ test("unapproved message is blocked before transport", async () => {
   assert.equal(state.sends.length, 0);
   assert.equal(state.transportCalls, 0);
   assert.equal(state.ledger.length, 0);
+});
+
+test("retention dispatch blocks messages with no linked candidate before claim", async () => {
+  reset({ candidate: null });
+  await assert.rejects(invoke(), /requires an approved retention candidate linked to this message/);
+  assert.equal(state.sends.length, 0);
+  assert.equal(state.transportCalls, 0);
+  assert.equal(state.ledger.length, 0);
+  assert.equal(state.message.dispatch_token, null);
+  assert.equal(state.message.status, "pending");
+});
+
+test("approved retention candidate and approved linked message can dispatch through the mock transport", async () => {
+  reset();
+  const result = await invoke();
+  assert.equal(result.sid, "SM-test");
+  assert.equal(state.transportCalls, 1);
+  assert.equal(state.sends.length, 1);
+  assert.equal(state.message.status, "sent");
+});
+
+test("retention dispatch requires approved candidate state and linked-message approval timestamp", async () => {
+  reset();
+  for (const candidate of [{ ...state.candidate, status: "drafted" }]) {
+    reset({ candidate });
+    await assert.rejects(invoke(), /candidate and linked message have not been explicitly approved/);
+    assert.equal(state.sends.length, 0);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.message.dispatch_token, null);
+  }
+
+  reset({ approved: false });
+  await assert.rejects(invoke(), /not explicitly approved/);
+  assert.equal(state.sends.length, 0);
+  assert.equal(state.message.dispatch_token, null);
+});
+
+test("retention candidate must be associated to the exact message, player and active club", async () => {
+  reset();
+  for (const candidate of [
+    { ...state.candidate, message_id: "00000000-0000-4000-8000-000000000099" },
+    { ...state.candidate, player_id: "00000000-0000-4000-8000-000000000099" },
+    { ...state.candidate, club_id: "00000000-0000-4000-8000-000000000099" },
+  ]) {
+    reset({ candidate });
+    await assert.rejects(invoke(), /does not match this message, player, and active club/);
+    assert.equal(state.sends.length, 0);
+    assert.equal(state.message.dispatch_token, null);
+  }
+});
+
+test("retention candidate read failures fail closed before the dispatch claim", async () => {
+  reset({ candidateError: { message: "candidate read failed" } });
+  await assert.rejects(invoke(), /approval could not be verified: candidate read failed/);
+  assert.equal(state.sends.length, 0);
+  assert.equal(state.transportCalls, 0);
+  assert.equal(state.message.dispatch_token, null);
+  assert.equal(state.message.status, "pending");
+});
+
+test("missing retention candidate remains permitted when retention-only mode is disabled", async () => {
+  process.env.RETENTION_ONLY_MODE = "false";
+  reset({ candidate: null });
+  try {
+    const result = await invoke();
+    assert.equal(result.sid, "SM-test");
+    assert.equal(state.transportCalls, 1);
+    assert.equal(state.sends.length, 1);
+  } finally {
+    process.env.RETENTION_ONLY_MODE = "true";
+  }
 });
 
 test("approved body mismatch is blocked before transport", async () => {
@@ -297,5 +392,7 @@ test("test environment is restored", () => {
   else process.env.SMS_TEST_OVERRIDE_TO = originalEnv.override;
   if (originalEnv.consent === undefined) delete process.env.REQUIRE_MARKETING_CONSENT;
   else process.env.REQUIRE_MARKETING_CONSENT = originalEnv.consent;
+  if (originalEnv.retentionOnly === undefined) delete process.env.RETENTION_ONLY_MODE;
+  else process.env.RETENTION_ONLY_MODE = originalEnv.retentionOnly;
   (supabase as any).from = originalSupabaseFrom;
 });

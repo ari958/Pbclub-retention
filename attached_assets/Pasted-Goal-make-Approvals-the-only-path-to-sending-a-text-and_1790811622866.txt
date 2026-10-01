@@ -1,0 +1,28 @@
+Goal: make Approvals the only path to sending a text, and hide everything unrelated to retention texts. Hide or park; don't delete. All hiding is conditional on VITE_NAV_MODE=retention, and all server parking is conditional on RETENTION_ONLY_MODE.
+
+Server: close the bypasses
+
+In retention mode, POST /api/agent/run and POST /api/messages/bulk return 423, following the existing parking pattern.
+In retention mode, POST /api/messages/send and the queue poller only dispatch messages linked to a retention_candidates row with approved_at set. Everything else is refused.
+
+Hide in the UI
+3. Dashboard: show only the read-only stat cards. Hide the recommendations carousel, Outreach Queue and its editor, Needs Attention, and New Player Intros. None of their data requests should fire while they're hidden.
+4. PlayerDrawer: hide Run Agent, Generated Message and its Send button, the progression selector, coach level and coach notes, DUPR, Level Confidence, and Churn Risk. Keep the profile basics, phone, attendance, conversations and message history, notes, and Court Crew. Hidden sections must not fetch their data.
+5. Players page: hide the Send Bulk Outreach button and the Progress filter.
+6. Settings: hide the Message Templates card.
+7. Progress page: wrap /assessments in Parked so it redirects like the other parked pages.
+
+Fix
+8. Sidebar: scope the automatic messages.read_at update to the active club, matching the count query.
+9. Messages page: fix the loading state that doesn't settle and the duplicate React keys. Add the active club filter to its query. Add club filters to the Players page's session_feedback read as well.
+10. Approvals: make the Skipped and Sent filters work by having the list API accept a status filter, so sent history is visible on this page.
+
+Acceptance test:
+
+The sidebar shows Dashboard, Approvals, Players, Messages, and Settings.
+No button anywhere outside Approvals can create or send a message.
+/assessments redirects.
+/api/agent/run and /api/messages/bulk return 423.
+The Messages page loads fully with no console key warnings.
+The Approvals Sent filter shows sent history.
+Report every button you removed or hid, by page.

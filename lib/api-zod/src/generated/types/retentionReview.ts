@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionApprovalCounts } from "./retentionApprovalCounts";
 import type { RetentionCandidate } from "./retentionCandidate";
 import type { RetentionPlaybook } from "./retentionPlaybook";
 import type { RetentionReviewMode } from "./retentionReviewMode";
@@ -12,6 +13,7 @@ import type { RetentionReviewMode } from "./retentionReviewMode";
 export interface RetentionReview {
   schema_ready: boolean;
   error?: string;
+  counts?: RetentionApprovalCounts;
   playbooks: RetentionPlaybook[];
   candidates: RetentionCandidate[];
   warnings: string[];

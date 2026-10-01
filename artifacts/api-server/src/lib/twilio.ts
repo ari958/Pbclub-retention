@@ -5,6 +5,7 @@ import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from ".
 import { isInsideSendWindow } from "./playerTiming";
 import { supabase } from "./supabaseClient";
 import { validateRetentionCoupon } from "./retentionCoupons";
+import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
 
 export function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -184,14 +185,12 @@ export async function sendViaTwilio(
   if (to.trim() !== player.phone.trim()) {
     throw new SmsPolicyBlockedError("SMS destination does not match the player's current phone");
   }
-  const { data: retentionCandidate, error: candidateReadError } = await supabase
-    .from("retention_candidates")
-    .select("context")
-    .eq("message_id", context.messageId)
-    .maybeSingle();
-  if (candidateReadError) {
-    throw new SmsPolicyBlockedError(`Retention message context could not be verified: ${candidateReadError.message}`);
-  }
+  const retentionCandidate = await verifyRetentionCandidateDispatch(
+    context.messageId,
+    playerId,
+    player.club_id,
+    message.approved_at,
+  );
   const promoCode = (retentionCandidate?.context as any)?.promo?.code;
 
   if (!isInsideSendWindow(currentTime())) {

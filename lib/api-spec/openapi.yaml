@@ -30,13 +30,14 @@ paths:
     get:
       operationId: listRetentionApprovals
       tags: [retention]
-      summary: List playbooks, reviewable drafts, context facts and coupon warnings
+      summary: List retention candidates by status with global status counts
       parameters:
         - $ref: "#/components/parameters/RetentionClub"
         - $ref: "#/components/parameters/RetentionSlug"
+        - $ref: "#/components/parameters/RetentionApprovalStatus"
       responses:
         "200":
-          description: Review queue, including explicit missing-schema state
+          description: Filtered review history, global status counts, and explicit missing-schema state
           content:
             application/json:
               schema:
@@ -174,6 +175,15 @@ components:
       in: query
       description: Club slug; supply either clubId or slug
       schema: {type: string}
+    RetentionApprovalStatus:
+      name: status
+      in: query
+      required: false
+      description: Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+      schema:
+        type: string
+        enum: [all, drafted, approved, skipped, sent]
+        default: all
     RetentionId:
       name: id
       in: path
@@ -314,6 +324,8 @@ components:
       properties:
         schema_ready: {type: boolean}
         error: {type: string}
+        counts:
+          $ref: "#/components/schemas/RetentionApprovalCounts"
         playbooks:
           type: array
           items:
@@ -334,6 +346,16 @@ components:
             sms_live: {type: boolean}
             test_override_configured: {type: boolean}
             kill_switch: {type: [boolean, "null"]}
+    RetentionApprovalCounts:
+      type: object
+      description: Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.
+      required: [all, drafted, approved, skipped, sent]
+      properties:
+        all: {type: integer, minimum: 0}
+        drafted: {type: integer, minimum: 0}
+        approved: {type: integer, minimum: 0}
+        skipped: {type: integer, minimum: 0}
+        sent: {type: integer, minimum: 0}
     RetentionGenerationResult:
       type: object
       additionalProperties: true

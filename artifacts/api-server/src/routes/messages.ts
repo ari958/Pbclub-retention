@@ -12,7 +12,8 @@ import { computeLevelConfidence } from "../lib/levelConfidence";
 import { parseFeedbackReply } from "../lib/postSessionFeedback";
 import { findActiveExpectation, resolveExpectation } from "../lib/replyExpectations";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
-import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from "../lib/retentionPolicy";
+import { isRetentionOnlyMode, isTextEligible, parkInRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
+import { RetentionDispatchAuthorizationError, verifyRetentionCandidateDispatch } from "../lib/retentionDispatch";
 
 const router: IRouter = Router();
 
@@ -135,6 +136,18 @@ router.post("/messages/send", requireClub, async (req, res) => {
     return;
   }
 
+  if (isRetentionOnlyMode()) {
+    try {
+      await verifyRetentionCandidateDispatch(message_id, player.id, player.club_id, message.approved_at);
+    } catch (err) {
+      if (err instanceof RetentionDispatchAuthorizationError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
+      }
+      throw err;
+    }
+  }
+
   // Guard: opted out
   if (player.opted_out === true || (!isRetentionOnlyMode() && requiresMarketingConsent() && !isTextEligible(player))) {
     await supabase
@@ -212,7 +225,10 @@ router.post("/messages/send", requireClub, async (req, res) => {
     const errMsg = err instanceof Error ? err.message : "Unknown error";
     await recordSmsDispatchFailure(err);
 
-    res.status(isSmsPolicyBlockedError(err) || isSmsDispatchClaimError(err) ? 409 : 502)
+    const statusCode = err instanceof RetentionDispatchAuthorizationError
+      ? err.statusCode
+      : isSmsPolicyBlockedError(err) || isSmsDispatchClaimError(err) ? 409 : 502;
+    res.status(statusCode)
       .json({ error: "Failed to send SMS", detail: errMsg });
   }
 });
@@ -267,7 +283,7 @@ router.post("/messages/skip", requireClub, async (req, res) => {
 
 // ─── POST /api/messages/bulk ─────────────────────────────────────────────────
 
-router.post("/messages/bulk", requireClub, async (req, res) => {
+router.post("/messages/bulk", parkInRetentionOnlyMode("Bulk message sending is parked by RETENTION_ONLY_MODE"), requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
 
   const { player_ids, message_body, template_id, approved_by } = req.body as {

@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionApprovalStatusParameter } from "./retentionApprovalStatusParameter";
 import type { RetentionClubParameter } from "./retentionClubParameter";
 import type { RetentionSlugParameter } from "./retentionSlugParameter";
 
@@ -17,4 +18,8 @@ export type ListRetentionApprovalsParams = {
    * Club slug; supply either clubId or slug
    */
   slug?: RetentionSlugParameter;
+  /**
+   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+   */
+  status?: RetentionApprovalStatusParameter;
 };

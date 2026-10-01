@@ -1,6 +1,8 @@
 import { clubApiUrl } from "./ClubContext";
+import { approvalListPath, type ApprovalListStatus } from "./approvalListRequest";
 
 export type CandidateStatus = "drafted" | "approved" | "skipped" | "sent";
+export type { ApprovalListStatus } from "./approvalListRequest";
 export interface Playbook {
   key: string; name: string; enabled: boolean; promo_code: string | null; offer_text: string | null;
   next_program_names: string[]; message_guidance: string | null; holdout_pct: number;
@@ -25,6 +27,7 @@ export interface Candidate {
 export interface ApprovalsResponse {
   schema_ready: boolean; playbooks: Playbook[]; candidates: Candidate[]; warnings: string[];
   mode: { retention_only: boolean; require_marketing_consent: boolean; kill_switch?: boolean | null; sms_live?: boolean; test_override_configured?: boolean }; error?: string;
+  counts?: { all: number; drafted: number; approved: number; skipped: number; sent: number };
 }
 export interface GenerateResult { created?: number; skipped?: number; errors?: string[]; stats?: { created?: number; skipped?: number; errors?: string[] } }
 export interface BulkResult { approved?: number; approved_count?: number; errors?: string[] }
@@ -46,7 +49,7 @@ async function call<T>(slug: string, path: string, method = "GET", body?: unknow
 }
 
 export const retentionApi = {
-  list: (s: string) => call<ApprovalsResponse>(s, "/api/retention/approvals"),
+  list: (s: string, status: ApprovalListStatus) => call<ApprovalsResponse>(s, approvalListPath(status)),
   generate: (s: string) => call<GenerateResult>(s, "/api/retention/generate", "POST", {}),
   edit: (s: string, id: string, body: string) => call<unknown>(s, `/api/retention/candidates/${id}`, "PATCH", { body }),
   approve: (s: string, id: string, approved_by: string, expected_body: string) =>

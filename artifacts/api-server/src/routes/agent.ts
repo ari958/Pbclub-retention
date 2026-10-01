@@ -11,6 +11,7 @@ import { computeWarmScore, scoreToLinkStrategy } from "../lib/warmScore";
 import { computeScheduledSendAt } from "../lib/playerTiming";
 import { getPlayerSocialContext } from "../lib/socialGraph";
 import { AGENT_MODEL } from "../lib/anthropicConfig";
+import { parkInRetentionOnlyMode } from "../lib/retentionPolicy";
 
 /** Compute engagement state from last_visit_date without relying on Claude. */
 function computeEngagementState(lastVisitDate: string | null): "active" | "lapsing" | "dormant" {
@@ -120,7 +121,7 @@ const RETENTION_MESSAGE_TOOL: Anthropic.Messages.Tool = {
   },
 };
 
-router.post("/agent/run", agentRateLimit, async (req, res) => {
+router.post("/agent/run", parkInRetentionOnlyMode("Agent-generated messages are parked by RETENTION_ONLY_MODE"), agentRateLimit, async (req, res) => {
   const parsed = AgentRunSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({

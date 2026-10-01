@@ -320,9 +320,11 @@ export default function App() {
               <Route
                 path="assessments"
                 element={
-                  <ErrorBoundary pageName="Assessments">
-                    <Assessments />
-                  </ErrorBoundary>
+                  <Parked>
+                    <ErrorBoundary pageName="Assessments">
+                      <Assessments />
+                    </ErrorBoundary>
+                  </Parked>
                 }
               />
               <Route

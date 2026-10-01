@@ -9,6 +9,7 @@ import {
 import { sanitizeScheduledSendAt, isInsideSendWindow } from "./playerTiming";
 import { logger } from "./logger";
 import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from "./retentionPolicy";
+import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
@@ -35,7 +36,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
 
   const { data: rows, error } = await supabase
     .from("messages")
-    .select("id, player_id, body, signup_url, players!inner(phone)")
+    .select("id, player_id, body, signup_url, approved_at, players!inner(phone,club_id)")
     .eq("status", "pending")
     .not("approved_at", "is", null)
     .neq("approved_by", "")
@@ -64,7 +65,18 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     const player_id = row.player_id as string;
     const body = row.body as string;
     const smsBody = composeApprovedMessageBody(body, row.signup_url as string | null);
-    const phone = (row.players as any)?.phone as string | null;
+    const linkedPlayer = row.players as any;
+    const phone = linkedPlayer?.phone as string | null;
+
+    if (isRetentionOnlyMode()) {
+      try {
+        await verifyRetentionCandidateDispatch(id, player_id, linkedPlayer?.club_id, row.approved_at as string | null);
+      } catch (err) {
+        logger.error({ err, id, player_id }, "[queue] retention approval gate blocked dispatch");
+        stats.skipped++;
+        continue;
+      }
+    }
 
     try {
       // ── a. TCPA WINDOW ──────────────────────────────────────────────────────

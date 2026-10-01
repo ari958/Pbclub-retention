@@ -120,7 +120,7 @@ export function useHealthCheck<
 }
 
 /**
- * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ * @summary List retention candidates by status with global status counts
  */
 export const getListRetentionApprovalsUrl = (
   params?: ListRetentionApprovalsParams,
@@ -193,7 +193,7 @@ export type ListRetentionApprovalsQueryResult = NonNullable<
 export type ListRetentionApprovalsQueryError = ErrorType<unknown>;
 
 /**
- * @summary List playbooks, reviewable drafts, context facts and coupon warnings
+ * @summary List retention candidates by status with global status counts
  */
 
 export function useListRetentionApprovals<

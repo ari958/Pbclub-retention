@@ -5,6 +5,7 @@ import { useToast } from "@/components/Toast";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
+import { RETENTION } from "@/lib/navMode";
 import {
   getEngagementState,
   relativeTime,
@@ -269,6 +270,12 @@ export default function Dashboard() {
   const [responseRate, setResponseRate] = useState<number | null>(null);
   const [winbackRate, setWinbackRate] = useState<number | null>(null);
   const [sentThisMonth, setSentThisMonth] = useState(0);
+  const [retentionStats, setRetentionStats] = useState<{ activePlayers: number; totalPlayers: number; sentLast30Days: number | null }>({
+    activePlayers: 0,
+    totalPlayers: 0,
+    sentLast30Days: null,
+  });
+  const [retentionStatsError, setRetentionStatsError] = useState<string | null>(null);
   const [introCards, setIntroCards] = useState<any[]>([]);
   const [introCardsLoading, setIntroCardsLoading] = useState(true);
   const [dismissedIds, setDismissedIds] = useState<Record<string, number>>({});
@@ -290,6 +297,7 @@ export default function Dashboard() {
   // ─── Data fetching ───────────────────────────────────────────────────────────
 
   const fetchMessages = useCallback(async () => {
+    if (RETENTION) return;
     const res = await supabase
       .from("messages")
       .select(
@@ -304,6 +312,44 @@ export default function Dashboard() {
   }, [club.id]);
 
   const fetchData = useCallback(async () => {
+    if (RETENTION) {
+      setLoading(true);
+      setRetentionStatsError(null);
+      try {
+        const playerDates: (string | null)[] = [];
+        let offset = 0;
+        while (true) {
+          const { data, error } = await supabase
+            .from("players")
+            .select("last_visit_date")
+            .eq("club_id", club.id)
+            .range(offset, offset + 999);
+          if (error) throw error;
+          if (!data?.length) break;
+          playerDates.push(...data.map((row) => row.last_visit_date as string | null));
+          if (data.length < 1000) break;
+          offset += 1000;
+        }
+        const { count, error } = await supabase
+          .from("messages")
+          .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
+          .eq("direction", "outbound")
+          .eq("status", "sent")
+          .eq("players.club_id", club.id)
+          .gte("sent_at", new Date(Date.now() - 30 * 86400000).toISOString());
+        if (error) throw error;
+        setRetentionStats({
+          activePlayers: playerDates.filter((date) => getEngagementState(date) === "active").length,
+          totalPlayers: playerDates.length,
+          sentLast30Days: count,
+        });
+      } catch (error) {
+        setRetentionStatsError(error instanceof Error ? error.message : "Unable to load dashboard statistics.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     const [outboundRes, inboundRes, winbackData] = await Promise.all([
       supabase.from("messages").select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
         .eq("direction", "outbound")
@@ -423,6 +469,7 @@ export default function Dashboard() {
   }, [club.slug]);
 
   useEffect(() => {
+    if (RETENTION) return;
     fetch(clubApiUrl(club.slug, "/api/sync/events/status"))
       .then((r) => r.json())
       .then((data) => { if (data.status === "running") setSyncRunning(true); })
@@ -430,6 +477,7 @@ export default function Dashboard() {
   }, [club.slug]);
 
   useEffect(() => {
+    if (RETENTION) return;
     if (!syncRunning) return;
     const interval = setInterval(() => {
       fetch(clubApiUrl(club.slug, "/api/sync/events/status"))
@@ -451,6 +499,7 @@ export default function Dashboard() {
   useEffect(() => { fetchData(); }, [fetchData]);
 
   useEffect(() => {
+    if (RETENTION) return;
     const load = async () => {
       try {
         const res = await fetch(clubApiUrl(club.slug, "/api/social-graph/staff-intro-cards"));
@@ -468,6 +517,7 @@ export default function Dashboard() {
   }, [club.slug]);
 
   useEffect(() => {
+    if (RETENTION) return;
     const stored = localStorage.getItem("pulse_dismissed_recs");
     if (stored) {
       try { setDismissedIds(JSON.parse(stored)); } catch {}
@@ -790,6 +840,46 @@ export default function Dashboard() {
 
 
   // ─── Render ───────────────────────────────────────────────────────────────────
+
+  if (RETENTION) {
+    const cards = [
+      { label: "ACTIVE PLAYERS", value: retentionStats.activePlayers, color: C.green, sub: "currently playing regularly" },
+      { label: "TOTAL PLAYERS", value: retentionStats.totalPlayers, color: C.textPrimary, sub: "in this club roster" },
+      { label: "MESSAGES SENT · 30 DAYS", value: retentionStats.sentLast30Days, color: C.accent, sub: "club-scoped sent messages" },
+    ];
+    return (
+      <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: C.surface }}>
+        <Sidebar />
+        <div style={{ marginLeft: 240, flex: 1, display: "flex", flexDirection: "column", minHeight: 0, background: C.surface }}>
+          <header style={{ height: 52, minHeight: 52, display: "flex", alignItems: "center", padding: "0 24px", borderBottom: `1px solid ${C.border}`, background: C.bg }}>
+            <span style={{ fontWeight: 600, fontSize: 14, color: "#fff" }}>Dashboard</span>
+          </header>
+          <main style={{ flex: 1, overflowY: "auto", padding: "24px", background: C.surface }}>
+            {retentionStatsError && (
+              <div role="alert" style={{ marginBottom: 14, padding: "10px 14px", border: `1px solid ${C.red}`, borderRadius: 6, color: C.redText, fontSize: 12 }}>
+                Dashboard statistics could not be loaded: {retentionStatsError}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 10 }}>
+              {cards.map((card) => (
+                <div key={card.label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 8, padding: "16px 18px" }}>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 500, color: C.textSecondary, letterSpacing: "0.06em", marginBottom: 8 }}>
+                    {card.label}
+                  </div>
+                  <div style={{ fontSize: 28, fontWeight: 700, color: loading ? C.textSecondary : card.color, lineHeight: 1, fontVariantNumeric: "tabular-nums", marginBottom: 6 }}>
+                    {loading ? "—" : card.value ?? "—"}
+                  </div>
+                  <div style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: C.textSecondary }}>
+                    {card.sub}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: C.surface }}>
