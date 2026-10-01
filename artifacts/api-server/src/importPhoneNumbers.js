@@ -64,12 +64,13 @@ export async function importPhoneNumbers(clubId, log = console.log, isCancelled 
   };
 
   // Fetch club details
-  const { data: club } = await supabase
+  const { data: club, error: clubError } = await supabase
     .from("clubs")
     .select("platform_api_key, platform_subdomain")
     .eq("id", clubId)
     .maybeSingle();
 
+  if (clubError) throw new Error(`Failed to load club: ${clubError.message}`);
   if (!club?.platform_subdomain) {
     throw new Error(`Club ${clubId} has no platform_subdomain`);
   }
@@ -90,7 +91,8 @@ export async function importPhoneNumbers(clubId, log = console.log, isCancelled 
       .select("id, name, external_id")
       .eq("club_id", clubId)
       .not("external_id", "is", null)
-      .is("phone", null)
+      .or("phone.is.null,phone.eq.")
+      .order("id", { ascending: true })
       .range(from, from + pageSize - 1);
 
     if (error) throw new Error(`Failed to query players: ${error.message}`);
@@ -134,20 +136,27 @@ export async function importPhoneNumbers(clubId, log = console.log, isCancelled 
       continue;
     }
 
-    const sms_opt_in = true;
     const last4 = phone.slice(-4);
 
-    const { error: updateErr } = await supabase
+    // Phone availability is not permission to send SMS. Preserve consent and
+    // opt-out fields, and don't replace a number filled by another writer.
+    const { data: updatedRows, error: updateErr } = await supabase
       .from("players")
-      .update({ phone, sms_opt_in })
-      .eq("id", player.id);
+      .update({ phone })
+      .eq("club_id", clubId)
+      .eq("id", player.id)
+      .or("phone.is.null,phone.eq.")
+      .select("id");
 
     if (updateErr) {
       log(`[phone-import] ${progress} DB ERROR for "${player.name}": ${updateErr.message}`);
       stats.errors++;
-    } else {
-      log(`[phone-import] ${progress} "${player.name}" → ***${last4} | sms_opt_in: ${sms_opt_in}`);
+    } else if (updatedRows?.length) {
+      log(`[phone-import] ${progress} "${player.name}" → ***${last4} | consent unchanged`);
       stats.updated++;
+    } else {
+      log(`[phone-import] ${progress} "${player.name}" — phone already filled, preserving it`);
+      stats.skipped++;
     }
   }
 

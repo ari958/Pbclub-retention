@@ -14,3 +14,9 @@ For the Learn to Play rollout, present each actual draft's full text alongside i
 **Why:** The user reserved review of voice, factual accuracy, the offer, and the next-program suggestion before the live test. A request to generate drafts is not permission to enable sending or approve them.
 
 **How to apply:** Keep draft-only runs separate from approval and sending-setting changes. Wait for the user's review before the live-test phase, and use a test number the user controls; the assistant has no phone number.
+
+Treat permission to sync PodPlay phone numbers as contact-data permission only, not permission to infer SMS consent or change sending eligibility settings. Preserve existing numbers, opt-outs, and affirmative-consent evidence.
+
+**Why:** The user authorized contact synchronization to unblock draft review while retaining the draft-only boundary. Having a phone number does not establish consent, and a legacy importer previously coupled phone availability to opt-in.
+
+**How to apply:** Keep phone-only synchronization separate from consent imports and approval/send actions. Verify consent and opt-out fields are unchanged across a contact sync.
