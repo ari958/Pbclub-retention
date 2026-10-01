@@ -21,6 +21,7 @@ export default function Approvals() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
+  const [lookbackDays, setLookbackDays] = useState<7 | 14 | 30>(7);
   const [operator, setOperator] = useState("");
   const [filter, setFilter] = useState<ApprovalListStatus>("all");
   const [loadedFilter, setLoadedFilter] = useState<ApprovalListStatus | null>(null);
@@ -89,10 +90,11 @@ export default function Approvals() {
   const generate = async () => {
     setGenerating(true);
     try {
-      const r = await retentionApi.generate(slug);
+      const r = await retentionApi.generate(slug, lookbackDays);
       const st = { created: r.created ?? r.stats?.created, skipped: r.skipped ?? r.stats?.skipped, errors: r.errors ?? r.stats?.errors };
       const errs = st.errors?.length ?? 0;
-      const msg = `Drafts created: ${st.created ?? 0}, skipped: ${st.skipped ?? 0}${errs ? `, errors: ${errs}` : ""}. Nothing was sent.`;
+      const found = r.stats?.new_ltp_players ?? r.stats?.found;
+      const msg = `${found === undefined ? "" : `New LTP players found: ${found}. `}Drafts created: ${st.created ?? 0}, skipped: ${st.skipped ?? 0}${errs ? `, errors: ${errs}` : ""}. Nothing was sent.`;
       if (errs) toast.info(msg); else toast.success(msg);
       await load();
     } catch (e) { toast.error(e instanceof Error ? e.message : "Generate failed"); }
@@ -174,6 +176,21 @@ export default function Approvals() {
             </span>
             {ks === false && <button style={btn(false, ksBusy)} disabled={ksBusy} onClick={() => setKill(true)} data-testid="button-pause-sending">Pause sending</button>}
             {ks === true && <button style={btn(false, ksBusy)} disabled={ksBusy} onClick={() => setConfirmResume(true)} data-testid="button-resume-sending">Resume sending</button>}
+            <label style={{ display: "flex", alignItems: "center", gap: 6, color: D.muted, fontSize: 11 }}>
+              Lookback
+              <select
+                aria-label="Draft generation lookback"
+                data-testid="select-lookback-days"
+                value={lookbackDays}
+                disabled={generating}
+                onChange={(event) => setLookbackDays(Number(event.target.value) as 7 | 14 | 30)}
+                style={{ background: D.card, color: D.text, border: `1px solid ${D.border}`, borderRadius: 5, padding: "6px 8px", fontSize: 12 }}
+              >
+                <option value={7}>7 days</option>
+                <option value={14}>14 days</option>
+                <option value={30}>30 days</option>
+              </select>
+            </label>
             <button style={btn(true, generating)} disabled={generating} onClick={generate} data-testid="button-generate">
               {generating ? "Creating drafts..." : "Generate drafts (nothing is sent)"}
             </button>

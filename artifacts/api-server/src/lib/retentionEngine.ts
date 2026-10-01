@@ -1,15 +1,60 @@
 import { supabase } from "./supabaseClient";
-import { isTextEligible } from "./retentionPolicy";
+import { getTextEligibilitySkipReason } from "./retentionPolicy";
 import { buildRetentionContext, isLearnToPlayName } from "./retentionContext";
 import { writeRetentionText } from "./retentionText";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
-import { isAttendanceDateNearRetentionWindow, isRetentionTriggerDate, toEtDate, calendarDayDistance } from "./retentionDates";
+import {
+  DEFAULT_RETENTION_LOOKBACK_DAYS,
+  isAttendanceDateNearRetentionWindow,
+  isRetentionTriggerDate,
+  normalizeRetentionLookbackDays,
+  toEtDate,
+  calendarDayDistance,
+} from "./retentionDates";
 import { loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
 import type { RetentionContext, RetentionPlaybook } from "./retentionTypes";
 
+export type RetentionSkipReason =
+  | "no_phone"
+  | "opted_out"
+  | "duplicate"
+  | "holdout"
+  | "marketing_consent"
+  | "missing_player"
+  | "invalid_trigger"
+  | "out_of_window";
+
+const SKIP_REASONS: RetentionSkipReason[] = [
+  "no_phone",
+  "opted_out",
+  "duplicate",
+  "holdout",
+  "marketing_consent",
+  "missing_player",
+  "invalid_trigger",
+  "out_of_window",
+];
+
 export interface RetentionGenerationResult {
-  stats: { created: number; skipped: number };
+  lookback_days: number;
+  stats: {
+    found: number;
+    verified: number;
+    new_ltp_players: number;
+    created: number;
+    skipped: number;
+    error_count: number;
+    skipped_by_reason: Record<RetentionSkipReason, number>;
+  };
   errors: string[];
+  coupon_check: { code: string | null; valid: boolean | null; warning: string | null };
+  drafts: {
+    candidate_id: string;
+    player_id: string;
+    player_name: string | null;
+    body: string;
+    context: RetentionContext;
+  }[];
 }
 
 const PAGE_SIZE = 1000;
@@ -59,8 +104,34 @@ async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
  * Creates unscheduled, unapproved drafts only. This function never sends SMS.
  * The unique player/playbook constraint makes repeated nightly runs idempotent.
  */
-export async function generateRetentionDrafts(clubId: string): Promise<RetentionGenerationResult> {
-  const result: RetentionGenerationResult = { stats: { created: 0, skipped: 0 }, errors: [] };
+export async function generateRetentionDrafts(
+  clubId: string,
+  requestedLookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
+): Promise<RetentionGenerationResult> {
+  const lookbackDays = normalizeRetentionLookbackDays(requestedLookbackDays);
+  const result: RetentionGenerationResult = {
+    lookback_days: lookbackDays,
+    stats: {
+      found: 0,
+      verified: 0,
+      new_ltp_players: 0,
+      created: 0,
+      skipped: 0,
+      error_count: 0,
+      skipped_by_reason: Object.fromEntries(SKIP_REASONS.map((reason) => [reason, 0])) as Record<RetentionSkipReason, number>,
+    },
+    errors: [],
+    coupon_check: { code: null, valid: null, warning: null },
+    drafts: [],
+  };
+  const skip = (reason: RetentionSkipReason) => {
+    result.stats.skipped++;
+    result.stats.skipped_by_reason[reason]++;
+  };
+  const recordError = (message: string) => {
+    result.errors.push(message);
+    result.stats.error_count++;
+  };
   const [playbookResult, attendance] = await Promise.all([
     supabase.from("retention_playbooks").select("*").eq("enabled", true),
     pageAll<any>((from, to) => supabase.from("attendances")
@@ -73,7 +144,11 @@ export async function generateRetentionDrafts(clubId: string): Promise<Retention
   if (!playbook) return result;
   const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
   if (playbook.promo_code) {
-    couponCache.set(`${clubId}:${playbook.promo_code}`, validateRetentionCoupon(clubId, playbook.promo_code));
+    const couponKey = `${clubId}:${playbook.promo_code}`;
+    const couponPromise = validateRetentionCoupon(clubId, playbook.promo_code);
+    couponCache.set(couponKey, couponPromise);
+    const coupon = await couponPromise;
+    result.coupon_check = { code: playbook.promo_code, valid: coupon.valid, warning: coupon.warning };
   }
 
   const byPlayer = new Map<string, any[]>();
@@ -90,13 +165,14 @@ export async function generateRetentionDrafts(clubId: string): Promise<Retention
       toEtDate(String(a.attended_at)).localeCompare(toEtDate(String(b.attended_at)))
       || String(a.id).localeCompare(String(b.id)));
     const earliestDate = toEtDate(String(rows[0].attended_at));
-    if (!isAttendanceDateNearRetentionWindow(earliestDate, today)) continue;
+    if (!isAttendanceDateNearRetentionWindow(earliestDate, today, lookbackDays)) continue;
     const onEarliest = rows.filter((row) => toEtDate(String(row.attended_at)) === earliestDate);
     const ltp = onEarliest.filter((row) => isLearnToPlayName(row.program_name ?? ""));
     if (!ltp.length || onEarliest.some((row) => !isLearnToPlayName(row.program_name ?? ""))) continue;
+    result.stats.found++;
     const trigger = [...ltp].sort((a, b) =>
       String(a.event_id).localeCompare(String(b.event_id)) || String(a.id).localeCompare(String(b.id)))[0];
-    if (!trigger.event_id) { result.stats.skipped++; continue; }
+    if (!trigger.event_id) { skip("invalid_trigger"); continue; }
     possibleCandidates.push({ playerId, trigger, attendanceDate: earliestDate });
   }
   if (!possibleCandidates.length) return result;
@@ -107,24 +183,55 @@ export async function generateRetentionDrafts(clubId: string): Promise<Retention
   await withConcurrency(possibleCandidates, CONCURRENCY, async (candidate) => {
     try {
       const verified = await verifyRetentionTriggerEvent(clubId, candidate.trigger.event_id, clubCache, triggerCache);
-      if (!isLearnToPlayName(verified.name)) { result.stats.skipped++; return; }
+      if (!isLearnToPlayName(verified.name)) { skip("invalid_trigger"); return; }
       if (calendarDayDistance(verified.date, candidate.attendanceDate) > 1) {
-        throw new Error(`PodPlay event date ${verified.date} does not corroborate attendance date ${candidate.attendanceDate}`);
+        skip("invalid_trigger");
+        return;
       }
-      if (!isRetentionTriggerDate(verified.date, today)) { result.stats.skipped++; return; }
+      result.stats.verified++;
+      if (!isRetentionTriggerDate(verified.date, today, lookbackDays)) { skip("out_of_window"); return; }
+      result.stats.new_ltp_players++;
       candidates.push({ playerId: candidate.playerId, trigger: candidate.trigger, verifiedDate: verified.date, verifiedName: verified.name });
     } catch (error: any) {
-      result.errors.push(`${candidate.playerId}: could not verify Learn to Play trigger event ${candidate.trigger.event_id}: ${error.message}`);
+      recordError(`${candidate.playerId}: could not verify Learn to Play trigger event ${candidate.trigger.event_id}: ${error.message}`);
     }
   });
   if (!candidates.length) return result;
 
-  const playerIds = candidates.map((c) => c.playerId);
+  // The DB unique constraint remains authoritative. This read-only precheck avoids
+  // expensive live context and LLM work for candidates already created previously.
+  const candidatePlayerIds = [...new Set(candidates.map((candidate) => candidate.playerId))];
+  const { data: existingCandidates, error: duplicateQueryError } = await supabase.from("retention_candidates")
+    .select("player_id").eq("playbook_key", playbook.key).in("player_id", candidatePlayerIds);
+  if (duplicateQueryError) throw new Error(duplicateQueryError.message);
+  const duplicatePlayerIds = new Set((existingCandidates ?? []).map((candidate: any) => candidate.player_id));
+  const freshCandidates = candidates.filter((candidate) => {
+    if (!duplicatePlayerIds.has(candidate.playerId)) return true;
+    skip("duplicate");
+    return false;
+  });
+  if (!freshCandidates.length) return result;
+
+  const playerIds = [...new Set(freshCandidates.map((candidate) => candidate.playerId))];
   const players = await pageAll<any>((from, to) => supabase.from("players")
     .select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id")
     .eq("club_id", clubId).in("id", playerIds).range(from, to));
   const playerMap = new Map(players.map((player) => [player.id, player]));
-  const eventIds = [...new Set(candidates.map((c) => c.trigger.event_id).filter(Boolean))];
+  const eligibleCandidates: typeof freshCandidates = [];
+  for (const candidate of freshCandidates) {
+    const player = playerMap.get(candidate.playerId);
+    if (!player) { skip("missing_player"); continue; }
+    const eligibilityReason = getTextEligibilitySkipReason(player);
+    if (eligibilityReason) { skip(eligibilityReason); continue; }
+    if (stableBucket(`${candidate.playerId}:${playbook.key}`) < Number(playbook.holdout_pct ?? 0) * 100) {
+      skip("holdout");
+      continue;
+    }
+    eligibleCandidates.push(candidate);
+  }
+  if (!eligibleCandidates.length) return result;
+
+  const eventIds = [...new Set(eligibleCandidates.map((c) => c.trigger.event_id).filter(Boolean))];
   const classRows = eventIds.length ? await pageAll<any>((from, to) => supabase.from("attendances")
     .select("event_id,player_id,players!inner(club_id)").eq("players.club_id", clubId)
     .in("event_id", eventIds).range(from, to)) : [];
@@ -140,18 +247,13 @@ export async function generateRetentionDrafts(clubId: string): Promise<Retention
   const externalIds = new Map([...players, ...classRoster].map((player) => [player.id, player.external_id]));
   const socialEventsCache = new Map<string, Promise<any[]>>();
   const socialSignupsCache = new Map<string, Promise<string[]>>();
-  await withConcurrency(candidates, CONCURRENCY, async ({ playerId, trigger, verifiedDate, verifiedName }) => {
-    const player = playerMap.get(playerId);
-    if (!player || !isTextEligible(player)) { result.stats.skipped++; return; }
-    if (stableBucket(`${playerId}:${playbook.key}`) < Number(playbook.holdout_pct ?? 0) * 100) {
-      result.stats.skipped++;
-      return;
-    }
+  await withConcurrency(eligibleCandidates, CONCURRENCY, async ({ playerId, trigger, verifiedDate, verifiedName }) => {
+    const player = playerMap.get(playerId)!;
     try {
       const classmatesExternalIds = [...(classPlayers.get(trigger.event_id) ?? [])]
         .filter((id) => id !== playerId).map((id) => externalIds.get(id)).filter(Boolean) as string[];
-      await retryWithBackoff(async () => {
-        const context: RetentionContext = await buildRetentionContext({
+      const { context, body } = await retryWithBackoff(async () => {
+        const context = await buildRetentionContext({
           clubId, player, playbook,
           trigger: { event_id: trigger.event_id, name: verifiedName, date: verifiedDate },
           classmatesExternalIds,
@@ -161,20 +263,32 @@ export async function generateRetentionDrafts(clubId: string): Promise<Retention
           couponCache,
         });
         const body = await writeRetentionText(context, playbook);
-        const { data: candidateId, error } = await supabase.rpc("retention_create_draft", {
-          p_club_id: clubId,
-          p_player_id: playerId,
-          p_playbook_key: playbook.key,
-          p_trigger_event_id: trigger.event_id,
-          p_context: context,
-          p_body: body,
-        });
-        if (error) throw new Error(error.message);
-        if (candidateId) result.stats.created++;
-        else result.stats.skipped++;
+        return { context, body };
       });
+      const { data: candidateId, error } = await supabase.rpc("retention_create_draft", {
+        p_club_id: clubId,
+        p_player_id: playerId,
+        p_playbook_key: playbook.key,
+        p_trigger_event_id: trigger.event_id,
+        p_context: context,
+        p_body: body,
+      });
+      if (error) throw new Error(error.message);
+      if (candidateId) {
+        result.stats.created++;
+        result.drafts.push({
+          candidate_id: candidateId,
+          player_id: playerId,
+          player_name: player.name ?? null,
+          body,
+          context,
+        });
+      } else {
+        // Another worker can win between the precheck and atomic unique RPC.
+        skip("duplicate");
+      }
     } catch (error: any) {
-      result.errors.push(`${player.name ?? playerId}: ${error.message}`);
+      recordError(`${player.name ?? playerId}: ${error.message}`);
     }
   });
   return result;

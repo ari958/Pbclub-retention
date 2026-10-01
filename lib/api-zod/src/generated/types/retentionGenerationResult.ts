@@ -5,10 +5,25 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionCouponCheck } from "./retentionCouponCheck";
+import type { RetentionGeneratedDraft } from "./retentionGeneratedDraft";
+import type { RetentionGenerationStats } from "./retentionGenerationStats";
 
 export interface RetentionGenerationResult {
-  created?: number;
-  skipped?: number;
-  errors?: unknown[];
+  schema_ready: boolean;
+  /**
+   * Effective lookback after values above 30 are clamped to 30; defaults to 7
+   * @minimum 1
+   * @maximum 30
+   */
+  lookback_days: number;
+  created: number;
+  skipped: number;
+  /** Per-candidate or generation failures; errors are not included in skipped */
+  errors: string[];
+  stats: RetentionGenerationStats;
+  coupon_check: RetentionCouponCheck;
+  /** Only candidates newly created by this call */
+  drafts: RetentionGeneratedDraft[];
   [key: string]: unknown;
 }

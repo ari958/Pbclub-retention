@@ -22,10 +22,16 @@ export interface TextEligibility {
   sms_consented_at?: string | null;
 }
 
+export type TextEligibilitySkipReason = "no_phone" | "opted_out" | "marketing_consent";
+
+export function getTextEligibilitySkipReason(player: TextEligibility): TextEligibilitySkipReason | null {
+  if (!player.phone?.trim()) return "no_phone";
+  if (player.opted_out === true) return "opted_out";
+  if (!requiresMarketingConsent()) return null;
+  if (player.sms_opt_in === true && player.consent_source === "web_form" && !!player.sms_consented_at) return null;
+  return "marketing_consent";
+}
+
 export function isTextEligible(player: TextEligibility): boolean {
-  if (!player.phone?.trim() || player.opted_out === true) return false;
-  if (!requiresMarketingConsent()) return true;
-  return player.sms_opt_in === true
-    && player.consent_source === "web_form"
-    && !!player.sms_consented_at;
+  return getTextEligibilitySkipReason(player) === null;
 }

@@ -29,7 +29,10 @@ export interface ApprovalsResponse {
   mode: { retention_only: boolean; require_marketing_consent: boolean; kill_switch?: boolean | null; sms_live?: boolean; test_override_configured?: boolean }; error?: string;
   counts?: { all: number; drafted: number; approved: number; skipped: number; sent: number };
 }
-export interface GenerateResult { created?: number; skipped?: number; errors?: string[]; stats?: { created?: number; skipped?: number; errors?: string[] } }
+export interface GenerateResult {
+  created?: number; skipped?: number; errors?: string[]; lookback_days?: number;
+  stats?: { found?: number; new_ltp_players?: number; created?: number; skipped?: number; errors?: string[]; skipped_by_reason?: Record<string, number> };
+}
 export interface BulkResult { approved?: number; approved_count?: number; errors?: string[] }
 
 export class ApiError extends Error {
@@ -50,7 +53,7 @@ async function call<T>(slug: string, path: string, method = "GET", body?: unknow
 
 export const retentionApi = {
   list: (s: string, status: ApprovalListStatus) => call<ApprovalsResponse>(s, approvalListPath(status)),
-  generate: (s: string) => call<GenerateResult>(s, "/api/retention/generate", "POST", {}),
+  generate: (s: string, lookbackDays = 7) => call<GenerateResult>(s, "/api/retention/generate", "POST", { lookback_days: lookbackDays }),
   edit: (s: string, id: string, body: string) => call<unknown>(s, `/api/retention/candidates/${id}`, "PATCH", { body }),
   approve: (s: string, id: string, approved_by: string, expected_body: string) =>
     call<unknown>(s, `/api/retention/candidates/${id}/approve`, "POST", { approved_by, expected_body }),

@@ -1,9 +1,11 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
+import { GenerateRetentionDraftsBody } from "@workspace/api-zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
 import { generateRetentionDrafts, isRetentionSchemaMissing } from "../lib/retentionEngine";
+import { DEFAULT_RETENTION_LOOKBACK_DAYS, MAX_RETENTION_LOOKBACK_DAYS } from "../lib/retentionDates";
 import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
 import { isStaleReviewedBodyError } from "../lib/retentionApproval";
@@ -25,6 +27,9 @@ const BulkSchema = z.object({
   expected_bodies: z.record(z.string(), ExpectedBodySchema),
 });
 const KillSwitchSchema = z.object({ enabled: z.boolean() });
+const RetentionGenerationInputSchema = GenerateRetentionDraftsBody.extend({
+  lookback_days: z.number().int().positive().optional(),
+}).strict();
 
 async function retentionMode(clubId: string) {
   const { data: club, error } = await supabase.from("clubs").select("sms_kill_switch").eq("id", clubId).maybeSingle();
@@ -194,36 +199,76 @@ router.patch("/retention/kill-switch", requireClub, async (req, res) => {
   return res.json({ enabled: data.sms_kill_switch === true });
 });
 
-router.post("/retention/generate", requireClub, async (req, res) => {
+router.post("/retention/generate", requireClub, async (req, res): Promise<void> => {
   const clubId = (req as ClubScopedRequest).clubId;
+  const parsed = RetentionGenerationInputSchema.safeParse(req.body === undefined ? {} : req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "lookback_days must be a positive integer" });
+    return;
+  }
+  const requestedLookbackDays = parsed.data.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS;
   try {
-    const generated = await generateRetentionDrafts(clubId);
+    const generated = await generateRetentionDrafts(clubId, requestedLookbackDays);
+    const responseStats = {
+      ...generated.stats,
+      // Keep the existing stats.errors detail array and expose its count separately.
+      errors: generated.errors,
+      error_count: generated.errors.length,
+    };
     const missing = generated.errors.find((message) => isRetentionSchemaMissing(new Error(message)));
     if (missing) {
       res.status(503).json({
         schema_ready: false,
+        lookback_days: generated.lookback_days,
         created: generated.stats.created,
         skipped: generated.stats.skipped,
         errors: generated.errors,
-        stats: { ...generated.stats, errors: generated.errors },
+        stats: responseStats,
+        coupon_check: generated.coupon_check,
+        drafts: generated.drafts,
       });
       return;
     }
     res.json({
       schema_ready: true,
+      lookback_days: generated.lookback_days,
       created: generated.stats.created,
       skipped: generated.stats.skipped,
       errors: generated.errors,
-      stats: { ...generated.stats, errors: generated.errors },
+      stats: responseStats,
+      coupon_check: generated.coupon_check,
+      drafts: generated.drafts,
     });
   } catch (error: any) {
     if (isRetentionSchemaMissing(error)) {
+      const stats = {
+        found: 0,
+        verified: 0,
+        new_ltp_players: 0,
+        created: 0,
+        skipped: 0,
+        error_count: 1,
+        skipped_by_reason: {
+          no_phone: 0,
+          opted_out: 0,
+          duplicate: 0,
+          holdout: 0,
+          marketing_consent: 0,
+          missing_player: 0,
+          invalid_trigger: 0,
+          out_of_window: 0,
+        },
+        errors: [error.message],
+      };
       res.status(503).json({
         schema_ready: false,
+        lookback_days: Math.min(requestedLookbackDays, MAX_RETENTION_LOOKBACK_DAYS),
         created: 0,
         skipped: 0,
         errors: [error.message],
-        stats: { created: 0, skipped: 0, errors: [error.message] },
+        stats,
+        coupon_check: { code: null, valid: null, warning: null },
+        drafts: [],
       });
       return;
     }

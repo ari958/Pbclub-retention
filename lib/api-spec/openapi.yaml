@@ -46,13 +46,34 @@ paths:
     post:
       operationId: generateRetentionDrafts
       tags: [retention]
-      summary: Generate last-seven-day drafts only; never approve or send
+      summary: Generate first-ever Learn to Play drafts in a configurable lookback window; never approve or send
       parameters:
         - $ref: "#/components/parameters/RetentionClub"
         - $ref: "#/components/parameters/RetentionSlug"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RetentionGenerationInput"
       responses:
         "200":
-          description: Generation results
+          description: Draft-only results, eligibility counts, and coupon verification even when no candidates are found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionGenerationResult"
+        "400":
+          description: Invalid lookback_days input
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
+        "503":
+          description: Retention schema is unavailable; results may include drafts created before a per-candidate schema error
           content:
             application/json:
               schema:
@@ -359,10 +380,90 @@ components:
     RetentionGenerationResult:
       type: object
       additionalProperties: true
+      required: [schema_ready, lookback_days, created, skipped, errors, stats, coupon_check, drafts]
       properties:
+        schema_ready: {type: boolean}
+        lookback_days:
+          type: integer
+          minimum: 1
+          maximum: 30
+          description: Effective lookback after values above 30 are clamped to 30; defaults to 7
         created: {type: integer}
         skipped: {type: integer}
-        errors: {type: array, items: {}}
+        errors:
+          type: array
+          description: Per-candidate or generation failures; errors are not included in skipped
+          items: {type: string}
+        stats:
+          $ref: "#/components/schemas/RetentionGenerationStats"
+        coupon_check:
+          $ref: "#/components/schemas/RetentionCouponCheck"
+        drafts:
+          type: array
+          description: Only candidates newly created by this call
+          items:
+            $ref: "#/components/schemas/RetentionGeneratedDraft"
+    RetentionGenerationInput:
+      type: object
+      additionalProperties: false
+      properties:
+        lookback_days:
+          type: integer
+          minimum: 1
+          description: Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30
+    RetentionGenerationStats:
+      type: object
+      additionalProperties: true
+      description: found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.
+      required: [found, verified, new_ltp_players, created, skipped, error_count, errors, skipped_by_reason]
+      properties:
+        found: {type: integer, minimum: 0}
+        verified: {type: integer, minimum: 0}
+        new_ltp_players: {type: integer, minimum: 0}
+        created: {type: integer, minimum: 0}
+        skipped: {type: integer, minimum: 0}
+        error_count: {type: integer, minimum: 0}
+        errors:
+          type: array
+          description: Compatibility detail array matching top-level errors; use error_count for the count
+          items: {type: string}
+        skipped_by_reason:
+          $ref: "#/components/schemas/RetentionGenerationSkippedCounts"
+    RetentionGenerationSkippedCounts:
+      type: object
+      additionalProperties: false
+      required: [no_phone, opted_out, duplicate, holdout, marketing_consent, missing_player, invalid_trigger, out_of_window]
+      properties:
+        no_phone: {type: integer, minimum: 0}
+        opted_out: {type: integer, minimum: 0}
+        duplicate: {type: integer, minimum: 0}
+        holdout: {type: integer, minimum: 0}
+        marketing_consent: {type: integer, minimum: 0}
+        missing_player: {type: integer, minimum: 0}
+        invalid_trigger: {type: integer, minimum: 0}
+        out_of_window: {type: integer, minimum: 0}
+    RetentionCouponCheck:
+      type: object
+      additionalProperties: false
+      required: [code, valid, warning]
+      properties:
+        code: {type: ["string", "null"]}
+        valid: {type: ["boolean", "null"]}
+        warning: {type: ["string", "null"]}
+      description: Null values mean no promo coupon is configured. A configured coupon is checked even when there are no candidate players.
+    RetentionGeneratedDraft:
+      type: object
+      additionalProperties: false
+      required: [candidate_id, player_id, player_name, body, context]
+      properties:
+        candidate_id: {type: string}
+        player_id: {type: string}
+        player_name: {type: ["string", "null"]}
+        body:
+          type: string
+          description: Exact full message body passed to the atomic create-draft RPC and persisted
+        context:
+          $ref: "#/components/schemas/RetentionContext"
     RetentionActionResult:
       type: object
       additionalProperties: true

@@ -20,6 +20,7 @@ import type {
   ApproveRetentionDraftParams,
   ApproveRetentionPlaybookDraftsParams,
   EditRetentionDraftParams,
+  GenerateRetentionDrafts400,
   GenerateRetentionDraftsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
@@ -27,6 +28,7 @@ import type {
   RetentionApprovalInput,
   RetentionBulkApprovalInput,
   RetentionDraftUpdate,
+  RetentionGenerationInput,
   RetentionGenerationResult,
   RetentionPauseInput,
   RetentionReview,
@@ -220,7 +222,7 @@ export function useListRetentionApprovals<
 }
 
 /**
- * @summary Generate last-seven-day drafts only; never approve or send
+ * @summary Generate first-ever Learn to Play drafts in a configurable lookback window; never approve or send
  */
 export const getGenerateRetentionDraftsUrl = (
   params?: GenerateRetentionDraftsParams,
@@ -241,6 +243,7 @@ export const getGenerateRetentionDraftsUrl = (
 };
 
 export const generateRetentionDrafts = async (
+  retentionGenerationInput?: RetentionGenerationInput,
   params?: GenerateRetentionDraftsParams,
   options?: RequestInit,
 ): Promise<RetentionGenerationResult> => {
@@ -249,25 +252,33 @@ export const generateRetentionDrafts = async (
     {
       ...options,
       method: "POST",
+      headers: { "Content-Type": "application/json", ...options?.headers },
+      body: JSON.stringify(retentionGenerationInput),
     },
   );
 };
 
 export const getGenerateRetentionDraftsMutationOptions = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<GenerateRetentionDrafts400 | RetentionGenerationResult>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateRetentionDrafts>>,
     TError,
-    { params?: GenerateRetentionDraftsParams },
+    {
+      data: BodyType<RetentionGenerationInput>;
+      params?: GenerateRetentionDraftsParams;
+    },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationOptions<
   Awaited<ReturnType<typeof generateRetentionDrafts>>,
   TError,
-  { params?: GenerateRetentionDraftsParams },
+  {
+    data: BodyType<RetentionGenerationInput>;
+    params?: GenerateRetentionDraftsParams;
+  },
   TContext
 > => {
   const mutationKey = ["generateRetentionDrafts"];
@@ -281,11 +292,14 @@ export const getGenerateRetentionDraftsMutationOptions = <
 
   const mutationFn: MutationFunction<
     Awaited<ReturnType<typeof generateRetentionDrafts>>,
-    { params?: GenerateRetentionDraftsParams }
+    {
+      data: BodyType<RetentionGenerationInput>;
+      params?: GenerateRetentionDraftsParams;
+    }
   > = (props) => {
-    const { params } = props ?? {};
+    const { data, params } = props ?? {};
 
-    return generateRetentionDrafts(params, requestOptions);
+    return generateRetentionDrafts(data, params, requestOptions);
   };
 
   return { mutationFn, ...mutationOptions };
@@ -294,27 +308,36 @@ export const getGenerateRetentionDraftsMutationOptions = <
 export type GenerateRetentionDraftsMutationResult = NonNullable<
   Awaited<ReturnType<typeof generateRetentionDrafts>>
 >;
-
-export type GenerateRetentionDraftsMutationError = ErrorType<unknown>;
+export type GenerateRetentionDraftsMutationBody =
+  BodyType<RetentionGenerationInput>;
+export type GenerateRetentionDraftsMutationError = ErrorType<
+  GenerateRetentionDrafts400 | RetentionGenerationResult
+>;
 
 /**
- * @summary Generate last-seven-day drafts only; never approve or send
+ * @summary Generate first-ever Learn to Play drafts in a configurable lookback window; never approve or send
  */
 export const useGenerateRetentionDrafts = <
-  TError = ErrorType<unknown>,
+  TError = ErrorType<GenerateRetentionDrafts400 | RetentionGenerationResult>,
   TContext = unknown,
 >(options?: {
   mutation?: UseMutationOptions<
     Awaited<ReturnType<typeof generateRetentionDrafts>>,
     TError,
-    { params?: GenerateRetentionDraftsParams },
+    {
+      data: BodyType<RetentionGenerationInput>;
+      params?: GenerateRetentionDraftsParams;
+    },
     TContext
   >;
   request?: SecondParameter<typeof customFetch>;
 }): UseMutationResult<
   Awaited<ReturnType<typeof generateRetentionDrafts>>,
   TError,
-  { params?: GenerateRetentionDraftsParams },
+  {
+    data: BodyType<RetentionGenerationInput>;
+    params?: GenerateRetentionDraftsParams;
+  },
   TContext
 > => {
   return useMutation(getGenerateRetentionDraftsMutationOptions(options));

@@ -1,5 +1,14 @@
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ET = "America/New_York";
+export const DEFAULT_RETENTION_LOOKBACK_DAYS = 7;
+export const MAX_RETENTION_LOOKBACK_DAYS = 30;
+
+export function normalizeRetentionLookbackDays(value = DEFAULT_RETENTION_LOOKBACK_DAYS): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new RangeError("Retention lookback days must be a positive integer");
+  }
+  return Math.min(value, MAX_RETENTION_LOOKBACK_DAYS);
+}
 
 export function toEtDate(value: string | Date, timezone = ET): string {
   if (typeof value === "string" && DATE_ONLY_RE.test(value)) return value;
@@ -22,13 +31,25 @@ export function addCalendarDays(date: string, delta: number): string {
   return shifted.toISOString().slice(0, 10);
 }
 
-export function isRetentionTriggerDate(eventDate: string, todayET: string): boolean {
-  return eventDate >= addCalendarDays(todayET, -7) && eventDate < todayET;
+export function isRetentionTriggerDate(
+  eventDate: string,
+  todayET: string,
+  lookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
+): boolean {
+  const days = normalizeRetentionLookbackDays(lookbackDays);
+  return eventDate >= addCalendarDays(todayET, -days) && eventDate < todayET;
 }
 
 /** Conservative raw attendance-date candidate gate before live event verification. */
-export function isAttendanceDateNearRetentionWindow(attendanceDate: string, todayET: string): boolean {
-  return attendanceDate >= addCalendarDays(todayET, -8) && attendanceDate <= todayET;
+export function isAttendanceDateNearRetentionWindow(
+  attendanceDate: string,
+  todayET: string,
+  lookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
+): boolean {
+  const days = normalizeRetentionLookbackDays(lookbackDays);
+  // Keep one extra day so a verified event up to one day from attendance can
+  // still corroborate a trigger on the actual lookback boundary.
+  return attendanceDate >= addCalendarDays(todayET, -(days + 1)) && attendanceDate <= todayET;
 }
 
 export function calendarDayDistance(left: string, right: string): number {

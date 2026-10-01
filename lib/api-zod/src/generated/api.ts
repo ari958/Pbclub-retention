@@ -175,7 +175,7 @@ export const ListRetentionApprovalsResponse = zod.object({
 });
 
 /**
- * @summary Generate last-seven-day drafts only; never approve or send
+ * @summary Generate first-ever Learn to Play drafts in a configurable lookback window; never approve or send
  */
 export const GenerateRetentionDraftsQueryParams = zod.object({
   clubId: zod.coerce
@@ -189,10 +189,194 @@ export const GenerateRetentionDraftsQueryParams = zod.object({
     .describe("Club slug; supply either clubId or slug"),
 });
 
+export const GenerateRetentionDraftsBody = zod.object({
+  lookback_days: zod
+    .number()
+    .min(1)
+    .optional()
+    .describe(
+      "Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30",
+    ),
+});
+
+export const generateRetentionDraftsResponseLookbackDaysMax = 30;
+
+export const generateRetentionDraftsResponseStatsFoundMin = 0;
+
+export const generateRetentionDraftsResponseStatsVerifiedMin = 0;
+
+export const generateRetentionDraftsResponseStatsNewLtpPlayersMin = 0;
+
+export const generateRetentionDraftsResponseStatsCreatedMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedMin = 0;
+
+export const generateRetentionDraftsResponseStatsErrorCountMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonNoPhoneMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonOptedOutMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonDuplicateMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonHoldoutMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonMarketingConsentMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonMissingPlayerMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonInvalidTriggerMin = 0;
+
+export const generateRetentionDraftsResponseStatsSkippedByReasonOutOfWindowMin = 0;
+
+export const generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin = 0;
+
 export const GenerateRetentionDraftsResponse = zod.object({
-  created: zod.number().optional(),
-  skipped: zod.number().optional(),
-  errors: zod.array(zod.unknown()).optional(),
+  schema_ready: zod.boolean(),
+  lookback_days: zod
+    .number()
+    .min(1)
+    .max(generateRetentionDraftsResponseLookbackDaysMax)
+    .describe(
+      "Effective lookback after values above 30 are clamped to 30; defaults to 7",
+    ),
+  created: zod.number(),
+  skipped: zod.number(),
+  errors: zod
+    .array(zod.string())
+    .describe(
+      "Per-candidate or generation failures; errors are not included in skipped",
+    ),
+  stats: zod
+    .object({
+      found: zod.number().min(generateRetentionDraftsResponseStatsFoundMin),
+      verified: zod
+        .number()
+        .min(generateRetentionDraftsResponseStatsVerifiedMin),
+      new_ltp_players: zod
+        .number()
+        .min(generateRetentionDraftsResponseStatsNewLtpPlayersMin),
+      created: zod.number().min(generateRetentionDraftsResponseStatsCreatedMin),
+      skipped: zod.number().min(generateRetentionDraftsResponseStatsSkippedMin),
+      error_count: zod
+        .number()
+        .min(generateRetentionDraftsResponseStatsErrorCountMin),
+      errors: zod
+        .array(zod.string())
+        .describe(
+          "Compatibility detail array matching top-level errors; use error_count for the count",
+        ),
+      skipped_by_reason: zod.object({
+        no_phone: zod
+          .number()
+          .min(generateRetentionDraftsResponseStatsSkippedByReasonNoPhoneMin),
+        opted_out: zod
+          .number()
+          .min(generateRetentionDraftsResponseStatsSkippedByReasonOptedOutMin),
+        duplicate: zod
+          .number()
+          .min(generateRetentionDraftsResponseStatsSkippedByReasonDuplicateMin),
+        holdout: zod
+          .number()
+          .min(generateRetentionDraftsResponseStatsSkippedByReasonHoldoutMin),
+        marketing_consent: zod
+          .number()
+          .min(
+            generateRetentionDraftsResponseStatsSkippedByReasonMarketingConsentMin,
+          ),
+        missing_player: zod
+          .number()
+          .min(
+            generateRetentionDraftsResponseStatsSkippedByReasonMissingPlayerMin,
+          ),
+        invalid_trigger: zod
+          .number()
+          .min(
+            generateRetentionDraftsResponseStatsSkippedByReasonInvalidTriggerMin,
+          ),
+        out_of_window: zod
+          .number()
+          .min(
+            generateRetentionDraftsResponseStatsSkippedByReasonOutOfWindowMin,
+          ),
+      }),
+    })
+    .describe(
+      "found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.",
+    ),
+  coupon_check: zod
+    .object({
+      code: zod.string().nullable(),
+      valid: zod.boolean().nullable(),
+      warning: zod.string().nullable(),
+    })
+    .describe(
+      "Null values mean no promo coupon is configured. A configured coupon is checked even when there are no candidate players.",
+    ),
+  drafts: zod
+    .array(
+      zod.object({
+        candidate_id: zod.string(),
+        player_id: zod.string(),
+        player_name: zod.string().nullable(),
+        body: zod
+          .string()
+          .describe(
+            "Exact full message body passed to the atomic create-draft RPC and persisted",
+          ),
+        context: zod.object({
+          player_first_name: zod.string().optional(),
+          trigger: zod.object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          }),
+          next_program: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          booked_event: zod
+            .union([
+              zod.object({
+                event_id: zod.string(),
+                name: zod.string(),
+                start_time: zod.string(),
+                date: zod.string(),
+                time: zod.string(),
+                signup_url: zod.string(),
+                spots_remaining: zod.number().optional(),
+              }),
+              zod.null(),
+            ])
+            .optional(),
+          classmates_signed_up: zod
+            .number()
+            .min(
+              generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin,
+            ),
+          already_booked: zod.boolean(),
+          promo: zod
+            .object({
+              code: zod.string().optional(),
+              offer_text: zod.string().optional(),
+            })
+            .nullish(),
+          coupon_warning: zod.string().nullable(),
+          evaluated_at: zod.string(),
+        }),
+      }),
+    )
+    .describe("Only candidates newly created by this call"),
 });
 
 /**

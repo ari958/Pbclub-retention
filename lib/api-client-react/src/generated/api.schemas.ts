@@ -180,11 +180,94 @@ export interface RetentionReview {
   mode: RetentionReviewMode;
 }
 
-export interface RetentionGenerationResult {
-  created?: number;
-  skipped?: number;
-  errors?: unknown[];
+export interface RetentionGenerationSkippedCounts {
+  /** @minimum 0 */
+  no_phone: number;
+  /** @minimum 0 */
+  opted_out: number;
+  /** @minimum 0 */
+  duplicate: number;
+  /** @minimum 0 */
+  holdout: number;
+  /** @minimum 0 */
+  marketing_consent: number;
+  /** @minimum 0 */
+  missing_player: number;
+  /** @minimum 0 */
+  invalid_trigger: number;
+  /** @minimum 0 */
+  out_of_window: number;
+}
+
+/**
+ * found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.
+ */
+export interface RetentionGenerationStats {
+  /** @minimum 0 */
+  found: number;
+  /** @minimum 0 */
+  verified: number;
+  /** @minimum 0 */
+  new_ltp_players: number;
+  /** @minimum 0 */
+  created: number;
+  /** @minimum 0 */
+  skipped: number;
+  /** @minimum 0 */
+  error_count: number;
+  /** Compatibility detail array matching top-level errors; use error_count for the count */
+  errors: string[];
+  skipped_by_reason: RetentionGenerationSkippedCounts;
   [key: string]: unknown;
+}
+
+/**
+ * Null values mean no promo coupon is configured. A configured coupon is checked even when there are no candidate players.
+ */
+export interface RetentionCouponCheck {
+  /** @nullable */
+  code: string | null;
+  /** @nullable */
+  valid: boolean | null;
+  /** @nullable */
+  warning: string | null;
+}
+
+export interface RetentionGeneratedDraft {
+  candidate_id: string;
+  player_id: string;
+  /** @nullable */
+  player_name: string | null;
+  /** Exact full message body passed to the atomic create-draft RPC and persisted */
+  body: string;
+  context: RetentionContext;
+}
+
+export interface RetentionGenerationResult {
+  schema_ready: boolean;
+  /**
+   * Effective lookback after values above 30 are clamped to 30; defaults to 7
+   * @minimum 1
+   * @maximum 30
+   */
+  lookback_days: number;
+  created: number;
+  skipped: number;
+  /** Per-candidate or generation failures; errors are not included in skipped */
+  errors: string[];
+  stats: RetentionGenerationStats;
+  coupon_check: RetentionCouponCheck;
+  /** Only candidates newly created by this call */
+  drafts: RetentionGeneratedDraft[];
+  [key: string]: unknown;
+}
+
+export interface RetentionGenerationInput {
+  /**
+   * Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30
+   * @minimum 1
+   */
+  lookback_days?: number;
 }
 
 export interface RetentionActionResult {
@@ -239,6 +322,10 @@ export type GenerateRetentionDraftsParams = {
    * Club slug; supply either clubId or slug
    */
   slug?: RetentionSlugParameter;
+};
+
+export type GenerateRetentionDrafts400 = {
+  error: string;
 };
 
 export type UpdateRetentionKillSwitchParams = {
