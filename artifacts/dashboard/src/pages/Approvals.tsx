@@ -5,7 +5,7 @@ import { useToast } from "@/components/Toast";
 import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
 import { requestApprovalList } from "@/lib/approvalListRequest";
-import { retentionApi, ApiError, type ApprovalListStatus, type ApprovalsResponse, type Candidate } from "@/lib/retentionApi";
+import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate } from "@/lib/retentionApi";
 
 const D = { bg: "#161b22", card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", orange: "#d4813a", orangeBg: "rgba(212,129,58,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -21,7 +21,7 @@ export default function Approvals() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
-  const [lookbackDays, setLookbackDays] = useState<7 | 14 | 30>(7);
+  const [lookbackDays, setLookbackDays] = useState<typeof LOOKBACK_DAY_OPTIONS[number]>(DEFAULT_LOOKBACK_DAYS);
   const [operator, setOperator] = useState("");
   const [filter, setFilter] = useState<ApprovalListStatus>("all");
   const [loadedFilter, setLoadedFilter] = useState<ApprovalListStatus | null>(null);
@@ -39,6 +39,7 @@ export default function Approvals() {
   } | null>(null);
   const [ksBusy, setKsBusy] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const setEditing = useCallback((id: string, on: boolean) => {
     setEditingIds((s) => { if (s.has(id) === on) return s; const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
   }, []);
@@ -91,14 +92,47 @@ export default function Approvals() {
     setGenerating(true);
     try {
       const r = await retentionApi.generate(slug, lookbackDays);
-      const st = { created: r.created ?? r.stats?.created, skipped: r.skipped ?? r.stats?.skipped, errors: r.errors ?? r.stats?.errors };
+      const st = {
+        created: r.created ?? r.stats?.created,
+        skipped: r.skipped ?? r.stats?.skipped,
+        needsContext: r.needs_context ?? r.stats?.needs_context,
+        manualEdit: r.manual_edit ?? r.stats?.manual_edit,
+        errors: r.errors ?? r.stats?.errors,
+      };
       const errs = st.errors?.length ?? 0;
       const found = r.stats?.new_ltp_players ?? r.stats?.found;
-      const msg = `${found === undefined ? "" : `New LTP players found: ${found}. `}Drafts created: ${st.created ?? 0}, skipped: ${st.skipped ?? 0}${errs ? `, errors: ${errs}` : ""}. Nothing was sent.`;
+      const msg = `${found === undefined ? "" : `New LTP players found: ${found}. `}Drafts created: ${st.created ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}. Nothing was sent.`;
       if (errs) toast.info(msg); else toast.success(msg);
       await load();
     } catch (e) { toast.error(e instanceof Error ? e.message : "Generate failed"); }
     finally { setGenerating(false); }
+  };
+
+  const regenerate = async (id: string) => {
+    if (regeneratingId || busy.size > 0 || generating) return;
+    setRegeneratingId(id);
+    try {
+      const result = await retentionApi.regenerate(slug, id);
+      const detail = [
+        result.reason,
+        result.context.reason,
+        ...(result.validation_errors ?? []),
+        ...(result.context.validation_errors ?? []),
+        ...(result.context.errors ?? []).map((error) => {
+          if (typeof error === "string") return error;
+          try { return JSON.stringify(error); } catch { return String(error); }
+        }),
+      ].filter((value): value is string => Boolean(value));
+      if (result.status === "drafted") {
+        toast.success("Draft regenerated. Review the updated text and context before approving.");
+      } else {
+        toast.info(`Regeneration finished with status ${result.status.replace("_", " ")}${detail.length ? `: ${detail.join("; ")}` : "."}`);
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? `Could not regenerate this draft: ${e.message}` : "Could not regenerate this draft");
+    } finally {
+      try { await load(); } finally { setRegeneratingId(null); }
+    }
   };
 
   const groups = useMemo(() => {
@@ -113,9 +147,11 @@ export default function Approvals() {
   const counts = useMemo(() => {
     if (data?.counts) return data.counts;
     if (!data || loadedFilter !== "all") return null;
-    const result: Partial<Record<ApprovalListStatus, number>> = { drafted: 0, approved: 0 };
+    const result: Partial<Record<ApprovalListStatus, number>> = {
+      all: data.candidates.length, drafted: 0, approved: 0, skipped: 0, sent: 0, needs_context: 0, manual_edit: 0,
+    };
     for (const c of data.candidates) {
-      if (c.status === "drafted" || c.status === "approved") result[c.status] = (result[c.status] ?? 0) + 1;
+      result[c.status] = (result[c.status] ?? 0) + 1;
     }
     return result;
   }, [data, loadedFilter]);
@@ -182,16 +218,14 @@ export default function Approvals() {
                 aria-label="Draft generation lookback"
                 data-testid="select-lookback-days"
                 value={lookbackDays}
-                disabled={generating}
-                onChange={(event) => setLookbackDays(Number(event.target.value) as 7 | 14 | 30)}
+                disabled={generating || regeneratingId !== null}
+                onChange={(event) => setLookbackDays(Number(event.target.value) as typeof LOOKBACK_DAY_OPTIONS[number])}
                 style={{ background: D.card, color: D.text, border: `1px solid ${D.border}`, borderRadius: 5, padding: "6px 8px", fontSize: 12 }}
               >
-                <option value={7}>7 days</option>
-                <option value={14}>14 days</option>
-                <option value={30}>30 days</option>
+                {LOOKBACK_DAY_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
               </select>
             </label>
-            <button style={btn(true, generating)} disabled={generating} onClick={generate} data-testid="button-generate">
+            <button style={btn(true, generating || regeneratingId !== null)} disabled={generating || regeneratingId !== null} onClick={generate} data-testid="button-generate">
               {generating ? "Creating drafts..." : "Generate drafts (nothing is sent)"}
             </button>
           </span>
@@ -208,6 +242,12 @@ export default function Approvals() {
               {data && !data.schema_ready && <div>Retention tables are unavailable (schema not ready). Approvals cannot be loaded or changed until the database is migrated.</div>}
               {couponFails > 0 && <div>{couponFails} draft{couponFails === 1 ? "" : "s"} failed the coupon check. The promo code may not work; review before approving.</div>}
               {warnings.map((w, i) => <div key={i}>{w}</div>)}
+            </div>
+          )}
+          {loadError && data && (
+            <div role="alert" data-testid="banner-refresh-error" style={{ background: D.redBg, border: "1px solid rgba(207,34,46,0.2)", borderRadius: 7, padding: "10px 14px", color: D.redText, fontSize: 12 }}>
+              List refresh failed: {loadError}
+              <button style={{ ...btn(false), marginLeft: 10 }} onClick={() => { setLoading(true); load(); }} data-testid="button-refresh-retry">Retry</button>
             </div>
           )}
 
@@ -234,10 +274,10 @@ export default function Approvals() {
           </div>
 
           <div style={{ display: "flex", borderBottom: `1px solid ${D.border}` }}>
-            {(["all", "drafted", "approved", "skipped", "sent"] as ApprovalListStatus[]).map((k) => (
-              <button key={k} onClick={() => setFilter(k)} data-testid={`tab-${k}`}
+            {(["all", "drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as ApprovalListStatus[]).map((k) => (
+              <button key={k} onClick={() => setFilter(k)} disabled={regeneratingId !== null} data-testid={`tab-${k}`}
                 style={{ padding: "8px 14px", background: "transparent", border: "none", borderBottom: filter === k ? `2px solid ${D.accent}` : "2px solid transparent", color: filter === k ? D.text : D.muted, fontSize: 13, cursor: "pointer", marginBottom: -1 }}>
-                {k}<span data-testid={`count-${k}`} style={{ fontFamily: mono, fontSize: 10, marginLeft: 6, color: D.faint }}>{counts?.[k] ?? "—"}</span>
+                 {k.replace("_", " ")}<span data-testid={`count-${k}`} style={{ fontFamily: mono, fontSize: 10, marginLeft: 6, color: D.faint }}>{counts?.[k] ?? "—"}</span>
               </button>
             ))}
           </div>
@@ -253,7 +293,7 @@ export default function Approvals() {
             </div>
           ) : groups.size === 0 ? (
             <div style={{ padding: "48px 20px", textAlign: "center", color: D.faint, fontSize: 13, background: D.card, border: `1px dashed ${D.border}`, borderRadius: 8 }} data-testid="empty-approvals">
-              {filter === "all" ? "No retention messages yet." : filter === "drafted" ? "No drafts." : `No ${filter} messages.`}
+              {filter === "all" ? "No retention messages yet." : filter === "drafted" ? "No drafts." : `No ${filter.replace("_", " ")} messages.`}
             </div>
           ) : (
             [...groups.entries()].map(([key, list]) => {
@@ -269,20 +309,25 @@ export default function Approvals() {
                       {key}{pb && !pb.enabled ? " / disabled" : ""}{pb?.promo_code ? ` / code ${pb.promo_code}` : ""}{pb && pb.holdout_pct > 0 ? ` / holdout ${pb.holdout_pct}%` : ""}
                     </span>
                     <span style={{ marginLeft: "auto", display: "flex", gap: 8 }}>
-                      <button style={btn(false)} onClick={() => setSelected((s) => { const n = new Set(s); const all = drafted.every((c) => n.has(c.id)); drafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={drafted.length === 0} data-testid={`button-select-${key}`}>
-                        {drafted.length > 0 && drafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
-                      </button>
-                      <button style={btn(true, sel.length === 0 || groupEditing)} disabled={sel.length === 0 || groupEditing} title={groupEditing ? "Finish or cancel open edits in this group first" : undefined} onClick={() => openBulk(key)} data-testid={`button-bulk-${key}`}>
-                        Review bulk approval ({sel.length})
-                      </button>
+                      {drafted.length > 0 && (
+                        <>
+                          <button style={btn(false, regeneratingId !== null || busy.size > 0)} onClick={() => setSelected((s) => { const n = new Set(s); const all = drafted.every((c) => n.has(c.id)); drafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={regeneratingId !== null || busy.size > 0} data-testid={`button-select-${key}`}>
+                            {drafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
+                          </button>
+                          <button style={btn(true, sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0)} disabled={sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0} title={groupEditing ? "Finish or cancel open edits in this group first" : undefined} onClick={() => openBulk(key)} data-testid={`button-bulk-${key}`}>
+                            Review bulk approval ({sel.length})
+                          </button>
+                        </>
+                      )}
                     </span>
                   </div>
                   {list.map((c) => (
-                    <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id)} selected={selected.has(c.id)}
+                    <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating} selected={selected.has(c.id)}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
-                      onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : "Draft saved")}
+                      onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}
                       onApprove={() => { if (!editingIds.has(c.id) && c.message && needOperator()) withBusy(c.id, () => retentionApi.approve(slug, c.id, operator.trim(), c.message?.body ?? ""), "Approved and scheduled"); }}
-                      onSkip={() => withBusy(c.id, () => retentionApi.skip(slug, c.id), "Skipped")} />
+                      onSkip={() => withBusy(c.id, () => retentionApi.skip(slug, c.id), "Skipped")}
+                      onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id} />
                   ))}
                 </section>
               );

@@ -143,6 +143,32 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/RetentionActionResult"
+  /retention/candidates/{id}/regenerate:
+    post:
+      operationId: regenerateRetentionDraft
+      tags: [retention]
+      summary: Regenerate the stored text and context for an existing drafted candidate only
+      description: Reuses the candidate row and never changes approved or sent candidates. The result can require context or a manual edit instead of yielding an approvable draft.
+      parameters:
+        - $ref: "#/components/parameters/RetentionId"
+        - $ref: "#/components/parameters/RetentionClub"
+        - $ref: "#/components/parameters/RetentionSlug"
+      responses:
+        "200":
+          description: Updated candidate text and context
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionRegenerateResult"
+        "409":
+          description: Candidate is not currently drafted and cannot be regenerated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error]
+                properties:
+                  error: {type: string}
   /retention/candidates/{id}/skip:
     post:
       operationId: skipRetentionDraft
@@ -200,10 +226,10 @@ components:
       name: status
       in: query
       required: false
-      description: Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+      description: Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, sent history, and candidates needing context or manual edits.
       schema:
         type: string
-        enum: [all, drafted, approved, skipped, sent]
+        enum: [all, drafted, approved, skipped, sent, needs_context, manual_edit]
         default: all
     RetentionId:
       name: id
@@ -267,7 +293,6 @@ components:
     RetentionContext:
       type: object
       additionalProperties: true
-      required: [trigger, classmates_signed_up, already_booked, coupon_warning, evaluated_at]
       properties:
         player_first_name: {type: string}
         trigger:
@@ -294,6 +319,24 @@ components:
             offer_text: {type: string}
         coupon_warning: {type: [string, "null"]}
         evaluated_at: {type: string}
+        stale:
+          type: boolean
+          description: True when the candidate was generated with a test lookback longer than the production default.
+        lookback_days: {type: integer, minimum: 1, maximum: 30}
+        reason: {type: [string, "null"]}
+        errors:
+          type: array
+          description: Lookup failures; entries may be strings or structured error objects.
+          items: {}
+        validation_errors:
+          type: array
+          items: {type: string}
+        date_phrase: {type: [string, "null"]}
+        send_date: {type: [string, "null"]}
+        send_date_et: {type: [string, "null"]}
+        next_program_day: {type: [string, "null"]}
+        generated_preview: {type: [string, "null"]}
+        diagnostics: {}
     RetentionPlaybook:
       type: object
       required: [key, name, enabled, next_program_names, holdout_pct]
@@ -328,7 +371,7 @@ components:
         player_id: {type: string}
         playbook_key: {type: string}
         trigger_event_id: {type: string}
-        status: {type: string, enum: [drafted, approved, skipped, sent]}
+        status: {type: string, enum: [drafted, approved, skipped, sent, needs_context, manual_edit]}
         context:
           $ref: "#/components/schemas/RetentionContext"
         player:
@@ -369,27 +412,31 @@ components:
             kill_switch: {type: [boolean, "null"]}
     RetentionApprovalCounts:
       type: object
-      description: Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.
-      required: [all, drafted, approved, skipped, sent]
+      description: Global candidate totals, independent of the requested status filter. all is the total across every candidate status.
+      required: [all, drafted, approved, skipped, sent, needs_context, manual_edit]
       properties:
         all: {type: integer, minimum: 0}
         drafted: {type: integer, minimum: 0}
         approved: {type: integer, minimum: 0}
         skipped: {type: integer, minimum: 0}
         sent: {type: integer, minimum: 0}
+        needs_context: {type: integer, minimum: 0}
+        manual_edit: {type: integer, minimum: 0}
     RetentionGenerationResult:
       type: object
       additionalProperties: true
-      required: [schema_ready, lookback_days, created, skipped, errors, stats, coupon_check, drafts]
+      required: [schema_ready, lookback_days, created, skipped, needs_context, manual_edit, errors, stats, coupon_check, drafts]
       properties:
         schema_ready: {type: boolean}
         lookback_days:
           type: integer
           minimum: 1
           maximum: 30
-          description: Effective lookback after values above 30 are clamped to 30; defaults to 7
+          description: Effective lookback after values above 30 are clamped to 30; defaults to 3
         created: {type: integer}
         skipped: {type: integer}
+        needs_context: {type: integer, minimum: 0}
+        manual_edit: {type: integer, minimum: 0}
         errors:
           type: array
           description: Per-candidate or generation failures; errors are not included in skipped
@@ -410,18 +457,20 @@ components:
         lookback_days:
           type: integer
           minimum: 1
-          description: Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30
+          description: Positive integer; omitted defaults to 3 and values above 30 are accepted then clamped to 30
     RetentionGenerationStats:
       type: object
       additionalProperties: true
-      description: found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.
-      required: [found, verified, new_ltp_players, created, skipped, error_count, errors, skipped_by_reason]
+      description: found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus needs_context plus manual_edit plus error_count accounts for found candidates.
+      required: [found, verified, new_ltp_players, created, skipped, needs_context, manual_edit, error_count, errors, skipped_by_reason]
       properties:
         found: {type: integer, minimum: 0}
         verified: {type: integer, minimum: 0}
         new_ltp_players: {type: integer, minimum: 0}
         created: {type: integer, minimum: 0}
         skipped: {type: integer, minimum: 0}
+        needs_context: {type: integer, minimum: 0}
+        manual_edit: {type: integer, minimum: 0}
         error_count: {type: integer, minimum: 0}
         errors:
           type: array
@@ -432,7 +481,7 @@ components:
     RetentionGenerationSkippedCounts:
       type: object
       additionalProperties: false
-      required: [no_phone, opted_out, duplicate, holdout, marketing_consent, missing_player, invalid_trigger, out_of_window]
+      required: [no_phone, opted_out, duplicate, holdout, marketing_consent, missing_player, invalid_trigger, out_of_window, already_returned]
       properties:
         no_phone: {type: integer, minimum: 0}
         opted_out: {type: integer, minimum: 0}
@@ -442,6 +491,7 @@ components:
         missing_player: {type: integer, minimum: 0}
         invalid_trigger: {type: integer, minimum: 0}
         out_of_window: {type: integer, minimum: 0}
+        already_returned: {type: integer, minimum: 0}
     RetentionCouponCheck:
       type: object
       additionalProperties: false
@@ -454,16 +504,21 @@ components:
     RetentionGeneratedDraft:
       type: object
       additionalProperties: false
-      required: [candidate_id, player_id, player_name, body, context]
+      required: [candidate_id, player_id, player_name, status, reason, body, context]
       properties:
         candidate_id: {type: string}
         player_id: {type: string}
         player_name: {type: ["string", "null"]}
+        status: {type: string, enum: [drafted, needs_context, manual_edit, skipped]}
+        reason: {type: [string, "null"]}
         body:
-          type: string
-          description: Exact full message body passed to the atomic create-draft RPC and persisted
+          type: [string, "null"]
+          description: Exact persisted draft body; null when context, validation, or already-returned checks block drafting
         context:
           $ref: "#/components/schemas/RetentionContext"
+        validation_errors:
+          type: array
+          items: {type: string}
     RetentionActionResult:
       type: object
       additionalProperties: true
@@ -472,4 +527,17 @@ components:
         candidate:
           $ref: "#/components/schemas/RetentionCandidate"
         errors: {type: array, items: {}}
+    RetentionRegenerateResult:
+      type: object
+      required: [candidate_id, status, reason, body, context]
+      properties:
+        candidate_id: {type: string}
+        status: {type: string, enum: [drafted, needs_context, manual_edit, skipped]}
+        reason: {type: [string, "null"]}
+        body: {type: [string, "null"]}
+        context:
+          $ref: "#/components/schemas/RetentionContext"
+        validation_errors:
+          type: array
+          items: {type: string}
 

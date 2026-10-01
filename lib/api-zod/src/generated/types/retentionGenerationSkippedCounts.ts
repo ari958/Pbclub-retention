@@ -23,4 +23,6 @@ export interface RetentionGenerationSkippedCounts {
   invalid_trigger: number;
   /** @minimum 0 */
   out_of_window: number;
+  /** @minimum 0 */
+  already_returned: number;
 }

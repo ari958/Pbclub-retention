@@ -28,33 +28,56 @@ function Fact({ k, v, warn }: { k: string; v: React.ReactNode; warn?: boolean })
   );
 }
 
-const STATUS_COLOR: Record<string, string> = { drafted: D.accent, approved: D.green, skipped: D.faint, sent: D.green };
+const STATUS_COLOR: Record<string, string> = {
+  drafted: D.accent, approved: D.green, skipped: D.faint, sent: D.green,
+  needs_context: D.redText, manual_edit: D.accent,
+};
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onEditingChange }: {
+function formatIssue(issue: unknown): string {
+  if (typeof issue === "string") return issue;
+  if (issue === null || issue === undefined) return "Unknown error";
+  try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
+}
+
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
   onSave: (body: string) => Promise<boolean>; onApprove: () => void; onSkip: () => void;
+  onRegenerate: () => void; regenerating: boolean;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   useEffect(() => { onEditingChange(editing); }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => () => onEditingChange(false), []); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (c.status !== "drafted" && c.status !== "manual_edit") setEditing(false);
+  }, [c.status]);
   const x = c.context;
-  const body = c.message?.body ?? "";
-  const open = c.status === "drafted" || c.status === "approved";
+  const body = c.status === "manual_edit"
+    ? x.generated_preview ?? c.message?.body ?? ""
+    : c.message?.body ?? "";
+  const open = c.status === "drafted";
+  const editable = open || c.status === "manual_edit";
   const pendingApproved = c.status === "approved";
   const np = x.next_program;
+  const issues = [...(x.errors ?? []), ...(x.validation_errors ?? [])];
+  const playerName = c.player?.name ?? x.player_first_name ?? "Unknown player";
 
   return (
     <div data-testid={`card-candidate-${c.id}`} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderBottom: `1px solid ${D.border}`, background: D.inner }}>
         {c.status === "drafted" && (
-          <input type="checkbox" checked={selected} onChange={onToggle} data-testid={`check-candidate-${c.id}`} aria-label="Include in bulk approval" />
+          <input type="checkbox" checked={selected} onChange={onToggle} disabled={busy} data-testid={`check-candidate-${c.id}`} aria-label="Include in bulk approval" />
         )}
-        <span style={{ fontWeight: 600, fontSize: 13, color: D.text }}>{c.player?.name ?? x.player_first_name}</span>
+        <span style={{ fontWeight: 600, fontSize: 13, color: D.text }}>{playerName}</span>
         <span style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, border: `1px solid ${D.border}`, color: STATUS_COLOR[c.status] }} data-testid={`status-candidate-${c.id}`}>
-          {c.status === "sent" && c.message?.simulated ? "sent (simulated)" : c.status}
+          {c.status === "sent" && c.message?.simulated ? "sent (simulated)" : c.status.replace("_", " ")}
         </span>
+        {x.stale === true && (
+          <span data-testid={`badge-stale-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
+            Stale test draft · {x.lookback_days ?? "unknown"}-day test lookback
+          </span>
+        )}
         {c.message?.simulated && (
           <span data-testid={`badge-simulated-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
             Simulated - not delivered
@@ -65,10 +88,10 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))" }}>
         <div style={{ padding: 16, borderRight: `1px solid ${D.border}` }}>
-          <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>Draft text</div>
+          <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 8 }}>{c.status === "manual_edit" ? "Invalid preview - manual edit required" : "Draft text"}</div>
           {editing ? (
             <>
-              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={6} data-testid={`input-body-${c.id}`}
+              <textarea value={draft} onChange={(e) => setDraft(e.target.value)} rows={6} disabled={busy} data-testid={`input-body-${c.id}`}
                 style={{ width: "100%", boxSizing: "border-box", padding: 10, borderRadius: 5, border: `1px solid ${D.border}`, background: D.inner, color: D.text, fontFamily: "var(--font-sans)", fontSize: 13, lineHeight: 1.6 }} />
               <div style={{ fontSize: 11, color: D.faint, fontFamily: mono, marginTop: 4 }}>{draft.length} chars / {Math.max(1, Math.ceil(draft.length / 160))} SMS</div>
               {pendingApproved && (
@@ -81,7 +104,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
                   onClick={async () => { if (await onSave(draft.trim())) setEditing(false); }}>
                   {pendingApproved ? "Save and reset approval" : "Save edit"}
                 </button>
-                <button style={btn()} onClick={() => setEditing(false)}>Cancel</button>
+                <button style={btn(false, busy)} disabled={busy} onClick={() => setEditing(false)}>Cancel</button>
               </div>
             </>
           ) : (
@@ -91,19 +114,34 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
 
         <div style={{ padding: 16 }}>
           <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Stored context facts</div>
-          <Fact k="First name" v={x.player_first_name} />
-          <Fact k="Trigger" v={`${x.trigger.name} on ${x.trigger.date}`} />
+          <Fact k="First name" v={x.player_first_name ?? "unavailable"} />
+          <Fact k="Trigger" v={x.trigger ? `${x.trigger.name ?? "Unknown event"} on ${x.trigger.date ?? "date unavailable"}` : "unavailable"} />
           <Fact k="Next program" v={np ? `${np.name}, ${np.date} ${np.time}` : "none found"} />
           {np && <Fact k="Spots left" v={np.spots_remaining ?? "unknown"} />}
           {np && <Fact k="Signup link" v={<span style={{ fontFamily: mono, fontSize: 11 }}>{np.signup_url}</span>} />}
-          <Fact k="Classmates signed up" v={`${x.classmates_signed_up} (count only)`} />
-          <Fact k="Already booked" v={x.already_booked ? "yes" : "no"} />
+          <Fact k="Classmates signed up" v={`${x.classmates_signed_up ?? "unknown"} (count only)`} />
+          <Fact k="Already booked" v={x.already_booked == null ? "unknown" : x.already_booked ? "yes" : "no"} />
           {x.booked_event && <Fact k="Booked event" v={`${x.booked_event.name}, ${x.booked_event.date} ${x.booked_event.time}`} />}
           <Fact k="Promo" v={x.promo ? `${x.promo.code} - ${x.promo.offer_text}` : "none"} />
           {x.coupon_warning && <Fact k="Coupon warning" v={x.coupon_warning} warn />}
+          {x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
+          {(x.send_date_et || x.send_date) && <Fact k="Intended send date (ET)" v={x.send_date_et ?? x.send_date!} />}
           <Fact k="Evaluated" v={fmt(x.evaluated_at)} />
         </div>
       </div>
+
+      {(c.status === "needs_context" || c.status === "manual_edit" || x.reason || issues.length > 0) && (
+        <div data-testid={`panel-context-issues-${c.id}`} role="note" style={{ padding: "10px 16px", fontSize: 12, color: c.status === "needs_context" ? D.redText : D.accent, background: c.status === "needs_context" ? D.redBg : D.accentBg, borderTop: `1px solid ${D.border}`, lineHeight: 1.55 }}>
+          <strong>{c.status === "needs_context" ? "Context required" : c.status === "manual_edit" ? "Manual edit required" : "Context and validation details"}</strong>
+          {x.reason && <div data-testid={`text-reason-${c.id}`}>Reason: {x.reason}</div>}
+          {issues.length > 0 && (
+            <ul data-testid={`list-context-errors-${c.id}`} style={{ margin: "5px 0 0", paddingLeft: 18 }}>
+              {issues.map((issue, index) => <li key={index}>{formatIssue(issue)}</li>)}
+            </ul>
+          )}
+          {c.status === "manual_edit" && <div>Correct the text and save it for review. Approval is available only if the saved candidate returns to drafted status.</div>}
+        </div>
+      )}
 
       {x.coupon_warning && (
         <div style={{ padding: "8px 16px", fontSize: 12, color: D.redText, background: D.redBg, borderTop: `1px solid ${D.border}` }}>
@@ -112,7 +150,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
       )}
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: `1px solid ${D.border}`, flexWrap: "wrap" }}>
-        {open && !editing && (
+        {editable && !editing && (
           <button style={btn(false, busy)} disabled={busy} data-testid={`button-edit-${c.id}`} onClick={() => { setDraft(body); setEditing(true); }}>Edit</button>
         )}
         {c.status === "drafted" && (
@@ -122,6 +160,11 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         {editing && c.status === "drafted" && <span style={{ fontSize: 11, color: D.accent }}>Save or cancel the edit, then review the saved text to approve.</span>}
         {open && (
           <button style={btn(false, busy)} disabled={busy} data-testid={`button-skip-${c.id}`} onClick={onSkip}>Skip</button>
+        )}
+        {c.status === "drafted" && (
+          <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-regenerate-${c.id}`} onClick={onRegenerate}>
+            {regenerating ? "Regenerating..." : "Regenerate"}
+          </button>
         )}
         <span style={{ marginLeft: "auto", fontFamily: mono, fontSize: 11, color: D.faint }} data-testid={`text-approval-${c.id}`}>
           {c.message?.approved_at && <>approved by {c.message.approved_by ?? "-"} at {fmt(c.message.approved_at)}</>}

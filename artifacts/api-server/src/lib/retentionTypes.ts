@@ -36,6 +36,16 @@ export interface RetentionContext {
   promo: { code: string; offer_text: string } | null;
   coupon_warning: string | null;
   evaluated_at: string;
+  diagnostics?: Record<string, unknown>;
+  errors?: string[];
+  reason?: string | null;
+  validation_errors?: string[];
+  date_phrase?: string;
+  send_date_et?: string;
+  next_program_day?: string;
+  generated_preview?: string | null;
+  lookback_days?: number;
+  stale?: boolean;
   [evidence: string]: unknown;
 }
 
@@ -46,7 +56,7 @@ export interface RetentionCandidate {
   playbook_key: string;
   trigger_event_id: string;
   context: RetentionContext;
-  status: "drafted" | "approved" | "skipped" | "sent";
+  status: "drafted" | "approved" | "skipped" | "sent" | "needs_context" | "manual_edit";
   message_id: string | null;
   created_at: string;
   updated_at: string;

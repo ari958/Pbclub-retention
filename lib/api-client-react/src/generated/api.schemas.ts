@@ -73,17 +73,40 @@ export type RetentionContextPromo = {
 
 export interface RetentionContext {
   player_first_name?: string;
-  trigger: RetentionContextTrigger;
+  trigger?: RetentionContextTrigger;
   next_program?: RetentionProgram | null;
   booked_event?: RetentionProgram | null;
   /** @minimum 0 */
-  classmates_signed_up: number;
-  already_booked: boolean;
+  classmates_signed_up?: number;
+  already_booked?: boolean;
   /** @nullable */
   promo?: RetentionContextPromo;
   /** @nullable */
-  coupon_warning: string | null;
-  evaluated_at: string;
+  coupon_warning?: string | null;
+  evaluated_at?: string;
+  /** True when the candidate was generated with a test lookback longer than the production default. */
+  stale?: boolean;
+  /**
+   * @minimum 1
+   * @maximum 30
+   */
+  lookback_days?: number;
+  /** @nullable */
+  reason?: string | null;
+  /** Lookup failures; entries may be strings or structured error objects. */
+  errors?: unknown[];
+  validation_errors?: string[];
+  /** @nullable */
+  date_phrase?: string | null;
+  /** @nullable */
+  send_date?: string | null;
+  /** @nullable */
+  send_date_et?: string | null;
+  /** @nullable */
+  next_program_day?: string | null;
+  /** @nullable */
+  generated_preview?: string | null;
+  diagnostics?: unknown;
   [key: string]: unknown;
 }
 
@@ -127,6 +150,8 @@ export const RetentionCandidateStatus = {
   approved: "approved",
   skipped: "skipped",
   sent: "sent",
+  needs_context: "needs_context",
+  manual_edit: "manual_edit",
 } as const;
 
 export type RetentionCandidatePlayer = {
@@ -155,7 +180,7 @@ export type RetentionReviewMode = {
 };
 
 /**
- * Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.
+ * Global candidate totals, independent of the requested status filter. all is the total across every candidate status.
  */
 export interface RetentionApprovalCounts {
   /** @minimum 0 */
@@ -168,6 +193,10 @@ export interface RetentionApprovalCounts {
   skipped: number;
   /** @minimum 0 */
   sent: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
 }
 
 export interface RetentionReview {
@@ -197,10 +226,12 @@ export interface RetentionGenerationSkippedCounts {
   invalid_trigger: number;
   /** @minimum 0 */
   out_of_window: number;
+  /** @minimum 0 */
+  already_returned: number;
 }
 
 /**
- * found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.
+ * found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus needs_context plus manual_edit plus error_count accounts for found candidates.
  */
 export interface RetentionGenerationStats {
   /** @minimum 0 */
@@ -213,6 +244,10 @@ export interface RetentionGenerationStats {
   created: number;
   /** @minimum 0 */
   skipped: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
   /** @minimum 0 */
   error_count: number;
   /** Compatibility detail array matching top-level errors; use error_count for the count */
@@ -233,26 +268,47 @@ export interface RetentionCouponCheck {
   warning: string | null;
 }
 
+export type RetentionGeneratedDraftStatus =
+  (typeof RetentionGeneratedDraftStatus)[keyof typeof RetentionGeneratedDraftStatus];
+
+export const RetentionGeneratedDraftStatus = {
+  drafted: "drafted",
+  needs_context: "needs_context",
+  manual_edit: "manual_edit",
+  skipped: "skipped",
+} as const;
+
 export interface RetentionGeneratedDraft {
   candidate_id: string;
   player_id: string;
   /** @nullable */
   player_name: string | null;
-  /** Exact full message body passed to the atomic create-draft RPC and persisted */
-  body: string;
+  status: RetentionGeneratedDraftStatus;
+  /** @nullable */
+  reason: string | null;
+  /**
+   * Exact persisted draft body; null when context, validation, or already-returned checks block drafting
+   * @nullable
+   */
+  body: string | null;
   context: RetentionContext;
+  validation_errors?: string[];
 }
 
 export interface RetentionGenerationResult {
   schema_ready: boolean;
   /**
-   * Effective lookback after values above 30 are clamped to 30; defaults to 7
+   * Effective lookback after values above 30 are clamped to 30; defaults to 3
    * @minimum 1
    * @maximum 30
    */
   lookback_days: number;
   created: number;
   skipped: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
   /** Per-candidate or generation failures; errors are not included in skipped */
   errors: string[];
   stats: RetentionGenerationStats;
@@ -264,7 +320,7 @@ export interface RetentionGenerationResult {
 
 export interface RetentionGenerationInput {
   /**
-   * Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30
+   * Positive integer; omitted defaults to 3 and values above 30 are accepted then clamped to 30
    * @minimum 1
    */
   lookback_days?: number;
@@ -275,6 +331,27 @@ export interface RetentionActionResult {
   candidate?: RetentionCandidate;
   errors?: unknown[];
   [key: string]: unknown;
+}
+
+export type RetentionRegenerateResultStatus =
+  (typeof RetentionRegenerateResultStatus)[keyof typeof RetentionRegenerateResultStatus];
+
+export const RetentionRegenerateResultStatus = {
+  drafted: "drafted",
+  needs_context: "needs_context",
+  manual_edit: "manual_edit",
+  skipped: "skipped",
+} as const;
+
+export interface RetentionRegenerateResult {
+  candidate_id: string;
+  status: RetentionRegenerateResultStatus;
+  /** @nullable */
+  reason: string | null;
+  /** @nullable */
+  body: string | null;
+  context: RetentionContext;
+  validation_errors?: string[];
 }
 
 /**
@@ -296,6 +373,8 @@ export const RetentionApprovalStatusParameter = {
   approved: "approved",
   skipped: "skipped",
   sent: "sent",
+  needs_context: "needs_context",
+  manual_edit: "manual_edit",
 } as const;
 
 export type ListRetentionApprovalsParams = {
@@ -308,7 +387,7 @@ export type ListRetentionApprovalsParams = {
    */
   slug?: RetentionSlugParameter;
   /**
-   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, sent history, and candidates needing context or manual edits.
    */
   status?: RetentionApprovalStatusParameter;
 };
@@ -359,6 +438,21 @@ export type ApproveRetentionDraftParams = {
    * Club slug; supply either clubId or slug
    */
   slug?: RetentionSlugParameter;
+};
+
+export type RegenerateRetentionDraftParams = {
+  /**
+   * Club UUID; supply either clubId or slug
+   */
+  clubId?: RetentionClubParameter;
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
+
+export type RegenerateRetentionDraft409 = {
+  error: string;
 };
 
 export type SkipRetentionDraftParams = {

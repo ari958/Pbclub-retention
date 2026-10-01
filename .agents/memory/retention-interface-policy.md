@@ -20,3 +20,9 @@ Treat permission to sync PodPlay phone numbers as contact-data permission only, 
 **Why:** The user authorized contact synchronization to unblock draft review while retaining the draft-only boundary. Having a phone number does not establish consent, and a legacy importer previously coupled phone availability to opt-in.
 
 **How to apply:** Keep phone-only synchronization separate from consent imports and approval/send actions. Verify consent and opt-out fields are unchanged across a contact sync.
+
+Do not automatically substitute a similarly named, higher-level program when the configured Learn to Play next-program titles are absent.
+
+**Why:** Title normalization fixes case, dash, and whitespace differences; it cannot establish that a different program is appropriate for a new player. The live audit found a higher-level title with an extra word, not a formatting mismatch.
+
+**How to apply:** Preserve the configured program choices, mark missing matches as needing context, and obtain an operator decision before adding semantic aliases or changing the recommended programs.

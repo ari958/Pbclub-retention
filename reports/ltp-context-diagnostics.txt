@@ -1,0 +1,1112 @@
+LTP follow-up context audit
+IMPORTANT: GET-only diagnostics and read-only previews. No regeneration was saved. All ten existing candidates remain drafted. Migration 011 is required before regeneration.
+
+Original cause: no configured next-program name matched live event names; capacity filtering was never reached.
+Configured names: Beginner 60&60 Clinic | 30 & 30 Beginner Drills & Guided Play | Path to Advanced Beginner
+Similar live title is NOT automatically substituted: Advanced Beginner 60&60 Clinic
+
+PLAYER: Joe Stephenson
+Candidate: 5285f595-334b-4e39-bc2e-64885df00913
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Meaghan Wright
+Candidate: 4eb753b2-c9ef-4acf-b674-557ada19b5f7
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Ethan Forde
+Candidate: c10131d1-b6c7-4021-98a2-ca5ea046304c
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Ke Shi
+Candidate: afec6e1f-8068-4cc5-aafd-3b95787fadce
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Changnan Peng
+Candidate: 6dad1659-d0ef-428f-abd7-cb27062ea6ed
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Diana Kekhman
+Candidate: dd3d9fcd-feeb-4c1f-a8f1-017ffc704598
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Joel Mcintosh
+Candidate: 8165c985-c43b-4157-bdf1-fd5b62a9d5ef
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Monique Courts
+Candidate: 59ab40dc-4dd8-4a38-862d-971766ac471e
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Wolfgang Hall
+Candidate: b37184e2-fa23-412e-a0d8-9287f719d65f
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+PLAYER: Bernard Canonigo
+Candidate: dfc6cfa8-a879-499a-8f35-cd1fbf26b1b6
+Current saved status: drafted
+Exact upcoming GETs:
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=1&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=2&ipp=100
+https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A02%3A37.270Z&endTime=2126-09-07T02%3A02%3A37.270Z&page=3&ipp=100
+Raw events: 236
+Events inside 14-day window: 115
+Published events inside 14-day window: 112
+Matched configured names: []
+Next-program lookup error: null
+Classmate lookup error: null
+Already-booked lookup error: null
+
+CORRECTED READ-ONLY PREVIEW (NOT SAVED)
+{
+  "mode": "read_only_preview_no_llm_no_writes",
+  "created_at": "2026-10-01T02:11:53.119Z",
+  "existing_candidate_count": 10,
+  "candidate_statuses_before_preview": {
+    "drafted": 10
+  },
+  "source_prechange_diagnostics": {
+    "path": "/tmp/ltp-empty-context-diagnostics.json",
+    "candidate_count": 10,
+    "raw_event_count": 236,
+    "raw_event_count_14_day_window": 115,
+    "published_event_count_14_day_window": 112,
+    "same_236_115_112_counts_for_each_candidate": true,
+    "per_candidate_counts": [
+      {
+        "candidate_id": "5285f595-334b-4e39-bc2e-64885df00913",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "4eb753b2-c9ef-4acf-b674-557ada19b5f7",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "c10131d1-b6c7-4021-98a2-ca5ea046304c",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "afec6e1f-8068-4cc5-aafd-3b95787fadce",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "6dad1659-d0ef-428f-abd7-cb27062ea6ed",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "dd3d9fcd-feeb-4c1f-a8f1-017ffc704598",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "8165c985-c43b-4157-bdf1-fd5b62a9d5ef",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "59ab40dc-4dd8-4a38-862d-971766ac471e",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "b37184e2-fa23-412e-a0d8-9287f719d65f",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      {
+        "candidate_id": "dfc6cfa8-a879-499a-8f35-cd1fbf26b1b6",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      }
+    ]
+  },
+  "configured_next_program_names": [
+    "Beginner 60&60 Clinic",
+    "30 & 30 Beginner Drills & Guided Play",
+    "Path to Advanced Beginner"
+  ],
+  "attendance_history": {
+    "table_reads_only": true,
+    "date_timezone": "America/New_York",
+    "already_returned_rule": "any attendance with a non-Learn-to-Play program name and ET calendar date strictly later than the original stored trigger date",
+    "cohort_attendance_rows_read": 13,
+    "trigger_class_attendance_rows_read": 18
+  },
+  "totals": {
+    "needs_context/no_next_program": 8,
+    "skipped/already_returned": 2
+  },
+  "podplay_preview": {
+    "method_scope": "GET only; non-GET PodPlay requests blocked by the preview wrapper",
+    "raw_event_count": 116,
+    "raw_event_count_in_requested_14_day_window": 115,
+    "published_uncanceled_event_count_in_requested_14_day_window": 112,
+    "matched_configured_program_event_count": 0,
+    "matched_program_event_names": [],
+    "request_count": 114,
+    "upcoming_event_request_count": 2,
+    "signup_request_count": 112,
+    "errors": [],
+    "requests": [
+      {
+        "method": "GET",
+        "kind": "upcoming_events",
+        "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+        "status": 200,
+        "item_count": 100
+      },
+      {
+        "method": "GET",
+        "kind": "upcoming_events",
+        "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+        "status": 200,
+        "item_count": 16
+      }
+    ]
+  },
+  "candidates": [
+    {
+      "candidate_id": "5285f595-334b-4e39-bc2e-64885df00913",
+      "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+      "player_name": "Joe Stephenson",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-01",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "5285f595-334b-4e39-bc2e-64885df00913",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-01",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "4eb753b2-c9ef-4acf-b674-557ada19b5f7",
+      "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9",
+      "player_name": "Meaghan Wright",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-01",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "4eb753b2-c9ef-4acf-b674-557ada19b5f7",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-01",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "c10131d1-b6c7-4021-98a2-ca5ea046304c",
+      "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef",
+      "player_name": "Ethan Forde",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-01",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "c10131d1-b6c7-4021-98a2-ca5ea046304c",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-01",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "afec6e1f-8068-4cc5-aafd-3b95787fadce",
+      "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+      "player_name": "Ke Shi",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-20",
+      "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "afec6e1f-8068-4cc5-aafd-3b95787fadce",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-20",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "6dad1659-d0ef-428f-abd7-cb27062ea6ed",
+      "player_id": "e4c86273-3b90-4210-9c80-b56aab5443f0",
+      "player_name": "Changnan Peng",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-20",
+      "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "6dad1659-d0ef-428f-abd7-cb27062ea6ed",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "skipped",
+      "predicted_reason": "already_returned",
+      "outcome": "skipped/already_returned",
+      "errors": [],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-20",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 2,
+          "later_non_ltp_attendance": [
+            {
+              "event_name": "$15 All Levels with 2 Challenge Courts",
+              "date": "2026-09-25",
+              "event_id": "01a0b0df-27f8-777f-ba6b-1bcc52314c9d"
+            }
+          ]
+        },
+        "context_lookup": {
+          "status": "skipped",
+          "reason": "already_returned; buildRetentionContext was not called"
+        }
+      },
+      "request_urls": []
+    },
+    {
+      "candidate_id": "dd3d9fcd-feeb-4c1f-a8f1-017ffc704598",
+      "player_id": "9a9f4aad-3088-449f-b4d7-a168462d6183",
+      "player_name": "Diana Kekhman",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-15",
+      "trigger_event_id": "01a03f56-bb6c-7bb8-8aed-0c32f42aab56",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "dd3d9fcd-feeb-4c1f-a8f1-017ffc704598",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "skipped",
+      "predicted_reason": "already_returned",
+      "outcome": "skipped/already_returned",
+      "errors": [],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-15",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 3,
+          "later_non_ltp_attendance": [
+            {
+              "event_name": "Beginner/ Advanced Beginner Open Play Play with Pro: Rob Gruber",
+              "date": "2026-09-19",
+              "event_id": "01a0a698-553c-7446-b164-2c911da719d8"
+            }
+          ]
+        },
+        "context_lookup": {
+          "status": "skipped",
+          "reason": "already_returned; buildRetentionContext was not called"
+        }
+      },
+      "request_urls": []
+    },
+    {
+      "candidate_id": "8165c985-c43b-4157-bdf1-fd5b62a9d5ef",
+      "player_id": "63b24011-7d8f-4a88-b147-688978fc9ccf",
+      "player_name": "Joel Mcintosh",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-22",
+      "trigger_event_id": "01a03f56-c72e-7bb8-8aed-6cb7b412f8bf",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "8165c985-c43b-4157-bdf1-fd5b62a9d5ef",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-22",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "63b24011-7d8f-4a88-b147-688978fc9ccf",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "59ab40dc-4dd8-4a38-862d-971766ac471e",
+      "player_id": "57912c11-f708-4e7f-81d1-4f3d8b9d7225",
+      "player_name": "Monique Courts",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-22",
+      "trigger_event_id": "01a03f56-c72e-7bb8-8aed-6cb7b412f8bf",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "59ab40dc-4dd8-4a38-862d-971766ac471e",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-22",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "57912c11-f708-4e7f-81d1-4f3d8b9d7225",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "b37184e2-fa23-412e-a0d8-9287f719d65f",
+      "player_id": "6b8dda24-d08d-4a12-88a6-e9ad1b348bf2",
+      "player_name": "Wolfgang Hall",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-27",
+      "trigger_event_id": "01a0cf3f-eb53-7ccf-bde8-c10846d33e0c",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "b37184e2-fa23-412e-a0d8-9287f719d65f",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-27",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "6b8dda24-d08d-4a12-88a6-e9ad1b348bf2",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    },
+    {
+      "candidate_id": "dfc6cfa8-a879-499a-8f35-cd1fbf26b1b6",
+      "player_id": "a14d5c44-ce6f-474e-8a0d-f6dfd3b4b3fb",
+      "player_name": "Bernard Canonigo",
+      "existing_status": "drafted",
+      "trigger_date": "2026-09-27",
+      "trigger_event_id": "01a0cf3f-eb53-7ccf-bde8-c10846d33e0c",
+      "trigger_name": "Learn to Play Clinic",
+      "source_before_diagnostic_counts": {
+        "candidate_id": "dfc6cfa8-a879-499a-8f35-cd1fbf26b1b6",
+        "raw_event_count": 236,
+        "in_14_day_event_count": 115,
+        "published_in_14_day_event_count": 112
+      },
+      "predicted_status": "needs_context",
+      "predicted_reason": "no_next_program",
+      "outcome": "needs_context/no_next_program",
+      "next_program": null,
+      "already_booked": null,
+      "classmates_signed_up": null,
+      "errors": [
+        "No configured next program with open spots was found in the 14-day upcoming events window"
+      ],
+      "diagnostics": {
+        "attendance_history": {
+          "status": "ok",
+          "trigger_date_exclusive_lower_bound": "2026-09-27",
+          "date_timezone": "America/New_York",
+          "attendance_rows_checked": 1,
+          "later_non_ltp_attendance": []
+        },
+        "context": {
+          "player_id": "a14d5c44-ce6f-474e-8a0d-f6dfd3b4b3fb",
+          "upcoming": {
+            "window_start": "2026-10-01T02:11:39.847Z",
+            "window_end": "2026-10-15T02:11:39.847Z",
+            "requests": [
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+                "page": 1
+              },
+              {
+                "method": "GET",
+                "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+                "page": 2
+              }
+            ],
+            "raw_event_count": 116,
+            "in_window_event_count": 115,
+            "published_in_window_event_count": 112,
+            "matched_next_program_names": [],
+            "unmatched_next_program_names": [
+              "Beginner 60&60 Clinic",
+              "30 & 30 Beginner Drills & Guided Play",
+              "Path to Advanced Beginner"
+            ],
+            "filter_causes": {
+              "unpublished_or_canceled_count": 3,
+              "outside_client_window_count": 1,
+              "matching_event_count": 0,
+              "missing_total_teams_event_ids": [],
+              "full_event_ids": []
+            }
+          },
+          "lookups": {
+            "next_program": {
+              "status": "no_match",
+              "errors": []
+            },
+            "classmate": {
+              "status": "skipped",
+              "errors": []
+            },
+            "already_booked": {
+              "status": "ok",
+              "errors": []
+            }
+          }
+        }
+      },
+      "request_urls": [
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=1&ipp=100",
+          "page": 1
+        },
+        {
+          "method": "GET",
+          "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-01T02%3A11%3A39.847Z&endTime=2026-10-15T02%3A11%3A39.847Z&page=2&ipp=100",
+          "page": 2
+        }
+      ]
+    }
+  ]
+}

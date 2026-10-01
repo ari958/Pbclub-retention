@@ -8,7 +8,7 @@
 
 export interface RetentionGenerationInput {
   /**
-   * Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30
+   * Positive integer; omitted defaults to 3 and values above 30 are accepted then clamped to 30
    * @minimum 1
    */
   lookback_days?: number;

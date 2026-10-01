@@ -1,18 +1,21 @@
 import { supabase } from "./supabaseClient";
 import { getTextEligibilitySkipReason } from "./retentionPolicy";
-import { buildRetentionContext, isLearnToPlayName } from "./retentionContext";
+import { buildRetentionContext, isLearnToPlayName, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
 import { writeRetentionText } from "./retentionText";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
+import { sanitizeScheduledSendAt } from "./playerTiming";
 import {
   DEFAULT_RETENTION_LOOKBACK_DAYS,
   isAttendanceDateNearRetentionWindow,
   isRetentionTriggerDate,
   normalizeRetentionLookbackDays,
+  retentionDatePhrase,
+  retentionWeekday,
   toEtDate,
   calendarDayDistance,
+  hasNonLtpAttendanceAfterTrigger,
 } from "./retentionDates";
-import { loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
-import type { RetentionContext, RetentionPlaybook } from "./retentionTypes";
+import type { RetentionCandidate, RetentionContext, RetentionPlaybook } from "./retentionTypes";
 
 export type RetentionSkipReason =
   | "no_phone"
@@ -22,7 +25,8 @@ export type RetentionSkipReason =
   | "marketing_consent"
   | "missing_player"
   | "invalid_trigger"
-  | "out_of_window";
+  | "out_of_window"
+  | "already_returned";
 
 const SKIP_REASONS: RetentionSkipReason[] = [
   "no_phone",
@@ -33,7 +37,21 @@ const SKIP_REASONS: RetentionSkipReason[] = [
   "missing_player",
   "invalid_trigger",
   "out_of_window",
+  "already_returned",
 ];
+
+export type RetentionResultStatus = "drafted" | "needs_context" | "manual_edit" | "skipped";
+
+export interface RetentionCandidateResult {
+  candidate_id: string;
+  player_id: string;
+  player_name: string | null;
+  status: RetentionResultStatus;
+  reason: string | null;
+  body: string | null;
+  context: RetentionContext;
+  validation_errors?: string[];
+}
 
 export interface RetentionGenerationResult {
   lookback_days: number;
@@ -43,26 +61,36 @@ export interface RetentionGenerationResult {
     new_ltp_players: number;
     created: number;
     skipped: number;
+    drafted: number;
+    needs_context: number;
+    manual_edit: number;
+    skipped_candidates: number;
     error_count: number;
     skipped_by_reason: Record<RetentionSkipReason, number>;
   };
   errors: string[];
   coupon_check: { code: string | null; valid: boolean | null; warning: string | null };
-  drafts: {
-    candidate_id: string;
-    player_id: string;
-    player_name: string | null;
-    body: string;
-    context: RetentionContext;
-  }[];
+  drafts: RetentionCandidateResult[];
+}
+
+export interface RetentionRegenerationResult {
+  candidate_id: string;
+  status: RetentionResultStatus;
+  reason: string | null;
+  body: string | null;
+  context: RetentionContext;
+  validation_errors?: string[];
 }
 
 const PAGE_SIZE = 1000;
 const CONCURRENCY = 3;
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function intendedRetentionSendAt(): Date {
+  return sanitizeScheduledSendAt(new Date(Date.now() + 60_000)) ?? new Date(Date.now() + 60_000);
+}
 
 function tableMissing(message: string) {
-  return /retention_(playbooks|candidates|create_draft|update_candidate)|does not exist|schema cache|could not find the table|could not find the function/i.test(message);
+  return /retention_(playbooks|candidates|create_draft|create_candidate|update_candidate|regenerate_draft|manual_edit_candidate|schema_ready)|does not exist|schema cache|could not find the table|could not find the function/i.test(message);
 }
 
 async function pageAll<T>(queryFactory: (from: number, to: number) => any): Promise<T[]> {
@@ -88,21 +116,147 @@ async function withConcurrency<T>(items: T[], concurrency: number, fn: (item: T)
   }));
 }
 
-async function retryWithBackoff<T>(fn: () => Promise<T>): Promise<T> {
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try { return await fn(); }
-    catch (error) {
-      lastError = error;
-      if (attempt < 2) await sleep(250 * (2 ** attempt));
-    }
-  }
-  throw lastError;
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function asStringErrors(value: unknown, fallback: string): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  return [fallback];
+}
+
+function contextFailure(error: unknown): { reason: string; errors: string[]; diagnostics: Record<string, unknown> } {
+  const candidate = error as { reason?: unknown; errors?: unknown; diagnostics?: unknown } | null;
+  const message = errorMessage(error);
+  const reason = candidate && (candidate.reason === "no_next_program" || candidate.reason === "context_lookup_failed")
+    ? candidate.reason
+    : "context_lookup_failed";
+  return {
+    reason,
+    errors: asStringErrors(candidate?.errors, message),
+    diagnostics: candidate?.diagnostics && typeof candidate.diagnostics === "object"
+      ? candidate.diagnostics as Record<string, unknown>
+      : { error: message },
+  };
+}
+
+function withGenerationMetadata(
+  context: RetentionContext,
+  trigger: VerifiedRetentionTrigger,
+  lookbackDays: number,
+  intendedSendAt: Date,
+): RetentionContext {
+  return {
+    ...context,
+    trigger: { ...context.trigger, date: trigger.date, name: trigger.name },
+    date_phrase: retentionDatePhrase(trigger.date, intendedSendAt),
+    send_date_et: toEtDate(intendedSendAt),
+    next_program_day: context.next_program ? retentionWeekday(context.next_program.date) : undefined,
+    lookback_days: lookbackDays,
+    stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+    diagnostics: context.diagnostics ?? {},
+    errors: context.errors ?? [],
+    reason: context.reason ?? null,
+    validation_errors: context.validation_errors ?? [],
+  };
+}
+
+function failureContext(
+  player: { name?: string | null },
+  trigger: VerifiedRetentionTrigger,
+  failure: ReturnType<typeof contextFailure>,
+  lookbackDays: number,
+): RetentionContext {
+  const intendedSendAt = intendedRetentionSendAt();
+  return {
+    trigger: { event_id: "", name: trigger.name, date: trigger.date },
+    player_first_name: player.name?.trim().split(/\s+/)[0] ?? "",
+    next_program: null,
+    classmates_signed_up: 0,
+    already_booked: false,
+    booked_event: null,
+    promo: null,
+    coupon_warning: null,
+    evaluated_at: new Date().toISOString(),
+    date_phrase: retentionDatePhrase(trigger.date, intendedSendAt),
+    send_date_et: toEtDate(intendedSendAt),
+    lookback_days: lookbackDays,
+    stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+    reason: failure.reason,
+    errors: failure.errors,
+    diagnostics: failure.diagnostics,
+    validation_errors: [],
+  };
+}
+
+async function createCandidate(args: {
+  clubId: string;
+  playerId: string;
+  playbookKey: string;
+  triggerEventId: string;
+  context: RetentionContext;
+  status: RetentionResultStatus;
+  body: string | null;
+}): Promise<string | null> {
+  const { data, error } = await supabase.rpc("retention_create_candidate", {
+    p_club_id: args.clubId,
+    p_player_id: args.playerId,
+    p_playbook_key: args.playbookKey,
+    p_trigger_event_id: args.triggerEventId,
+    p_context: args.context,
+    p_status: args.status,
+    p_body: args.body,
+  });
+  if (error) throw new Error(error.message);
+  return data as string | null;
+}
+
+function makeTriggerContext(
+  trigger: VerifiedRetentionTrigger,
+  player: { name?: string | null },
+  reason: string,
+  errors: string[],
+  diagnostics: Record<string, unknown>,
+): RetentionContext {
+  return {
+    trigger: { event_id: "", name: trigger.name, date: trigger.date },
+    player_first_name: player.name?.trim().split(/\s+/)[0] ?? "",
+    next_program: null,
+    classmates_signed_up: 0,
+    already_booked: false,
+    booked_event: null,
+    promo: null,
+    coupon_warning: null,
+    evaluated_at: new Date().toISOString(),
+    reason,
+    errors,
+    diagnostics,
+    validation_errors: [],
+  };
+}
+
+function hasLaterNonLtpAttendance(rows: any[], triggerDate: string): boolean {
+  return hasNonLtpAttendanceAfterTrigger(rows.map((row) => ({
+    attendance_date: toEtDate(String(row.attended_at)),
+    is_ltp: isLearnToPlayName(String(row.program_name ?? "")),
+  })), triggerDate);
+}
+
+function appendResult(
+  result: RetentionGenerationResult,
+  value: RetentionCandidateResult,
+) {
+  result.drafts.push(value);
+  result.stats.created++;
+  if (value.status === "drafted") result.stats.drafted++;
+  else if (value.status === "needs_context") result.stats.needs_context++;
+  else if (value.status === "manual_edit") result.stats.manual_edit++;
+  else result.stats.skipped_candidates++;
 }
 
 /**
- * Creates unscheduled, unapproved drafts only. This function never sends SMS.
- * The unique player/playbook constraint makes repeated nightly runs idempotent.
+ * Creates safe retention candidates only. Blocked candidates have no pending
+ * message; successfully generated texts are unscheduled and unapproved.
  */
 export async function generateRetentionDrafts(
   clubId: string,
@@ -117,6 +271,10 @@ export async function generateRetentionDrafts(
       new_ltp_players: 0,
       created: 0,
       skipped: 0,
+      drafted: 0,
+      needs_context: 0,
+      manual_edit: 0,
+      skipped_candidates: 0,
       error_count: 0,
       skipped_by_reason: Object.fromEntries(SKIP_REASONS.map((reason) => [reason, 0])) as Record<RetentionSkipReason, number>,
     },
@@ -173,13 +331,17 @@ export async function generateRetentionDrafts(
     const trigger = [...ltp].sort((a, b) =>
       String(a.event_id).localeCompare(String(b.event_id)) || String(a.id).localeCompare(String(b.id)))[0];
     if (!trigger.event_id) { skip("invalid_trigger"); continue; }
-    possibleCandidates.push({ playerId, trigger, attendanceDate: earliestDate });
+    possibleCandidates.push({
+      playerId,
+      trigger,
+      attendanceDate: earliestDate,
+    });
   }
   if (!possibleCandidates.length) return result;
 
   const clubCache = new Map<string, Promise<RetentionLiveClub>>();
   const triggerCache = new Map<string, Promise<VerifiedRetentionTrigger>>();
-  const candidates: { playerId: string; trigger: any; verifiedDate: string; verifiedName: string }[] = [];
+  const candidates: { playerId: string; trigger: any; verifiedDate: string; verifiedName: string; alreadyReturned: boolean }[] = [];
   await withConcurrency(possibleCandidates, CONCURRENCY, async (candidate) => {
     try {
       const verified = await verifyRetentionTriggerEvent(clubId, candidate.trigger.event_id, clubCache, triggerCache);
@@ -191,15 +353,19 @@ export async function generateRetentionDrafts(
       result.stats.verified++;
       if (!isRetentionTriggerDate(verified.date, today, lookbackDays)) { skip("out_of_window"); return; }
       result.stats.new_ltp_players++;
-      candidates.push({ playerId: candidate.playerId, trigger: candidate.trigger, verifiedDate: verified.date, verifiedName: verified.name });
-    } catch (error: any) {
-      recordError(`${candidate.playerId}: could not verify Learn to Play trigger event ${candidate.trigger.event_id}: ${error.message}`);
+      candidates.push({
+        playerId: candidate.playerId,
+        trigger: candidate.trigger,
+        verifiedDate: verified.date,
+        verifiedName: verified.name,
+        alreadyReturned: hasLaterNonLtpAttendance(byPlayer.get(candidate.playerId) ?? [], verified.date),
+      });
+    } catch (error) {
+      recordError(`${candidate.playerId}: could not verify Learn to Play trigger event ${candidate.trigger.event_id}: ${errorMessage(error)}`);
     }
   });
   if (!candidates.length) return result;
 
-  // The DB unique constraint remains authoritative. This read-only precheck avoids
-  // expensive live context and LLM work for candidates already created previously.
   const candidatePlayerIds = [...new Set(candidates.map((candidate) => candidate.playerId))];
   const { data: existingCandidates, error: duplicateQueryError } = await supabase.from("retention_candidates")
     .select("player_id").eq("playbook_key", playbook.key).in("player_id", candidatePlayerIds);
@@ -217,8 +383,41 @@ export async function generateRetentionDrafts(
     .select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id")
     .eq("club_id", clubId).in("id", playerIds).range(from, to));
   const playerMap = new Map(players.map((player) => [player.id, player]));
-  const eligibleCandidates: typeof freshCandidates = [];
-  for (const candidate of freshCandidates) {
+
+  const returned = freshCandidates.filter((candidate) => candidate.alreadyReturned);
+  for (const candidate of returned) {
+    const player = playerMap.get(candidate.playerId);
+    if (!player) { skip("missing_player"); continue; }
+    const trigger = { date: candidate.verifiedDate, name: candidate.verifiedName, start_time: "" };
+    const laterRows = (byPlayer.get(candidate.playerId) ?? [])
+      .filter((row) => !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > candidate.verifiedDate)
+      .map((row) => ({ date: toEtDate(String(row.attended_at)), program_name: row.program_name ?? null }));
+    const context = makeTriggerContext(trigger, player, "already_returned", [], { later_non_ltp_attendance: laterRows });
+    context.trigger.event_id = String(candidate.trigger.event_id);
+    context.lookback_days = lookbackDays;
+    context.stale = lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS;
+    const intendedSendAt = intendedRetentionSendAt();
+    context.date_phrase = retentionDatePhrase(candidate.verifiedDate, intendedSendAt);
+    context.send_date_et = toEtDate(intendedSendAt);
+    try {
+      const id = await createCandidate({
+        clubId, playerId: candidate.playerId, playbookKey: playbook.key,
+        triggerEventId: candidate.trigger.event_id, context, status: "skipped", body: null,
+      });
+      if (!id) { skip("duplicate"); continue; }
+      skip("already_returned");
+      appendResult(result, {
+        candidate_id: id, player_id: candidate.playerId, player_name: player.name ?? null,
+        status: "skipped", reason: "already_returned", body: null, context,
+      });
+    } catch (error) {
+      recordError(`${player.name ?? candidate.playerId}: ${errorMessage(error)}`);
+    }
+  }
+
+  const eligibleCandidates = freshCandidates.filter((candidate) => !candidate.alreadyReturned);
+  const eligible: typeof eligibleCandidates = [];
+  for (const candidate of eligibleCandidates) {
     const player = playerMap.get(candidate.playerId);
     if (!player) { skip("missing_player"); continue; }
     const eligibilityReason = getTextEligibilitySkipReason(player);
@@ -227,11 +426,11 @@ export async function generateRetentionDrafts(
       skip("holdout");
       continue;
     }
-    eligibleCandidates.push(candidate);
+    eligible.push(candidate);
   }
-  if (!eligibleCandidates.length) return result;
+  if (!eligible.length) return result;
 
-  const eventIds = [...new Set(eligibleCandidates.map((c) => c.trigger.event_id).filter(Boolean))];
+  const eventIds = [...new Set(eligible.map((c) => c.trigger.event_id).filter(Boolean))];
   const classRows = eventIds.length ? await pageAll<any>((from, to) => supabase.from("attendances")
     .select("event_id,player_id,players!inner(club_id)").eq("players.club_id", clubId)
     .in("event_id", eventIds).range(from, to)) : [];
@@ -247,51 +446,315 @@ export async function generateRetentionDrafts(
   const externalIds = new Map([...players, ...classRoster].map((player) => [player.id, player.external_id]));
   const socialEventsCache = new Map<string, Promise<any[]>>();
   const socialSignupsCache = new Map<string, Promise<string[]>>();
-  await withConcurrency(eligibleCandidates, CONCURRENCY, async ({ playerId, trigger, verifiedDate, verifiedName }) => {
+  await withConcurrency(eligible, CONCURRENCY, async ({ playerId, trigger, verifiedDate, verifiedName }) => {
     const player = playerMap.get(playerId)!;
+    const classmatesExternalIds = [...(classPlayers.get(trigger.event_id) ?? [])]
+      .filter((id) => id !== playerId).map((id) => externalIds.get(id)).filter(Boolean) as string[];
+    const verifiedTrigger = { date: verifiedDate, name: verifiedName, start_time: "" };
+    const intendedSendAt = intendedRetentionSendAt();
+    let candidateContext: RetentionContext | null = null;
+    let status: RetentionResultStatus = "needs_context";
+    let reason: string | null = null;
+    let body: string | null = null;
+    let generatedPreview: string | null = null;
+    let validationErrors: string[] = [];
     try {
-      const classmatesExternalIds = [...(classPlayers.get(trigger.event_id) ?? [])]
-        .filter((id) => id !== playerId).map((id) => externalIds.get(id)).filter(Boolean) as string[];
-      const { context, body } = await retryWithBackoff(async () => {
-        const context = await buildRetentionContext({
-          clubId, player, playbook,
-          trigger: { event_id: trigger.event_id, name: verifiedName, date: verifiedDate },
-          classmatesExternalIds,
-          socialEventsCache,
-          socialSignupsCache,
-          clubCache,
-          couponCache,
-        });
-        const body = await writeRetentionText(context, playbook);
-        return { context, body };
+      const context = await buildRetentionContext({
+        clubId, player, playbook,
+        trigger: { event_id: trigger.event_id, name: verifiedName, date: verifiedDate },
+        classmatesExternalIds, socialEventsCache, socialSignupsCache, clubCache, couponCache,
       });
-      const { data: candidateId, error } = await supabase.rpc("retention_create_draft", {
-        p_club_id: clubId,
-        p_player_id: playerId,
-        p_playbook_key: playbook.key,
-        p_trigger_event_id: trigger.event_id,
-        p_context: context,
-        p_body: body,
-      });
-      if (error) throw new Error(error.message);
-      if (candidateId) {
-        result.stats.created++;
-        result.drafts.push({
-          candidate_id: candidateId,
-          player_id: playerId,
-          player_name: player.name ?? null,
-          body,
-          context,
-        });
+      candidateContext = withGenerationMetadata(context, verifiedTrigger, lookbackDays, intendedSendAt);
+      if (!context.next_program) {
+        reason = "no_next_program";
+        const errors = ["No matching next program with open spots was found"];
+        candidateContext = { ...candidateContext, reason, errors };
       } else {
-        // Another worker can win between the precheck and atomic unique RPC.
-        skip("duplicate");
+        const textResult = await writeRetentionText(candidateContext, playbook);
+        validationErrors = textResult.validation_errors;
+        generatedPreview = textResult.generated_preview;
+        if (validationErrors.length) {
+          status = "manual_edit";
+          reason = "text_validation_failed";
+          candidateContext = {
+            ...candidateContext,
+            reason,
+            errors: validationErrors,
+            validation_errors: validationErrors,
+            generated_preview: generatedPreview,
+            diagnostics: { ...(candidateContext.diagnostics ?? {}), text_generation_attempts: 3 },
+          };
+        } else {
+          status = "drafted";
+          body = textResult.body;
+        }
       }
-    } catch (error: any) {
-      recordError(`${player.name ?? playerId}: ${error.message}`);
+    } catch (error) {
+      if (candidateContext) {
+        reason = "text_generation_failed";
+        status = "needs_context";
+        candidateContext = {
+          ...candidateContext,
+          reason,
+          errors: [errorMessage(error)],
+          diagnostics: {
+            ...(candidateContext.diagnostics ?? {}),
+            text_generation: { status: "error", errors: [errorMessage(error)] },
+          },
+        };
+      } else {
+        const failure = contextFailure(error);
+        reason = failure.reason;
+        candidateContext = failureContext(player, verifiedTrigger, failure, lookbackDays);
+        candidateContext.trigger.event_id = String(trigger.event_id);
+      }
+    }
+
+    if (!candidateContext) {
+      const failure = contextFailure(new Error("Context builder returned no context"));
+      candidateContext = failureContext(player, verifiedTrigger, failure, lookbackDays);
+      reason = failure.reason;
+    }
+    if (status === "needs_context" && reason) {
+      candidateContext = {
+        ...candidateContext,
+        reason,
+        errors: candidateContext.errors?.length ? candidateContext.errors : [reason === "no_next_program"
+          ? "No matching next program with open spots was found"
+          : "Retention context could not be built"],
+      };
+    }
+    candidateContext.trigger.event_id = String(trigger.event_id);
+    try {
+      const candidateId = await createCandidate({
+        clubId, playerId, playbookKey: playbook.key, triggerEventId: trigger.event_id,
+        context: candidateContext, status, body,
+      });
+      if (!candidateId) { skip("duplicate"); return; }
+      appendResult(result, {
+        candidate_id: candidateId,
+        player_id: playerId,
+        player_name: player.name ?? null,
+        status,
+        reason,
+        body: status === "manual_edit" ? generatedPreview : body,
+        context: candidateContext,
+        ...(validationErrors.length ? { validation_errors: validationErrors } : {}),
+      });
+    } catch (error) {
+      recordError(`${player.name ?? playerId}: ${errorMessage(error)}`);
     }
   });
   return result;
+}
+
+async function loadClassmatesExternalIds(clubId: string, eventId: string, playerId: string): Promise<string[]> {
+  const { data, error } = await supabase.from("attendances")
+    .select("player_id,players!inner(external_id,club_id)")
+    .eq("event_id", eventId)
+    .eq("players.club_id", clubId);
+  if (error) throw new Error(error.message);
+  return [...new Set((data ?? [])
+    .filter((row: any) => row.player_id !== playerId && row.players?.external_id)
+    .map((row: any) => row.players.external_id as string))];
+}
+
+export async function regenerateRetentionCandidate(
+  clubId: string,
+  candidateId: string,
+): Promise<RetentionRegenerationResult> {
+  const { data: candidateRow, error: candidateError } = await supabase.from("retention_candidates")
+    .select("*").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
+  if (candidateError) throw new Error(candidateError.message);
+  if (!candidateRow) throw Object.assign(new Error("Retention candidate not found"), { status: 404 });
+  const candidate = candidateRow as RetentionCandidate;
+  if (candidate.status !== "drafted") {
+    throw Object.assign(new Error("Only candidates that are still drafted can be regenerated"), { status: 409 });
+  }
+  const [{ data: player, error: playerError }, { data: playbook, error: playbookError }, { data: message, error: messageError }] = await Promise.all([
+    supabase.from("players").select("id,name,external_id,club_id").eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle(),
+    supabase.from("retention_playbooks").select("*").eq("key", candidate.playbook_key).maybeSingle(),
+    candidate.message_id
+      ? supabase.from("messages").select("id,body,status,approved_at,scheduled_send_at,dispatch_claimed_at").eq("id", candidate.message_id).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (playerError) throw new Error(playerError.message);
+  if (playbookError) throw new Error(playbookError.message);
+  if (messageError) throw new Error(messageError.message);
+  if (!player || !playbook) throw Object.assign(new Error("Candidate player or playbook was not found"), { status: 409 });
+  if (!candidate.message_id || !message) throw Object.assign(new Error("Draft message is missing and cannot be regenerated safely"), { status: 409 });
+  if (message.status !== "pending" || message.approved_at || message.scheduled_send_at || message.dispatch_claimed_at) {
+    throw Object.assign(new Error("Draft is approved, scheduled, processed, or claimed and cannot be regenerated"), { status: 409 });
+  }
+
+  const previousContext = candidate.context as RetentionContext;
+  const triggerDate = previousContext?.trigger?.date;
+  if (!triggerDate) throw Object.assign(new Error("Candidate context is missing the Learn to Play trigger date"), { status: 409 });
+  const trigger = { event_id: candidate.trigger_event_id, name: previousContext.trigger.name, date: triggerDate };
+  const lookbackDays = normalizeRetentionLookbackDays(Number(previousContext.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS));
+  let laterNonLtpAttendance: { date: string; program_name: string | null }[] = [];
+  let attendanceFailure: ReturnType<typeof contextFailure> | null = null;
+  try {
+    const { data: attendance, error: attendanceError } = await supabase.from("attendances")
+      .select("program_name,attended_at").eq("player_id", candidate.player_id);
+    if (attendanceError) throw new Error(attendanceError.message);
+    laterNonLtpAttendance = (attendance ?? []).filter((row: any) =>
+      !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > triggerDate,
+    ).map((row: any) => ({ date: toEtDate(String(row.attended_at)), program_name: row.program_name ?? null }));
+  } catch (error) {
+    attendanceFailure = contextFailure(error);
+  }
+
+  let newContext: RetentionContext;
+  let newStatus: RetentionResultStatus;
+  let reason: string | null = null;
+  let body: string | null = null;
+  let generatedPreview: string | null = null;
+  let validationErrors: string[] = [];
+  const intendedSendAt = intendedRetentionSendAt();
+  if (attendanceFailure) {
+    newStatus = "needs_context";
+    reason = "context_lookup_failed";
+    newContext = {
+      ...previousContext,
+      date_phrase: retentionDatePhrase(trigger.date, intendedSendAt),
+      send_date_et: toEtDate(intendedSendAt),
+      lookback_days: lookbackDays,
+      stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+      reason,
+      errors: attendanceFailure.errors,
+      diagnostics: {
+        ...(previousContext.diagnostics ?? {}),
+        already_returned_lookup: { status: "error", errors: attendanceFailure.errors },
+        failure: attendanceFailure.diagnostics,
+      },
+      validation_errors: [],
+    };
+  } else if (laterNonLtpAttendance.length) {
+    newStatus = "skipped";
+    reason = "already_returned";
+    newContext = {
+      ...previousContext,
+      date_phrase: retentionDatePhrase(trigger.date, intendedSendAt),
+      send_date_et: toEtDate(intendedSendAt),
+      lookback_days: lookbackDays,
+      stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+      reason,
+      errors: [],
+      diagnostics: { ...(previousContext.diagnostics ?? {}), later_non_ltp_attendance: laterNonLtpAttendance },
+      validation_errors: [],
+    };
+  } else {
+    const clubCache = new Map<string, Promise<RetentionLiveClub>>();
+    const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
+    let generatedContext: RetentionContext | null = null;
+    try {
+      if (playbook.promo_code) {
+        const coupon = await validateRetentionCoupon(clubId, playbook.promo_code);
+        couponCache.set(`${clubId}:${playbook.promo_code}`, Promise.resolve(coupon));
+      }
+      const classmatesExternalIds = await loadClassmatesExternalIds(clubId, candidate.trigger_event_id, candidate.player_id);
+      const context = await buildRetentionContext({
+        clubId,
+        player,
+        playbook,
+        trigger,
+        classmatesExternalIds,
+        socialEventsCache: new Map<string, Promise<any[]>>(),
+        socialSignupsCache: new Map<string, Promise<string[]>>(),
+        clubCache,
+        couponCache,
+      });
+      newContext = withGenerationMetadata(
+        context,
+        { date: trigger.date, name: trigger.name, start_time: "" },
+        lookbackDays,
+        intendedSendAt,
+      );
+      generatedContext = newContext;
+      if (!context.next_program) {
+        newStatus = "needs_context";
+        reason = "no_next_program";
+        newContext = {
+          ...newContext,
+          reason,
+          errors: ["No matching next program with open spots was found"],
+        };
+      } else {
+        const textResult = await writeRetentionText(newContext, playbook);
+        validationErrors = textResult.validation_errors;
+        generatedPreview = textResult.generated_preview;
+        if (validationErrors.length) {
+          newStatus = "manual_edit";
+          reason = "text_validation_failed";
+          newContext = {
+            ...newContext,
+            reason,
+            errors: validationErrors,
+            validation_errors: validationErrors,
+            generated_preview: generatedPreview,
+          };
+        } else {
+          newStatus = "drafted";
+          body = textResult.body;
+          newContext = { ...newContext, reason: null, errors: [], validation_errors: [] };
+        }
+      }
+    } catch (error) {
+      const failure = contextFailure(error);
+      newStatus = "needs_context";
+      if (generatedContext) {
+        reason = "text_generation_failed";
+        newContext = {
+          ...generatedContext,
+          reason,
+          errors: [errorMessage(error)],
+          diagnostics: {
+            ...(generatedContext.diagnostics ?? {}),
+            text_generation: { status: "error", errors: [errorMessage(error)] },
+          },
+          validation_errors: [],
+        };
+      } else {
+        reason = failure.reason;
+        newContext = {
+          ...previousContext,
+          date_phrase: retentionDatePhrase(trigger.date, intendedSendAt),
+          send_date_et: toEtDate(intendedSendAt),
+          lookback_days: lookbackDays,
+          stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
+          reason,
+          errors: failure.errors,
+          diagnostics: failure.diagnostics,
+          validation_errors: [],
+        };
+      }
+    }
+  }
+
+  const { data: updated, error: updateError } = await supabase.rpc("retention_regenerate_draft", {
+    p_id: candidate.id,
+    p_club_id: clubId,
+    p_expected_body: message.body,
+    p_expected_context: candidate.context,
+    p_expected_updated_at: candidate.updated_at,
+    p_new_body: body,
+    p_new_context: newContext,
+    p_new_status: newStatus,
+    p_error: reason ? `${reason}: ${(newContext.errors ?? []).join("; ")}` : null,
+  });
+  if (updateError) throw Object.assign(new Error(updateError.message), {
+    status: /changed since|only drafted|processed|claimed|approved|scheduled/i.test(updateError.message) ? 409 : undefined,
+  });
+  const updatedContext = (updated?.context ?? newContext) as RetentionContext;
+  return {
+    candidate_id: candidate.id,
+    status: newStatus,
+    reason,
+    body: newStatus === "manual_edit" ? generatedPreview : body,
+    context: updatedContext,
+    ...(validationErrors.length ? { validation_errors: validationErrors } : {}),
+  };
 }
 
 export function isRetentionSchemaMissing(error: unknown): boolean {

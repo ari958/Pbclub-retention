@@ -1,0 +1,24 @@
+Goal: fix the ltp_followup context and text quality, then regenerate. Drafts only; no approvals, sends, or sending-setting changes.
+
+Diagnose the empty context. For each of the 10 candidates, log:
+the exact PodPlay request used for upcoming events
+how many events it returned in the window
+which matched next_program_names
+any errors from the next-program, classmate, and already-booked lookups
+Report why every draft came back empty.
+Fail closed. If any live lookup errors, set the candidate to needs_context with the error recorded. Do not draft it.
+Next-program matching. Match event names with the same normalization used for Learn to Play (case, dashes, whitespace) instead of exact strings. Use a 14-day window and require open spots based on confirmed signups against totalTeams. If nothing matches, set the candidate to needs_context with reason no_next_program.
+Already returned. If the player has any non-Learn-to-Play attendance dated after their Learn to Play date, skip them with reason already_returned.
+Freshness. Production triggers cover Learn to Play sessions in the last 3 days. Any candidate generated through a longer test lookback gets a visible stale flag on its Approvals card.
+Date phrase. Code computes date_phrase relative to the send date in America/New_York: "yesterday," then a weekday name within 6 days, then "on Sept 20." Claude must use it verbatim and may not write any other time reference.
+Validator. Before saving a draft, enforce all of the following, with up to 2 regeneration attempts before flagging the draft for manual edit:
+the message opens with "Hi {first}, it's PB Club."
+no em or en dashes
+no time words other than date_phrase
+includes LTPNEXT25 exactly
+includes the next program's name and day
+includes the signup link
+320 characters or fewer
+Regenerate. Add a "Regenerate" action for candidates still in drafted status. It replaces the draft text and context, keeps the same candidate row, and never touches approved or sent rows.
+
+Then regenerate all 10 and paste the results the same way: each candidate's status and reason, and for each draft, the text next to its context.

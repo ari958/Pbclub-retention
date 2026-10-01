@@ -4,15 +4,15 @@ import {
 } from "@workspace/api-zod";
 import type { RetentionCandidate, RetentionMessage } from "./retentionTypes";
 
-export const CANDIDATE_STATUSES = ["drafted", "approved", "skipped", "sent"] as const;
+export const CANDIDATE_STATUSES = ["drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as const;
 
-export type ApprovalListStatus = NonNullable<ListRetentionApprovalsParams["status"]>;
+export type ApprovalListStatus = NonNullable<ListRetentionApprovalsParams["status"]> | "needs_context" | "manual_edit";
 export type CandidateStatus = (typeof CANDIDATE_STATUSES)[number];
 
 export function parseApprovalListStatus(value: unknown) {
   const parsed = ListRetentionApprovalsQueryParams.safeParse({ status: value ?? "all" });
   if (!parsed.success) return parsed;
-  return { success: true as const, data: parsed.data.status ?? "all" };
+  return { success: true as const, data: (parsed.data.status ?? "all") as ApprovalListStatus };
 }
 
 export function applyCandidateStatusFilter(query: any, status: ApprovalListStatus): any {

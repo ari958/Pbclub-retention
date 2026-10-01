@@ -24,6 +24,8 @@ import type {
   GenerateRetentionDraftsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
+  RegenerateRetentionDraft409,
+  RegenerateRetentionDraftParams,
   RetentionActionResult,
   RetentionApprovalInput,
   RetentionBulkApprovalInput,
@@ -31,6 +33,7 @@ import type {
   RetentionGenerationInput,
   RetentionGenerationResult,
   RetentionPauseInput,
+  RetentionRegenerateResult,
   RetentionReview,
   SkipRetentionDraftParams,
   UpdateRetentionKillSwitchParams,
@@ -714,6 +717,111 @@ export const useApproveRetentionDraft = <
   TContext
 > => {
   return useMutation(getApproveRetentionDraftMutationOptions(options));
+};
+
+/**
+ * Reuses the candidate row and never changes approved or sent candidates. The result can require context or a manual edit instead of yielding an approvable draft.
+ * @summary Regenerate the stored text and context for an existing drafted candidate only
+ */
+export const getRegenerateRetentionDraftUrl = (
+  id: string,
+  params?: RegenerateRetentionDraftParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/candidates/${id}/regenerate?${stringifiedParams}`
+    : `/api/retention/candidates/${id}/regenerate`;
+};
+
+export const regenerateRetentionDraft = async (
+  id: string,
+  params?: RegenerateRetentionDraftParams,
+  options?: RequestInit,
+): Promise<RetentionRegenerateResult> => {
+  return customFetch<RetentionRegenerateResult>(
+    getRegenerateRetentionDraftUrl(id, params),
+    {
+      ...options,
+      method: "POST",
+    },
+  );
+};
+
+export const getRegenerateRetentionDraftMutationOptions = <
+  TError = ErrorType<RegenerateRetentionDraft409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateRetentionDraft>>,
+    TError,
+    { id: string; params?: RegenerateRetentionDraftParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof regenerateRetentionDraft>>,
+  TError,
+  { id: string; params?: RegenerateRetentionDraftParams },
+  TContext
+> => {
+  const mutationKey = ["regenerateRetentionDraft"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof regenerateRetentionDraft>>,
+    { id: string; params?: RegenerateRetentionDraftParams }
+  > = (props) => {
+    const { id, params } = props ?? {};
+
+    return regenerateRetentionDraft(id, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RegenerateRetentionDraftMutationResult = NonNullable<
+  Awaited<ReturnType<typeof regenerateRetentionDraft>>
+>;
+
+export type RegenerateRetentionDraftMutationError =
+  ErrorType<RegenerateRetentionDraft409>;
+
+/**
+ * @summary Regenerate the stored text and context for an existing drafted candidate only
+ */
+export const useRegenerateRetentionDraft = <
+  TError = ErrorType<RegenerateRetentionDraft409>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof regenerateRetentionDraft>>,
+    TError,
+    { id: string; params?: RegenerateRetentionDraftParams },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof regenerateRetentionDraft>>,
+  TError,
+  { id: string; params?: RegenerateRetentionDraftParams },
+  TContext
+> => {
+  return useMutation(getRegenerateRetentionDraftMutationOptions(options));
 };
 
 /**

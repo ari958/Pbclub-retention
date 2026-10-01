@@ -1,4 +1,4 @@
-export type ApprovalListStatus = "all" | "drafted" | "approved" | "skipped" | "sent";
+export type ApprovalListStatus = "all" | "drafted" | "approved" | "skipped" | "sent" | "needs_context" | "manual_edit";
 
 export function approvalListPath(status: ApprovalListStatus): string {
   return `/api/retention/approvals?status=${encodeURIComponent(status)}`;

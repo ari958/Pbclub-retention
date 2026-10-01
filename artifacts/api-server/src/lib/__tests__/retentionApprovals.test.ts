@@ -8,7 +8,7 @@ import {
 import type { RetentionCandidate } from "../retentionTypes.js";
 
 test("approval list status accepts all supported filters and defaults to all", () => {
-  for (const status of ["all", "drafted", "approved", "skipped", "sent"] as const) {
+  for (const status of ["all", "drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as const) {
     assert.deepEqual(parseApprovalListStatus(status), { success: true, data: status });
   }
   assert.deepEqual(parseApprovalListStatus(undefined), { success: true, data: "all" });
@@ -25,12 +25,18 @@ test("invalid approval list status is rejected and never added as a database fil
 });
 
 test("selected history status is applied to the candidate query", () => {
-  for (const status of ["drafted", "approved", "skipped", "sent"] as const) {
+  for (const status of ["drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as const) {
     let actual: [string, string] | null = null;
     const query = { eq: (column: string, value: string) => { actual = [column, value]; return query; } };
     applyCandidateStatusFilter(query, status);
     assert.deepEqual(actual, ["status", status]);
   }
+});
+
+test("candidate counters include both fail-closed review states", async () => {
+  const { CANDIDATE_STATUSES } = await import("../retentionApprovals.js");
+  assert.ok(CANDIDATE_STATUSES.includes("needs_context"));
+  assert.ok(CANDIDATE_STATUSES.includes("manual_edit"));
 });
 
 test("sent history preserves the candidate and joined message send details", () => {

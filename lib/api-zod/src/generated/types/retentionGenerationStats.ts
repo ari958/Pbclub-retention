@@ -8,7 +8,7 @@
 import type { RetentionGenerationSkippedCounts } from "./retentionGenerationSkippedCounts";
 
 /**
- * found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.
+ * found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus needs_context plus manual_edit plus error_count accounts for found candidates.
  */
 export interface RetentionGenerationStats {
   /** @minimum 0 */
@@ -21,6 +21,10 @@ export interface RetentionGenerationStats {
   created: number;
   /** @minimum 0 */
   skipped: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
   /** @minimum 0 */
   error_count: number;
   /** Compatibility detail array matching top-level errors; use error_count for the count */

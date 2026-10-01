@@ -31,10 +31,18 @@ export const ListRetentionApprovalsQueryParams = zod.object({
     .optional()
     .describe("Club slug; supply either clubId or slug"),
   status: zod
-    .enum(["all", "drafted", "approved", "skipped", "sent"])
+    .enum([
+      "all",
+      "drafted",
+      "approved",
+      "skipped",
+      "sent",
+      "needs_context",
+      "manual_edit",
+    ])
     .default(listRetentionApprovalsQueryStatusDefault)
     .describe(
-      "Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.",
+      "Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, sent history, and candidates needing context or manual edits.",
     ),
 });
 
@@ -48,10 +56,16 @@ export const listRetentionApprovalsResponseCountsSkippedMin = 0;
 
 export const listRetentionApprovalsResponseCountsSentMin = 0;
 
+export const listRetentionApprovalsResponseCountsNeedsContextMin = 0;
+
+export const listRetentionApprovalsResponseCountsManualEditMin = 0;
+
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMin = 0;
 export const listRetentionApprovalsResponsePlaybooksItemHoldoutPctMax = 100;
 
 export const listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin = 0;
+
+export const listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax = 30;
 
 export const ListRetentionApprovalsResponse = zod.object({
   schema_ready: zod.boolean(),
@@ -65,10 +79,16 @@ export const ListRetentionApprovalsResponse = zod.object({
         .min(listRetentionApprovalsResponseCountsApprovedMin),
       skipped: zod.number().min(listRetentionApprovalsResponseCountsSkippedMin),
       sent: zod.number().min(listRetentionApprovalsResponseCountsSentMin),
+      needs_context: zod
+        .number()
+        .min(listRetentionApprovalsResponseCountsNeedsContextMin),
+      manual_edit: zod
+        .number()
+        .min(listRetentionApprovalsResponseCountsManualEditMin),
     })
     .optional()
     .describe(
-      "Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.",
+      "Global candidate totals, independent of the requested status filter. all is the total across every candidate status.",
     ),
   playbooks: zod.array(
     zod.object({
@@ -91,14 +111,23 @@ export const ListRetentionApprovalsResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -131,16 +160,44 @@ export const ListRetentionApprovalsResponse = zod.object({
           .number()
           .min(
             listRetentionApprovalsResponseCandidatesItemContextClassmatesSignedUpMin,
-          ),
-        already_booked: zod.boolean(),
+          )
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(
+            listRetentionApprovalsResponseCandidatesItemContextLookbackDaysMax,
+          )
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({
@@ -195,11 +252,15 @@ export const GenerateRetentionDraftsBody = zod.object({
     .min(1)
     .optional()
     .describe(
-      "Positive integer; omitted defaults to 7 and values above 30 are accepted then clamped to 30",
+      "Positive integer; omitted defaults to 3 and values above 30 are accepted then clamped to 30",
     ),
 });
 
 export const generateRetentionDraftsResponseLookbackDaysMax = 30;
+
+export const generateRetentionDraftsResponseNeedsContextMin = 0;
+
+export const generateRetentionDraftsResponseManualEditMin = 0;
 
 export const generateRetentionDraftsResponseStatsFoundMin = 0;
 
@@ -210,6 +271,10 @@ export const generateRetentionDraftsResponseStatsNewLtpPlayersMin = 0;
 export const generateRetentionDraftsResponseStatsCreatedMin = 0;
 
 export const generateRetentionDraftsResponseStatsSkippedMin = 0;
+
+export const generateRetentionDraftsResponseStatsNeedsContextMin = 0;
+
+export const generateRetentionDraftsResponseStatsManualEditMin = 0;
 
 export const generateRetentionDraftsResponseStatsErrorCountMin = 0;
 
@@ -229,7 +294,11 @@ export const generateRetentionDraftsResponseStatsSkippedByReasonInvalidTriggerMi
 
 export const generateRetentionDraftsResponseStatsSkippedByReasonOutOfWindowMin = 0;
 
+export const generateRetentionDraftsResponseStatsSkippedByReasonAlreadyReturnedMin = 0;
+
 export const generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin = 0;
+
+export const generateRetentionDraftsResponseDraftsItemContextLookbackDaysMax = 30;
 
 export const GenerateRetentionDraftsResponse = zod.object({
   schema_ready: zod.boolean(),
@@ -238,10 +307,14 @@ export const GenerateRetentionDraftsResponse = zod.object({
     .min(1)
     .max(generateRetentionDraftsResponseLookbackDaysMax)
     .describe(
-      "Effective lookback after values above 30 are clamped to 30; defaults to 7",
+      "Effective lookback after values above 30 are clamped to 30; defaults to 3",
     ),
   created: zod.number(),
   skipped: zod.number(),
+  needs_context: zod
+    .number()
+    .min(generateRetentionDraftsResponseNeedsContextMin),
+  manual_edit: zod.number().min(generateRetentionDraftsResponseManualEditMin),
   errors: zod
     .array(zod.string())
     .describe(
@@ -258,6 +331,12 @@ export const GenerateRetentionDraftsResponse = zod.object({
         .min(generateRetentionDraftsResponseStatsNewLtpPlayersMin),
       created: zod.number().min(generateRetentionDraftsResponseStatsCreatedMin),
       skipped: zod.number().min(generateRetentionDraftsResponseStatsSkippedMin),
+      needs_context: zod
+        .number()
+        .min(generateRetentionDraftsResponseStatsNeedsContextMin),
+      manual_edit: zod
+        .number()
+        .min(generateRetentionDraftsResponseStatsManualEditMin),
       error_count: zod
         .number()
         .min(generateRetentionDraftsResponseStatsErrorCountMin),
@@ -299,10 +378,15 @@ export const GenerateRetentionDraftsResponse = zod.object({
           .min(
             generateRetentionDraftsResponseStatsSkippedByReasonOutOfWindowMin,
           ),
+        already_returned: zod
+          .number()
+          .min(
+            generateRetentionDraftsResponseStatsSkippedByReasonAlreadyReturnedMin,
+          ),
       }),
     })
     .describe(
-      "found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus error_count accounts for found candidates.",
+      "found counts first-ever LTP attendance candidates in the conservative raw-date window; verified counts PodPlay-corroborated LTP triggers including out-of-window triggers; new_ltp_players counts verified triggers inside the effective date window. For a completed generation, created plus skipped plus needs_context plus manual_edit plus error_count accounts for found candidates.",
     ),
   coupon_check: zod
     .object({
@@ -319,18 +403,28 @@ export const GenerateRetentionDraftsResponse = zod.object({
         candidate_id: zod.string(),
         player_id: zod.string(),
         player_name: zod.string().nullable(),
+        status: zod.enum([
+          "drafted",
+          "needs_context",
+          "manual_edit",
+          "skipped",
+        ]),
+        reason: zod.string().nullable(),
         body: zod
           .string()
+          .nullable()
           .describe(
-            "Exact full message body passed to the atomic create-draft RPC and persisted",
+            "Exact persisted draft body; null when context, validation, or already-returned checks block drafting",
           ),
         context: zod.object({
           player_first_name: zod.string().optional(),
-          trigger: zod.object({
-            event_id: zod.string(),
-            name: zod.string(),
-            date: zod.string(),
-          }),
+          trigger: zod
+            .object({
+              event_id: zod.string(),
+              name: zod.string(),
+              date: zod.string(),
+            })
+            .optional(),
           next_program: zod
             .union([
               zod.object({
@@ -363,17 +457,46 @@ export const GenerateRetentionDraftsResponse = zod.object({
             .number()
             .min(
               generateRetentionDraftsResponseDraftsItemContextClassmatesSignedUpMin,
-            ),
-          already_booked: zod.boolean(),
+            )
+            .optional(),
+          already_booked: zod.boolean().optional(),
           promo: zod
             .object({
               code: zod.string().optional(),
               offer_text: zod.string().optional(),
             })
             .nullish(),
-          coupon_warning: zod.string().nullable(),
-          evaluated_at: zod.string(),
+          coupon_warning: zod.string().nullish(),
+          evaluated_at: zod.string().optional(),
+          stale: zod
+            .boolean()
+            .optional()
+            .describe(
+              "True when the candidate was generated with a test lookback longer than the production default.",
+            ),
+          lookback_days: zod
+            .number()
+            .min(1)
+            .max(
+              generateRetentionDraftsResponseDraftsItemContextLookbackDaysMax,
+            )
+            .optional(),
+          reason: zod.string().nullish(),
+          errors: zod
+            .array(zod.unknown())
+            .optional()
+            .describe(
+              "Lookup failures; entries may be strings or structured error objects.",
+            ),
+          validation_errors: zod.array(zod.string()).optional(),
+          date_phrase: zod.string().nullish(),
+          send_date: zod.string().nullish(),
+          send_date_et: zod.string().nullish(),
+          next_program_day: zod.string().nullish(),
+          generated_preview: zod.string().nullish(),
+          diagnostics: zod.unknown().optional(),
         }),
+        validation_errors: zod.array(zod.string()).optional(),
       }),
     )
     .describe("Only candidates newly created by this call"),
@@ -400,6 +523,8 @@ export const UpdateRetentionKillSwitchBody = zod.object({
 
 export const updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin = 0;
 
+export const updateRetentionKillSwitchResponseCandidateContextLookbackDaysMax = 30;
+
 export const UpdateRetentionKillSwitchResponse = zod.object({
   approved: zod.number().optional(),
   candidate: zod
@@ -408,14 +533,23 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -448,16 +582,42 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
           .number()
           .min(
             updateRetentionKillSwitchResponseCandidateContextClassmatesSignedUpMin,
-          ),
-        already_booked: zod.boolean(),
+          )
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(updateRetentionKillSwitchResponseCandidateContextLookbackDaysMax)
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({
@@ -509,6 +669,8 @@ export const EditRetentionDraftBody = zod.object({
 
 export const editRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
+export const editRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
 export const EditRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
   candidate: zod
@@ -517,14 +679,23 @@ export const EditRetentionDraftResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -555,16 +726,42 @@ export const EditRetentionDraftResponse = zod.object({
           .optional(),
         classmates_signed_up: zod
           .number()
-          .min(editRetentionDraftResponseCandidateContextClassmatesSignedUpMin),
-        already_booked: zod.boolean(),
+          .min(editRetentionDraftResponseCandidateContextClassmatesSignedUpMin)
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(editRetentionDraftResponseCandidateContextLookbackDaysMax)
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({
@@ -627,6 +824,8 @@ export const ApproveRetentionDraftBody = zod.object({
 
 export const approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
+export const approveRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
 export const ApproveRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
   candidate: zod
@@ -635,14 +834,23 @@ export const ApproveRetentionDraftResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -675,16 +883,42 @@ export const ApproveRetentionDraftResponse = zod.object({
           .number()
           .min(
             approveRetentionDraftResponseCandidateContextClassmatesSignedUpMin,
-          ),
-        already_booked: zod.boolean(),
+          )
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(approveRetentionDraftResponseCandidateContextLookbackDaysMax)
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({
@@ -712,6 +946,114 @@ export const ApproveRetentionDraftResponse = zod.object({
 });
 
 /**
+ * Reuses the candidate row and never changes approved or sent candidates. The result can require context or a manual edit instead of yielding an approvable draft.
+ * @summary Regenerate the stored text and context for an existing drafted candidate only
+ */
+export const RegenerateRetentionDraftParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const RegenerateRetentionDraftQueryParams = zod.object({
+  clubId: zod.coerce
+    .string()
+    .uuid()
+    .optional()
+    .describe("Club UUID; supply either clubId or slug"),
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const regenerateRetentionDraftResponseContextClassmatesSignedUpMin = 0;
+
+export const regenerateRetentionDraftResponseContextLookbackDaysMax = 30;
+
+export const RegenerateRetentionDraftResponse = zod.object({
+  candidate_id: zod.string(),
+  status: zod.enum(["drafted", "needs_context", "manual_edit", "skipped"]),
+  reason: zod.string().nullable(),
+  body: zod.string().nullable(),
+  context: zod.object({
+    player_first_name: zod.string().optional(),
+    trigger: zod
+      .object({
+        event_id: zod.string(),
+        name: zod.string(),
+        date: zod.string(),
+      })
+      .optional(),
+    next_program: zod
+      .union([
+        zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          start_time: zod.string(),
+          date: zod.string(),
+          time: zod.string(),
+          signup_url: zod.string(),
+          spots_remaining: zod.number().optional(),
+        }),
+        zod.null(),
+      ])
+      .optional(),
+    booked_event: zod
+      .union([
+        zod.object({
+          event_id: zod.string(),
+          name: zod.string(),
+          start_time: zod.string(),
+          date: zod.string(),
+          time: zod.string(),
+          signup_url: zod.string(),
+          spots_remaining: zod.number().optional(),
+        }),
+        zod.null(),
+      ])
+      .optional(),
+    classmates_signed_up: zod
+      .number()
+      .min(regenerateRetentionDraftResponseContextClassmatesSignedUpMin)
+      .optional(),
+    already_booked: zod.boolean().optional(),
+    promo: zod
+      .object({
+        code: zod.string().optional(),
+        offer_text: zod.string().optional(),
+      })
+      .nullish(),
+    coupon_warning: zod.string().nullish(),
+    evaluated_at: zod.string().optional(),
+    stale: zod
+      .boolean()
+      .optional()
+      .describe(
+        "True when the candidate was generated with a test lookback longer than the production default.",
+      ),
+    lookback_days: zod
+      .number()
+      .min(1)
+      .max(regenerateRetentionDraftResponseContextLookbackDaysMax)
+      .optional(),
+    reason: zod.string().nullish(),
+    errors: zod
+      .array(zod.unknown())
+      .optional()
+      .describe(
+        "Lookup failures; entries may be strings or structured error objects.",
+      ),
+    validation_errors: zod.array(zod.string()).optional(),
+    date_phrase: zod.string().nullish(),
+    send_date: zod.string().nullish(),
+    send_date_et: zod.string().nullish(),
+    next_program_day: zod.string().nullish(),
+    generated_preview: zod.string().nullish(),
+    diagnostics: zod.unknown().optional(),
+  }),
+  validation_errors: zod.array(zod.string()).optional(),
+});
+
+/**
  * @summary Skip without sending
  */
 export const SkipRetentionDraftParams = zod.object({
@@ -732,6 +1074,8 @@ export const SkipRetentionDraftQueryParams = zod.object({
 
 export const skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin = 0;
 
+export const skipRetentionDraftResponseCandidateContextLookbackDaysMax = 30;
+
 export const SkipRetentionDraftResponse = zod.object({
   approved: zod.number().optional(),
   candidate: zod
@@ -740,14 +1084,23 @@ export const SkipRetentionDraftResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -778,16 +1131,42 @@ export const SkipRetentionDraftResponse = zod.object({
           .optional(),
         classmates_signed_up: zod
           .number()
-          .min(skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin),
-        already_booked: zod.boolean(),
+          .min(skipRetentionDraftResponseCandidateContextClassmatesSignedUpMin)
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(skipRetentionDraftResponseCandidateContextLookbackDaysMax)
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({
@@ -843,6 +1222,8 @@ export const ApproveRetentionPlaybookDraftsBody = zod.object({
 
 export const approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin = 0;
 
+export const approveRetentionPlaybookDraftsResponseCandidateContextLookbackDaysMax = 30;
+
 export const ApproveRetentionPlaybookDraftsResponse = zod.object({
   approved: zod.number().optional(),
   candidate: zod
@@ -851,14 +1232,23 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
       player_id: zod.string(),
       playbook_key: zod.string(),
       trigger_event_id: zod.string(),
-      status: zod.enum(["drafted", "approved", "skipped", "sent"]),
+      status: zod.enum([
+        "drafted",
+        "approved",
+        "skipped",
+        "sent",
+        "needs_context",
+        "manual_edit",
+      ]),
       context: zod.object({
         player_first_name: zod.string().optional(),
-        trigger: zod.object({
-          event_id: zod.string(),
-          name: zod.string(),
-          date: zod.string(),
-        }),
+        trigger: zod
+          .object({
+            event_id: zod.string(),
+            name: zod.string(),
+            date: zod.string(),
+          })
+          .optional(),
         next_program: zod
           .union([
             zod.object({
@@ -891,16 +1281,44 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
           .number()
           .min(
             approveRetentionPlaybookDraftsResponseCandidateContextClassmatesSignedUpMin,
-          ),
-        already_booked: zod.boolean(),
+          )
+          .optional(),
+        already_booked: zod.boolean().optional(),
         promo: zod
           .object({
             code: zod.string().optional(),
             offer_text: zod.string().optional(),
           })
           .nullish(),
-        coupon_warning: zod.string().nullable(),
-        evaluated_at: zod.string(),
+        coupon_warning: zod.string().nullish(),
+        evaluated_at: zod.string().optional(),
+        stale: zod
+          .boolean()
+          .optional()
+          .describe(
+            "True when the candidate was generated with a test lookback longer than the production default.",
+          ),
+        lookback_days: zod
+          .number()
+          .min(1)
+          .max(
+            approveRetentionPlaybookDraftsResponseCandidateContextLookbackDaysMax,
+          )
+          .optional(),
+        reason: zod.string().nullish(),
+        errors: zod
+          .array(zod.unknown())
+          .optional()
+          .describe(
+            "Lookup failures; entries may be strings or structured error objects.",
+          ),
+        validation_errors: zod.array(zod.string()).optional(),
+        date_phrase: zod.string().nullish(),
+        send_date: zod.string().nullish(),
+        send_date_et: zod.string().nullish(),
+        next_program_day: zod.string().nullish(),
+        generated_preview: zod.string().nullish(),
+        diagnostics: zod.unknown().optional(),
       }),
       player: zod
         .object({

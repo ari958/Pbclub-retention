@@ -1,13 +1,14 @@
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const ET = "America/New_York";
-export const DEFAULT_RETENTION_LOOKBACK_DAYS = 7;
+export const DEFAULT_RETENTION_LOOKBACK_DAYS = 3;
 export const MAX_RETENTION_LOOKBACK_DAYS = 30;
+export const ALLOWED_RETENTION_LOOKBACK_DAYS = [3, 7, 14, 30] as const;
 
 export function normalizeRetentionLookbackDays(value = DEFAULT_RETENTION_LOOKBACK_DAYS): number {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new RangeError("Retention lookback days must be a positive integer");
+  if (!Number.isInteger(value) || !ALLOWED_RETENTION_LOOKBACK_DAYS.includes(value as (typeof ALLOWED_RETENTION_LOOKBACK_DAYS)[number])) {
+    throw new RangeError(`Retention lookback days must be one of ${ALLOWED_RETENTION_LOOKBACK_DAYS.join(", ")}`);
   }
-  return Math.min(value, MAX_RETENTION_LOOKBACK_DAYS);
+  return value;
 }
 
 export function toEtDate(value: string | Date, timezone = ET): string {
@@ -59,6 +60,53 @@ export function calendarDayDistance(left: string, right: string): number {
     return Date.UTC(year, month - 1, day, 12);
   };
   return Math.abs(parse(left) - parse(right)) / 86_400_000;
+}
+
+/** Pure status predicate over normalized attendance facts and a verified trigger date. */
+export function hasNonLtpAttendanceAfterTrigger(
+  rows: ReadonlyArray<{ attendance_date: string; is_ltp: boolean }>,
+  verifiedTriggerDate: string,
+): boolean {
+  return rows.some((row) => !row.is_ltp && row.attendance_date > verifiedTriggerDate);
+}
+
+export function retentionSendDateMatchesSchedule(
+  generatedSendDateEt: string | undefined,
+  scheduledAt: string | Date,
+): boolean {
+  return !!generatedSendDateEt && generatedSendDateEt === toEtDate(scheduledAt);
+}
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
+
+function calendarOrdinal(date: string): number {
+  if (!DATE_ONLY_RE.test(date)) throw new Error(`Expected YYYY-MM-DD date, received ${date}`);
+  const [year, month, day] = date.split("-").map(Number);
+  const normalized = new Date(Date.UTC(year, month - 1, day, 12));
+  if (normalized.toISOString().slice(0, 10) !== date) throw new Error(`Expected valid YYYY-MM-DD date, received ${date}`);
+  return normalized.getTime();
+}
+
+export function retentionWeekday(date: string): string {
+  const instant = new Date(calendarOrdinal(date));
+  return WEEKDAY_NAMES[instant.getUTCDay()];
+}
+
+/**
+ * Human date reference for the LTP trigger, relative to the intended send date
+ * in New York. Do not derive this from the server's local timezone.
+ */
+export function retentionDatePhrase(triggerDate: string, intendedSendAt: string | Date): string {
+  const sendDate = toEtDate(intendedSendAt);
+  const dayOffset = (calendarOrdinal(triggerDate) - calendarOrdinal(sendDate)) / 86_400_000;
+  if (dayOffset === -1) return "yesterday";
+  if (dayOffset !== 0 && Math.abs(dayOffset) <= 6) return retentionWeekday(triggerDate);
+  const [year, month, day] = triggerDate.split("-").map(Number);
+  if (!year || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new Error(`Expected valid YYYY-MM-DD date, received ${triggerDate}`);
+  }
+  return `on ${MONTH_NAMES[month - 1]} ${day}`;
 }
 
 function etOffsetMilliseconds(instant: number): number {

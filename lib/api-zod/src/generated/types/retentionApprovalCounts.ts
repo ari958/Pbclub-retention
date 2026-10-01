@@ -7,7 +7,7 @@
  */
 
 /**
- * Global candidate totals, independent of the requested status filter. all is the total across the four candidate statuses.
+ * Global candidate totals, independent of the requested status filter. all is the total across every candidate status.
  */
 export interface RetentionApprovalCounts {
   /** @minimum 0 */
@@ -20,4 +20,8 @@ export interface RetentionApprovalCounts {
   skipped: number;
   /** @minimum 0 */
   sent: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
 }

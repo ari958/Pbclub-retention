@@ -77,3 +77,17 @@ mtime_ms = 1790811135224
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/aa9dddac-59c7-49ed-80ec-667439f2b561/f10aae3a-5cdb-4a13-a3c7-d0d36100010a"
 storage_version_token = "1790811151225030"
 content_type = "text/markdown"
+
+[[outputs]]
+id = "FomhGhfvjbSVW58Kb85uq"
+uri = "file://reports/ltp-context-diagnostics.txt"
+type = "text"
+title = "LTP context diagnostics"
+description = "Exact requests, event counts, matching results, and lookup errors for all ten players, plus corrected read-only previews. No saved regeneration."
+logical_id = "2025aa12-026f-47f7-970d-5ff359f0641c"
+content_hash = "sha256:df8eb41ba994c953404c49df30741fe6b909980d64f8b917655b9c5d23650f02"
+size = 42823
+mtime_ms = 1790821382085
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/2025aa12-026f-47f7-970d-5ff359f0641c/1c8ebdf1-0c87-42aa-a87e-d4c8dd293a2c"
+storage_version_token = "1790821382713538"
+content_type = "text/plain"

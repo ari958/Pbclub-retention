@@ -12,13 +12,17 @@ import type { RetentionGenerationStats } from "./retentionGenerationStats";
 export interface RetentionGenerationResult {
   schema_ready: boolean;
   /**
-   * Effective lookback after values above 30 are clamped to 30; defaults to 7
+   * Effective lookback after values above 30 are clamped to 30; defaults to 3
    * @minimum 1
    * @maximum 30
    */
   lookback_days: number;
   created: number;
   skipped: number;
+  /** @minimum 0 */
+  needs_context: number;
+  /** @minimum 0 */
+  manual_edit: number;
   /** Per-candidate or generation failures; errors are not included in skipped */
   errors: string[];
   stats: RetentionGenerationStats;

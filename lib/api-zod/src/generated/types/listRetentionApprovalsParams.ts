@@ -19,7 +19,7 @@ export type ListRetentionApprovalsParams = {
    */
   slug?: RetentionSlugParameter;
   /**
-   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, and sent history.
+   * Candidate status to list. all (the default) includes drafts, approved candidates, skipped history, sent history, and candidates needing context or manual edits.
    */
   status?: RetentionApprovalStatusParameter;
 };

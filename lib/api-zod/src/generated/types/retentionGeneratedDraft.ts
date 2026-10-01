@@ -6,13 +6,21 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { RetentionContext } from "./retentionContext";
+import type { RetentionGeneratedDraftStatus } from "./retentionGeneratedDraftStatus";
 
 export interface RetentionGeneratedDraft {
   candidate_id: string;
   player_id: string;
   /** @nullable */
   player_name: string | null;
-  /** Exact full message body passed to the atomic create-draft RPC and persisted */
-  body: string;
+  status: RetentionGeneratedDraftStatus;
+  /** @nullable */
+  reason: string | null;
+  /**
+   * Exact persisted draft body; null when context, validation, or already-returned checks block drafting
+   * @nullable
+   */
+  body: string | null;
   context: RetentionContext;
+  validation_errors?: string[];
 }

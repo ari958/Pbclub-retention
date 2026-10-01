@@ -11,16 +11,39 @@ import type { RetentionProgram } from "./retentionProgram";
 
 export interface RetentionContext {
   player_first_name?: string;
-  trigger: RetentionContextTrigger;
+  trigger?: RetentionContextTrigger;
   next_program?: RetentionProgram | null;
   booked_event?: RetentionProgram | null;
   /** @minimum 0 */
-  classmates_signed_up: number;
-  already_booked: boolean;
+  classmates_signed_up?: number;
+  already_booked?: boolean;
   /** @nullable */
   promo?: RetentionContextPromo;
   /** @nullable */
-  coupon_warning: string | null;
-  evaluated_at: string;
+  coupon_warning?: string | null;
+  evaluated_at?: string;
+  /** True when the candidate was generated with a test lookback longer than the production default. */
+  stale?: boolean;
+  /**
+   * @minimum 1
+   * @maximum 30
+   */
+  lookback_days?: number;
+  /** @nullable */
+  reason?: string | null;
+  /** Lookup failures; entries may be strings or structured error objects. */
+  errors?: unknown[];
+  validation_errors?: string[];
+  /** @nullable */
+  date_phrase?: string | null;
+  /** @nullable */
+  send_date?: string | null;
+  /** @nullable */
+  send_date_et?: string | null;
+  /** @nullable */
+  next_program_day?: string | null;
+  /** @nullable */
+  generated_preview?: string | null;
+  diagnostics?: unknown;
   [key: string]: unknown;
 }

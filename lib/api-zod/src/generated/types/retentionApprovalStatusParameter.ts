@@ -15,4 +15,6 @@ export const RetentionApprovalStatusParameter = {
   approved: "approved",
   skipped: "skipped",
   sent: "sent",
+  needs_context: "needs_context",
+  manual_edit: "manual_edit",
 } as const;

@@ -4,11 +4,16 @@ import { GenerateRetentionDraftsBody } from "@workspace/api-zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
-import { generateRetentionDrafts, isRetentionSchemaMissing } from "../lib/retentionEngine";
-import { DEFAULT_RETENTION_LOOKBACK_DAYS, MAX_RETENTION_LOOKBACK_DAYS } from "../lib/retentionDates";
+import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate } from "../lib/retentionEngine";
+import {
+  ALLOWED_RETENTION_LOOKBACK_DAYS,
+  DEFAULT_RETENTION_LOOKBACK_DAYS,
+  retentionSendDateMatchesSchedule,
+} from "../lib/retentionDates";
 import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
 import { isStaleReviewedBodyError } from "../lib/retentionApproval";
+import { validateRetentionTextBody } from "../lib/retentionText";
 import type { RetentionCandidate, RetentionContext, RetentionMessage, RetentionPlaybook } from "../lib/retentionTypes";
 import {
   applyCandidateStatusFilter,
@@ -28,7 +33,10 @@ const BulkSchema = z.object({
 });
 const KillSwitchSchema = z.object({ enabled: z.boolean() });
 const RetentionGenerationInputSchema = GenerateRetentionDraftsBody.extend({
-  lookback_days: z.number().int().positive().optional(),
+  lookback_days: z.number().int().refine(
+    (value) => ALLOWED_RETENTION_LOOKBACK_DAYS.includes(value as (typeof ALLOWED_RETENTION_LOOKBACK_DAYS)[number]),
+    `lookback_days must be one of ${ALLOWED_RETENTION_LOOKBACK_DAYS.join(", ")}`,
+  ).optional(),
 }).strict();
 
 async function retentionMode(clubId: string) {
@@ -93,11 +101,14 @@ async function fetchCandidateCounts(clubId: string) {
     if (error) throw new Error(error.message);
     return count ?? 0;
   };
-  const [all, drafted, approved, skipped, sent] = await Promise.all([
+  const [all, ...statusCounts] = await Promise.all([
     countFor(),
     ...CANDIDATE_STATUSES.map((status) => countFor(status)),
   ]);
-  return { all, drafted, approved, skipped, sent };
+  return {
+    all,
+    ...Object.fromEntries(CANDIDATE_STATUSES.map((status, index) => [status, statusCounts[index]])),
+  };
 }
 
 async function loadCandidate(clubId: string, id: string) {
@@ -106,14 +117,57 @@ async function loadCandidate(clubId: string, id: string) {
   return data as RetentionCandidate | null;
 }
 
-async function approveCandidate(clubId: string, candidate: RetentionCandidate, approvedBy: string, expectedBody: string) {
+async function requireRetentionSchemaReady() {
+  const { data, error } = await supabase.rpc("retention_schema_ready");
+  if (error) {
+    const message = error.message ?? String(error);
+    const missing = isRetentionSchemaMissing(new Error(message));
+    throw Object.assign(new Error(missing
+      ? `Retention migration 011 is not installed: ${message}`
+      : message), { status: missing ? 503 : 500 });
+  }
+  if (data !== true) {
+    throw Object.assign(new Error("Retention migration 011 is not installed or is incomplete; retention operations are disabled"), { status: 503 });
+  }
+}
+
+async function approveCandidate(
+  clubId: string,
+  candidate: RetentionCandidate,
+  approvedBy: string,
+  expectedBody: string,
+  requestedSchedule?: Date,
+) {
+  if (candidate.status !== "drafted") {
+    throw Object.assign(new Error("Only drafted candidates can be approved"), { status: 409 });
+  }
   const context = candidate.context as RetentionContext;
+  try {
+    validateRetentionTextBody(expectedBody, context, {
+      key: candidate.playbook_key,
+      name: candidate.playbook_key,
+      enabled: true,
+      promo_code: context.promo?.code ?? null,
+      offer_text: context.promo?.offer_text ?? null,
+      next_program_names: [],
+      message_guidance: null,
+      holdout_pct: 0,
+    });
+  } catch (error: any) {
+    throw Object.assign(new Error(error.message), { status: 409 });
+  }
   if (context.promo?.code) {
     const validation = await validateRetentionCoupon(clubId, context.promo.code);
     if (!validation.valid) throw Object.assign(new Error(validation.warning ?? "Promotion could not be verified"), { status: 409 });
   }
-  const schedule = sanitizeScheduledSendAt(new Date(Date.now() + 60_000));
+  const schedule = requestedSchedule ?? sanitizeScheduledSendAt(new Date(Date.now() + 60_000));
   if (!schedule) throw Object.assign(new Error("Could not find an open TCPA send window"), { status: 409 });
+  if (!retentionSendDateMatchesSchedule(context.send_date_et, schedule)) {
+    throw Object.assign(
+      new Error("The intended ET send date changed. Regenerate and review this candidate before approving."),
+      { status: 409 },
+    );
+  }
   const { data, error } = await supabase.rpc("retention_update_candidate", {
     p_id: candidate.id,
     p_club_id: clubId,
@@ -132,11 +186,21 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
   const clubId = (req as ClubScopedRequest).clubId;
   const parsedStatus = parseApprovalListStatus(req.query.status);
   if (!parsedStatus.success) {
-    res.status(400).json({ error: "status must be one of all, drafted, approved, skipped, sent" });
+    res.status(400).json({ error: "status must be one of all, drafted, approved, skipped, sent, needs_context, manual_edit" });
     return;
   }
   const status = parsedStatus.data;
   try {
+    const { data: schemaReady, error: readinessError } = await supabase.rpc("retention_schema_ready");
+    if (readinessError) {
+      if (isRetentionSchemaMissing(new Error(readinessError.message))) {
+        return missingSchemaResponse(res, new Error(`Retention migration 011 is not installed: ${readinessError.message}`), clubId);
+      }
+      throw new Error(readinessError.message);
+    }
+    if (schemaReady !== true) {
+      return missingSchemaResponse(res, new Error("Retention migration 011 is not installed or is incomplete"), clubId);
+    }
     const { data: playbooks, error: playbookError } = await supabase.from("retention_playbooks").select("*").order("key");
     if (playbookError) throw new Error(playbookError.message);
     const candidates = await fetchAllRows<RetentionCandidate>((from, to) => {
@@ -203,11 +267,12 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
   const clubId = (req as ClubScopedRequest).clubId;
   const parsed = RetentionGenerationInputSchema.safeParse(req.body === undefined ? {} : req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: "lookback_days must be a positive integer" });
+    res.status(400).json({ error: `lookback_days must be one of ${ALLOWED_RETENTION_LOOKBACK_DAYS.join(", ")}` });
     return;
   }
   const requestedLookbackDays = parsed.data.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS;
   try {
+    await requireRetentionSchemaReady();
     const generated = await generateRetentionDrafts(clubId, requestedLookbackDays);
     const responseStats = {
       ...generated.stats,
@@ -222,6 +287,10 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
         lookback_days: generated.lookback_days,
         created: generated.stats.created,
         skipped: generated.stats.skipped,
+        drafted: generated.stats.drafted,
+        needs_context: generated.stats.needs_context,
+        manual_edit: generated.stats.manual_edit,
+        skipped_candidates: generated.stats.skipped_candidates,
         errors: generated.errors,
         stats: responseStats,
         coupon_check: generated.coupon_check,
@@ -234,19 +303,27 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
       lookback_days: generated.lookback_days,
       created: generated.stats.created,
       skipped: generated.stats.skipped,
+      drafted: generated.stats.drafted,
+      needs_context: generated.stats.needs_context,
+      manual_edit: generated.stats.manual_edit,
+      skipped_candidates: generated.stats.skipped_candidates,
       errors: generated.errors,
       stats: responseStats,
       coupon_check: generated.coupon_check,
       drafts: generated.drafts,
     });
   } catch (error: any) {
-    if (isRetentionSchemaMissing(error)) {
+    if (isRetentionSchemaMissing(error) || error.status === 503) {
       const stats = {
         found: 0,
         verified: 0,
         new_ltp_players: 0,
         created: 0,
         skipped: 0,
+        drafted: 0,
+        needs_context: 0,
+        manual_edit: 0,
+        skipped_candidates: 0,
         error_count: 1,
         skipped_by_reason: {
           no_phone: 0,
@@ -257,14 +334,19 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
           missing_player: 0,
           invalid_trigger: 0,
           out_of_window: 0,
+          already_returned: 0,
         },
         errors: [error.message],
       };
       res.status(503).json({
         schema_ready: false,
-        lookback_days: Math.min(requestedLookbackDays, MAX_RETENTION_LOOKBACK_DAYS),
+        lookback_days: requestedLookbackDays,
         created: 0,
         skipped: 0,
+        drafted: 0,
+        needs_context: 0,
+        manual_edit: 0,
+        skipped_candidates: 0,
         errors: [error.message],
         stats,
         coupon_check: { code: null, valid: null, warning: null },
@@ -276,23 +358,78 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
   }
 });
 
+router.post("/retention/candidates/:id/regenerate", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  try {
+    await requireRetentionSchemaReady();
+    const result = await regenerateRetentionCandidate(clubId, req.params.id as string);
+    return res.json(result);
+  } catch (error: any) {
+    const schemaMissing = isRetentionSchemaMissing(error) || error.status === 503;
+    const stale = /changed since|expected_body|expected_context|expected_updated_at|concurrent/i.test(error.message);
+    return res.status(error.status ?? (schemaMissing ? 503 : stale ? 409 : 500)).json({
+      schema_ready: !schemaMissing,
+      error: error.message,
+    });
+  }
+});
+
 router.patch("/retention/candidates/:id", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   const parsed = EditSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "body must be a non-empty string" });
   try {
-    const { data, error } = await supabase.rpc("retention_update_candidate", {
-      p_id: req.params.id,
-      p_club_id: clubId,
-      p_action: "edit",
-      p_body: parsed.data.body,
-      p_actor: null,
-      p_scheduled_at: null,
-    });
+    const candidate = await loadCandidate(clubId, req.params.id as string);
+    if (!candidate) return res.status(404).json({ error: "Retention candidate not found" });
+    if (!["drafted", "needs_context", "manual_edit"].includes(candidate.status)) {
+      return res.status(409).json({ error: "Only a draft or flagged candidate can be edited" });
+    }
+    const { data: playbook, error: playbookError } = await supabase.from("retention_playbooks")
+      .select("*").eq("key", candidate.playbook_key).maybeSingle();
+    if (playbookError) throw new Error(playbookError.message);
+    if (!playbook) return res.status(409).json({ error: "Retention playbook was not found" });
+    try {
+      validateRetentionTextBody(parsed.data.body, candidate.context, playbook as RetentionPlaybook);
+    } catch (error: any) {
+      return res.status(400).json({ error: error.message, validation_errors: error.validation_errors ?? [error.message] });
+    }
+
+    let data: unknown;
+    let error: { message: string } | null;
+    if (candidate.status === "needs_context" || candidate.status === "manual_edit") {
+      await requireRetentionSchemaReady();
+      const { data: message, error: messageError } = candidate.message_id
+        ? await supabase.from("messages").select("body").eq("id", candidate.message_id).maybeSingle()
+        : { data: null, error: null };
+      if (messageError) throw new Error(messageError.message);
+      const result = await supabase.rpc("retention_manual_edit_candidate", {
+        p_id: candidate.id,
+        p_club_id: clubId,
+        p_body: parsed.data.body,
+        p_expected_body: message?.body ?? null,
+        p_expected_context: candidate.context,
+        p_expected_updated_at: candidate.updated_at,
+      });
+      data = result.data;
+      error = result.error;
+    } else {
+      const result = await supabase.rpc("retention_update_candidate", {
+        p_id: candidate.id,
+        p_club_id: clubId,
+        p_action: "edit",
+        p_body: parsed.data.body,
+        p_actor: null,
+        p_scheduled_at: null,
+      });
+      data = result.data;
+      error = result.error;
+    }
     if (error) throw new Error(error.message);
     return res.json(data);
   } catch (error: any) {
-    return res.status(isRetentionSchemaMissing(error) ? 503 : 500).json({ schema_ready: !isRetentionSchemaMissing(error), error: error.message });
+    const schemaMissing = isRetentionSchemaMissing(error) || error.status === 503;
+    const stale = /changed since|expected_body|expected_context|expected_updated_at|concurrent/i.test(error.message);
+    return res.status(error.status ?? (schemaMissing ? 503 : stale ? 409 : 500)).json({ schema_ready: !schemaMissing, error: error.message });
   }
 });
 
@@ -301,11 +438,13 @@ router.post("/retention/candidates/:id/approve", requireClub, async (req, res) =
   const parsed = ApproverSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "approved_by and the exact expected_body shown during review are required" });
   try {
+    await requireRetentionSchemaReady();
     const candidate = await loadCandidate(clubId, req.params.id as string);
     if (!candidate) return res.status(404).json({ error: "Retention candidate not found" });
     return res.json(await approveCandidate(clubId, candidate, parsed.data.approved_by, parsed.data.expected_body));
   } catch (error: any) {
-    return res.status(error.status ?? (isRetentionSchemaMissing(error) ? 503 : 500)).json({ schema_ready: !isRetentionSchemaMissing(error), error: error.message });
+    const missingSchema = isRetentionSchemaMissing(error) || error.status === 503;
+    return res.status(error.status ?? (missingSchema ? 503 : 500)).json({ schema_ready: !missingSchema, error: error.message });
   }
 });
 
@@ -332,6 +471,7 @@ router.post("/retention/playbooks/:key/approve", requireClub, async (req, res) =
   const parsed = BulkSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "approved_by, candidate_ids, and exact expected_bodies are required" });
   try {
+    await requireRetentionSchemaReady();
     const ids = [...new Set(parsed.data.candidate_ids)];
     const missingExpected = ids.filter((id) => !Object.prototype.hasOwnProperty.call(parsed.data.expected_bodies, id));
     if (missingExpected.length) {
@@ -340,22 +480,39 @@ router.post("/retention/playbooks/:key/approve", requireClub, async (req, res) =
     const { data, error } = await supabase.from("retention_candidates").select("*").eq("club_id", clubId)
       .eq("playbook_key", req.params.key).eq("status", "drafted").in("id", ids);
     if (error) throw new Error(error.message);
+    const bulkSchedule = sanitizeScheduledSendAt(new Date(Date.now() + 60_000));
+    if (!bulkSchedule) {
+      return res.status(409).json({ approved: 0, error: "Could not find an open TCPA send window" });
+    }
     const approved: unknown[] = [];
     const errors: { candidate_id: string; error: string; status?: number }[] = [];
     const foundIds = new Set((data ?? []).map((row: any) => row.id));
     for (const id of ids) {
       if (!foundIds.has(id)) errors.push({ candidate_id: id, error: "Candidate is not a draft in this playbook and club" });
     }
+    const dateMismatches = (data ?? []).filter((row: any) =>
+      !retentionSendDateMatchesSchedule(row.context?.send_date_et, bulkSchedule),
+    );
+    if (dateMismatches.length) {
+      return res.status(409).json({
+        approved: 0,
+        error: "The intended ET send date changed. Regenerate and review candidates before approving.",
+        candidate_ids: dateMismatches.map((row: any) => row.id),
+      });
+    }
     for (const row of data as RetentionCandidate[]) {
       try {
-        approved.push(await approveCandidate(clubId, row, parsed.data.approved_by, parsed.data.expected_bodies[row.id]));
+        approved.push(await approveCandidate(
+          clubId, row, parsed.data.approved_by, parsed.data.expected_bodies[row.id], bulkSchedule,
+        ));
       } catch (error: any) {
         errors.push({ candidate_id: row.id, error: error.message, status: error.status ?? 500 });
       }
     }
     return res.json({ approved: approved.length, candidates: approved, errors });
   } catch (error: any) {
-    return res.status(error.status ?? (isRetentionSchemaMissing(error) ? 503 : 500)).json({ schema_ready: !isRetentionSchemaMissing(error), error: error.message });
+    const schemaMissing = isRetentionSchemaMissing(error) || error.status === 503;
+    return res.status(error.status ?? (schemaMissing ? 503 : 500)).json({ schema_ready: !schemaMissing, error: error.message });
   }
 });
 
