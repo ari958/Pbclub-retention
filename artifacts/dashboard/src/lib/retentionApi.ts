@@ -37,6 +37,11 @@ export interface Candidate {
     stale?: boolean;
     lookback_days?: number;
     reason?: string | null;
+     session_change?: {
+       reason: string;
+       old_start_time: string | null;
+       new_start_time: string | null;
+     };
     errors?: unknown[];
     validation_errors?: string[];
     date_phrase?: string | null;

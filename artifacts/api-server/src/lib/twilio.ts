@@ -336,7 +336,13 @@ export async function sendViaTwilio(
         throw new SmsPolicyBlockedError("Player booked a session after this LTP step was triggered", true);
       }
       if (firstCheck.reason === "session_changed") {
-        await returnLtpSequenceForSessionReview(ltpCandidate.club_id, ltpCandidate.id, null);
+        await returnLtpSequenceForSessionReview(
+          ltpCandidate.club_id,
+          ltpCandidate.id,
+          null,
+          firstCheck.sessionChange,
+          ltpCandidate.context.ltp_text,
+        );
         throw new SmsPolicyBlockedError("Approved LTP session changed; the draft was returned for review");
       }
     } catch (error) {
@@ -452,7 +458,13 @@ export async function sendViaTwilio(
       }
       if (finalCheck.reason === "session_changed") {
         try {
-          await returnLtpSequenceForSessionReview(ltpCandidate.club_id, ltpCandidate.id, claimedAt);
+          await returnLtpSequenceForSessionReview(
+            ltpCandidate.club_id,
+            ltpCandidate.id,
+            claimedAt,
+            finalCheck.sessionChange,
+            ltpCandidate.context.ltp_text,
+          );
         } catch (error) {
           throw new SmsPolicyBlockedError(
             `The LTP session changed but could not be returned for review: ${error instanceof Error ? error.message : String(error)}`,

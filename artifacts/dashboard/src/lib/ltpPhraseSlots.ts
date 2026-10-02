@@ -131,7 +131,7 @@ function formatLtpDateFact(date: string | undefined): string | null {
   return `${months[month - 1]} ${day}`;
 }
 
-function formatLtpSessionWhen(startTime: string): string | null {
+export function formatLtpSessionWhen(startTime: string): string | null {
   const instant = new Date(startTime);
   if (!Number.isFinite(instant.getTime())) return null;
   const formatter = new Intl.DateTimeFormat("en-US", {

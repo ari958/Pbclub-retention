@@ -82,6 +82,27 @@ test("ordinary regeneration keeps every still-valid saved slot index after a pla
   }
 });
 
+test("regenerating from the new raw session time rebuilds {when} in America/New_York", () => {
+  const newRawStartTime = "2026-10-04T18:00:00.000Z";
+  const regenerated = buildLtpStepText({
+    candidateId: "candidate-time-changed",
+    seedNonce: 0,
+    step: 1,
+    context: {
+      ...withProgram,
+      next_program: {
+        ...withProgram.next_program!,
+        start_time: newRawStartTime,
+        date: "2026-10-04",
+        time: "2:00 PM",
+      },
+    },
+  });
+  assert.equal(regenerated.context.next_program?.start_time, newRawStartTime);
+  assert.equal(regenerated.context.ltp_text?.when, "Sunday, Oct 4 at 2:00pm");
+  assert.match(regenerated.body, /Sunday, Oct 4 at 2:00pm/);
+});
+
 test("step 1 no-program texts include only the verified offer and approved generic booking link", () => {
   const noProgramContext: RetentionContext = {
     ...withProgram,

@@ -6,6 +6,7 @@ import {
   DEFAULT_LTP_SEQUENCE_CONFIG,
   formatLtpAttendanceDate,
   formatLtpNextProgramFact,
+  formatLtpSessionWhen,
   formatLtpTriggerFact,
   LTP_PHRASE_SLOT_KEYS,
   ltpPhraseSlot,
@@ -13,6 +14,12 @@ import {
   updateLtpPhraseSlot,
   validateLtpSequenceConfig,
 } from "./ltpPhraseSlots";
+
+test("session-change timestamps use America/New_York regardless of browser timezone", () => {
+  assert.equal(formatLtpSessionWhen("2026-10-04T18:00:00.000Z"), "Sunday, Oct 4 at 2:00pm");
+  assert.equal(formatLtpSessionWhen("2026-10-04T14:30:00.000Z"), "Sunday, Oct 4 at 10:30am");
+  assert.equal(formatLtpSessionWhen("not-a-time"), null);
+});
 
 function candidate(fields: Record<string, unknown> = {}) {
   return {

@@ -158,6 +158,27 @@ async function fetchEventSignups(
         }
         if (!Array.isArray(payload?.items)) failClosed(`PodPlay signup lookup for event ${eventId} is missing its items array`);
         const rows = payload.items as any[];
+        if (rows.length > SIGNUP_PAGE_SIZE) {
+          failClosed(`PodPlay signup lookup for event ${eventId} exceeded its requested page size`);
+        }
+        if (payload.hasMore !== undefined && typeof payload.hasMore !== "boolean") {
+          failClosed(`PodPlay signup lookup for event ${eventId} has invalid pagination metadata`);
+        }
+        for (const field of ["totalPages", "total"] as const) {
+          if (payload[field] !== undefined) {
+            const rawValue = payload[field];
+            if (
+              (typeof rawValue !== "number" && typeof rawValue !== "string")
+              || (typeof rawValue === "string" && !rawValue.trim())
+            ) {
+              failClosed(`PodPlay signup lookup for event ${eventId} has invalid pagination metadata`);
+            }
+            const value = Number(rawValue);
+            if (!Number.isSafeInteger(value) || value < 0) {
+              failClosed(`PodPlay signup lookup for event ${eventId} has invalid pagination metadata`);
+            }
+          }
+        }
         signups.push(...rows);
         const hasMore = payload.hasMore === true
           || Number(payload.totalPages ?? 0) > page
@@ -430,6 +451,8 @@ export async function returnLtpSequenceForSessionReview(
   clubId: string,
   candidateId: string,
   expectedClaimedAt: string | null,
+  sessionChange?: LtpSequenceDispatchCheck["sessionChange"],
+  previousLtpText?: RetentionCandidate["context"]["ltp_text"],
 ): Promise<unknown> {
   const { data, error } = await supabase.rpc("retention_sequence_session_changed", {
     p_club_id: clubId,
@@ -439,7 +462,39 @@ export async function returnLtpSequenceForSessionReview(
   if (error || !data) {
     throw new Error(`Could not return the changed LTP session for review: ${error?.message ?? "no candidate returned"}`);
   }
-  return data;
+  if (!sessionChange) return data;
+
+  const returnedCandidate = data as Record<string, any>;
+  const returnedContext = returnedCandidate.context;
+  if (
+    returnedCandidate.id !== candidateId
+    || returnedCandidate.status !== "drafted"
+    || typeof returnedCandidate.updated_at !== "string"
+    || !returnedContext
+    || typeof returnedContext !== "object"
+    || returnedContext.reason !== "session_changed"
+  ) {
+    throw new Error("Could not verify the session-review candidate returned by the database");
+  }
+
+  const nextContext = {
+    ...returnedContext,
+    ...(previousLtpText ? { ltp_text: previousLtpText } : {}),
+    session_change: sessionChange,
+  };
+  const { data: updated, error: updateError } = await supabase.from("retention_candidates")
+    .update({ context: nextContext })
+    .eq("id", candidateId)
+    .eq("club_id", clubId)
+    .eq("status", "drafted")
+    .eq("updated_at", returnedCandidate.updated_at)
+    .eq("context", JSON.stringify(returnedContext))
+    .select("id,context,updated_at")
+    .maybeSingle();
+  if (updateError || !updated) {
+    throw new Error(`Could not persist session-change diagnostics without overwriting a concurrent edit: ${updateError?.message ?? "candidate changed after session review"}`);
+  }
+  return { ...returnedCandidate, context: updated.context, updated_at: updated.updated_at };
 }
 
 export async function stepOneRealSentAt(
@@ -479,6 +534,91 @@ export interface LtpSequenceDispatchCheck {
   reason: "session_changed" | null;
   booked: LtpBookedExit | null;
   cutoff: string;
+  sessionChange?: {
+    old_start_time: string;
+    new_start_time: string;
+    reason: "start_time_changed" | "canceled" | "full" | "event_changed";
+  };
+}
+
+async function checkSuggestedEventAtDispatch(
+  candidate: RetentionCandidate,
+  program: NonNullable<RetentionCandidate["context"]["next_program"]>,
+  live: RetentionLiveClub,
+  options: LtpBookingBatchOptions,
+  cutoff: string,
+): Promise<LtpSequenceDispatchCheck | null> {
+  const oldStartTime = program.start_time;
+  if (typeof oldStartTime !== "string" || !Number.isFinite(Date.parse(oldStartTime))) {
+    failClosed("the approved next-program start time is missing or invalid");
+  }
+
+  let response: Response;
+  try {
+    response = await (options.client ?? defaultBatchClient).fetch(
+      `${live.base}/apis/v2/events/${encodeURIComponent(program.event_id)}`,
+      { headers: { "x-api-key": live.apiKey }, requestTimeoutMs: 12_000 },
+    );
+  } catch (error) {
+    failClosed(`suggested-event lookup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!response!.ok) failClosed(`suggested-event lookup returned ${response!.status}`);
+
+  let payload: any;
+  try {
+    payload = await response!.json();
+  } catch {
+    failClosed("suggested-event lookup returned invalid JSON");
+  }
+  const event = payload?.item ?? payload?.event ?? payload;
+  if (
+    !event
+    || typeof event.id !== "string"
+    || event.id !== program.event_id
+    || typeof event.name !== "string"
+    || typeof event.startTime !== "string"
+    || !Number.isFinite(Date.parse(event.startTime))
+    || typeof event.status !== "string"
+    || (event.isCanceled !== undefined && typeof event.isCanceled !== "boolean")
+  ) {
+    failClosed("suggested-event lookup returned an incomplete or invalid event");
+  }
+
+  const newStartTime = event.startTime as string;
+  const sessionChange = (
+    reason: NonNullable<LtpSequenceDispatchCheck["sessionChange"]>["reason"],
+  ): LtpSequenceDispatchCheck => ({
+    valid: false,
+    reason: "session_changed",
+    booked: null,
+    cutoff,
+    sessionChange: {
+      old_start_time: oldStartTime,
+      new_start_time: newStartTime,
+      reason,
+    },
+  });
+
+  if (
+    event.isCanceled === true
+    || ["CANCELED", "CANCELLED"].includes(event.status.trim().toUpperCase())
+    || event.status.trim().toUpperCase() !== "PUBLISHED"
+  ) {
+    return sessionChange("canceled");
+  }
+  if (event.name !== program.name) return sessionChange("event_changed");
+
+  const signupOptions = { ...options, signupsCache: new Map<string, Promise<any[]>>() };
+  const signups = await fetchEventSignups(candidate.club_id, live, program.event_id, signupOptions);
+  if (signups.some((signup) => !signup || typeof signup !== "object" || typeof signup.status !== "string")) {
+    failClosed("suggested-event signup lookup contains an invalid signup");
+  }
+  const spotsRemaining = calculateRetentionOpenSpots(event.totalTeams, signups);
+  if (spotsRemaining === null) failClosed("suggested-event lookup is missing valid capacity");
+  if (spotsRemaining < 1) return sessionChange("full");
+  if (newStartTime !== oldStartTime) return sessionChange("start_time_changed");
+  if (program.signup_url !== `${live.base}/community/events/${event.id}`) return sessionChange("event_changed");
+  return null;
 }
 
 /** Reverify the stored session facts and offer against the live provider. */
@@ -555,21 +695,8 @@ export async function recheckLtpSequenceDispatch(
     }
     const clubCache = batchOptions.clubCache ?? new Map<string, Promise<RetentionLiveClub>>();
     const live = await loadLiveClubCached(candidate.club_id, clubCache);
-    const events = await loadLtpUpcomingEvents(candidate.club_id, live, batchOptions);
-    const event = events.find((row) => row.id === program.event_id);
-    if (
-      !event
-      || event.name !== program.name
-      || Date.parse(event.startTime) !== Date.parse(program.start_time)
-      || program.signup_url !== `${live.base}/community/events/${event.id}`
-    ) {
-      return { valid: false, reason: "session_changed", booked: null, cutoff };
-    }
-    const signups = await fetchEventSignups(candidate.club_id, live, program.event_id, batchOptions);
-    const spotsRemaining = calculateRetentionOpenSpots(event.totalTeams, signups);
-    if (spotsRemaining === null || spotsRemaining < 1) {
-      return { valid: false, reason: "session_changed", booked: null, cutoff };
-    }
+    const sessionCheck = await checkSuggestedEventAtDispatch(candidate, program, live, batchOptions, cutoff);
+    if (sessionCheck) return sessionCheck;
   } else if (context.variant !== "no_program") {
     failClosed("the candidate is missing its reviewed next-program assignment");
   }

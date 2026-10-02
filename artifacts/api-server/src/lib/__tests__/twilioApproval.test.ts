@@ -10,6 +10,7 @@ import {
   setTwilioClockForTests,
   setLtpSequenceBatchOptionsFactoryForTests,
 } from "../twilio.js";
+import { RetentionPodplayBatchClient } from "../retentionPodplayBatch.js";
 
 type DbResult = { data?: any; error?: { message: string } | null };
 
@@ -33,6 +34,9 @@ const state: {
   candidateError?: { message: string } | null;
   club: DbResult;
   clubReads?: DbResult[];
+  attendanceRows?: any[];
+  stepOneCandidate?: any;
+  stepOneMessage?: any;
   casRace: boolean;
   transportError?: Error;
   transportCalls: number;
@@ -61,22 +65,52 @@ function queryFor(table: string) {
     update(next: any) { operation = "update"; values = next; return query; },
     insert(next: any) { operation = "insert"; values = next; return query; },
     eq(key: string, value: any) { filters[key] = value; return query; },
+    gt(key: string, value: any) { filters[key] = value; return query; },
     is(key: string, value: any) { filters[key] = value; return query; },
     neq(key: string, value: any) { filters[key] = { neq: value }; return query; },
     not(key: string, operator: string, value: any) { filters[key] = { operator, value }; return query; },
+    order() { return query; },
     limit() { return query; },
     maybeSingle() { return Promise.resolve(resolve()); },
     single() { return Promise.resolve(resolve()); },
-    then(onFulfilled: any, onRejected: any) { return Promise.resolve(resolve()).then(onFulfilled, onRejected); },
+    then(onFulfilled: any, onRejected: any) {
+      if (table === "attendances" && operation === "select") {
+        return Promise.resolve({ data: state.attendanceRows ?? [], error: null }).then(onFulfilled, onRejected);
+      }
+      return Promise.resolve(resolve()).then(onFulfilled, onRejected);
+    },
   };
 
   function resolve(): DbResult {
     if (operation === "select") {
-      if (table === "messages") return { data: state.message, error: null };
+      if (table === "messages") {
+        return {
+          data: filters.id && filters.id !== state.message.id ? state.stepOneMessage : state.message,
+          error: null,
+        };
+      }
       if (table === "players") return { data: state.player, error: null };
       if (table === "clubs") return state.clubReads?.shift() ?? state.club;
       if (table === "contact_ledger") return { data: null, error: null };
-      if (table === "retention_candidates") return { data: state.candidate, error: state.candidateError ?? null };
+      if (table === "retention_candidates") {
+        return {
+          data: filters.step === 1 ? state.stepOneCandidate ?? state.candidate : state.candidate,
+          error: state.candidateError ?? null,
+        };
+      }
+      if (table === "retention_sequences") {
+        return {
+          data: {
+            sequence_status: "active",
+            step1_sent_at: "2026-01-13T17:00:00.000Z",
+            step1_delivery_kind: "real",
+          },
+          error: null,
+        };
+      }
+      if (table === "attendances" && filters.event_id) {
+        return { data: { attended_at: "2026-01-13T17:00:00.000Z" }, error: null };
+      }
     }
     if (table === "messages" && operation === "update") {
       if (filters.status && state.message.status !== filters.status) {
@@ -107,6 +141,24 @@ function queryFor(table: string) {
       state.player = { ...state.player, ...values };
       return { data: state.player, error: null };
     }
+    if (table === "retention_candidates" && operation === "update") {
+      if (
+        !state.candidate
+        ||
+        filters.id !== state.candidate.id
+        || filters.club_id !== state.candidate.club_id
+        || filters.status !== "drafted"
+        || filters.updated_at !== state.candidate.updated_at
+        || filters.context !== JSON.stringify(state.candidate.context)
+      ) {
+        return { data: null, error: null };
+      }
+      state.candidate = { ...state.candidate, ...values, updated_at: "2026-01-15T16:00:00.456Z" };
+      return {
+        data: { id: state.candidate.id, context: state.candidate.context, updated_at: state.candidate.updated_at },
+        error: null,
+      };
+    }
     return { data: null, error: null };
   }
 
@@ -115,6 +167,33 @@ function queryFor(table: string) {
 
 async function mockRpc(name: string, args: any) {
   state.rpcCalls.push({ name, args });
+  if (name === "retention_sequence_ready") return { data: true, error: null };
+  if (name === "retention_sequence_session_changed") {
+    state.message = {
+      ...state.message,
+      status: "pending",
+      approved_at: null,
+      approved_by: null,
+      approved_body: null,
+      scheduled_send_at: null,
+      dispatch_claimed_at: null,
+      dispatch_token: null,
+    };
+    const context = { ...state.candidate.context };
+    delete context.ltp_text;
+    const returned = {
+      ...state.candidate,
+      status: "drafted",
+      updated_at: "2026-01-15T16:00:00.123Z",
+      context: {
+        ...context,
+        reason: "session_changed",
+        errors: ["Suggested session changed; rebuild context and re-review"],
+      },
+    };
+    state.candidate = returned;
+    return { data: returned, error: null };
+  }
   if (name === "retention_sequence_transition" && state.sequenceTransitionError) {
     return { data: null, error: state.sequenceTransitionError };
   }
@@ -147,6 +226,7 @@ function reset(options: {
     id: PLAYER_ID,
     phone: "+15551234567",
     opted_out: false,
+    external_id: "podplay-player",
     sms_opt_in: false,
     consent_source: null,
     sms_consented_at: null,
@@ -172,6 +252,17 @@ function reset(options: {
   state.ledger = [];
   state.rpcCalls = [];
   state.sequenceTransitionError = undefined;
+  state.attendanceRows = [];
+  state.stepOneCandidate = {
+    id: "step-one",
+    message_id: "step-one-message",
+  };
+  state.stepOneMessage = {
+    status: "sent",
+    sent_at: "2026-01-13T17:00:00.000Z",
+    simulated: false,
+    retention_delivery_kind: "real",
+  };
 }
 
 async function invoke() {
@@ -256,6 +347,134 @@ test("LTP dispatch fails closed before transport until sequence schema readiness
     assert.equal(state.message.dispatch_token, null);
   } finally {
     (supabase as any).rpc = mockRpc;
+  }
+});
+
+test("Twilio blocks changed sessions and returns step 1 and step 2 to unapproved review", async () => {
+  const eventId = "00000000-0000-4000-8000-000000000024";
+  const triggerId = "00000000-0000-4000-8000-000000000025";
+  const oldStart = "2026-10-04T14:30:00.000Z";
+  const newStart = "2026-10-04T15:00:00.000Z";
+  const sessionChange = {
+    old_start_time: oldStart,
+    new_start_time: newStart,
+    reason: "start_time_changed",
+  };
+  const fixtureCandidate = (step: 1 | 2) => ({
+    id: `candidate-step-${step}`,
+    message_id: MESSAGE_ID,
+    player_id: PLAYER_ID,
+    club_id: CLUB_ID,
+    playbook_key: "ltp_followup",
+    trigger_event_id: triggerId,
+    status: "approved",
+    step,
+    sequence_id: "sequence",
+    sequence_status: "active",
+    updated_at: "2026-01-15T16:00:00.000Z",
+    context: {
+      variant: "with_program",
+      trigger: { event_id: triggerId, name: "Learn to Play", date: "2026-01-13" },
+      player_first_name: "Sam",
+      next_program: {
+        event_id: eventId,
+        name: "Beginner Session",
+        start_time: oldStart,
+        date: "2026-10-04",
+        time: "10:30 AM",
+        signup_url: `https://test.podplay.app/community/events/${eventId}`,
+        spots_remaining: 2,
+      },
+      classmates_signed_up: 0,
+      already_booked: false,
+      booked_event: null,
+      promo: step === 1 ? { code: "LTPNEXT25", offer_text: "25% off your next program" } : null,
+      coupon_warning: null,
+      evaluated_at: "2026-01-15T16:00:00.000Z",
+      diagnostics: { source: "test-fixture" },
+      ltp_text: {
+        step,
+        seed_nonce: 13,
+        slot_indices: { opener: 1, next_step: 2 },
+        slot_templates: { opener: "Hi Sam", next_step: "{program} on {when}" },
+        opener: "Hi Sam",
+        ltp_date: "Jan 13",
+        when: "Sunday, Oct 4 at 10:30am",
+      },
+    },
+  });
+
+  setLtpSequenceBatchOptionsFactoryForTests(() => {
+    const client = new RetentionPodplayBatchClient({
+      minimumSpacingMs: 0,
+      sleep: async () => {},
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith(`/events/${triggerId}`)) {
+          return Response.json({
+            item: {
+              id: triggerId,
+              name: "Learn to Play",
+              startTime: "2026-01-13T17:00:00.000Z",
+              status: "PUBLISHED",
+              isCanceled: false,
+            },
+          });
+        }
+        if (url.pathname === "/apis/v2/events") return Response.json({ items: [] });
+        if (url.pathname.endsWith(`/events/${eventId}/signups`)) return Response.json({ items: [] });
+        if (url.pathname.endsWith(`/events/${eventId}`)) {
+          return Response.json({
+            item: {
+              id: eventId,
+              name: "Beginner Session",
+              startTime: newStart,
+              status: "PUBLISHED",
+              isCanceled: false,
+              totalTeams: 4,
+            },
+          });
+        }
+        throw new Error(`Unexpected PodPlay test URL ${url.pathname}`);
+      },
+    });
+    return {
+      client,
+      clubCache: new Map([[CLUB_ID, Promise.resolve({
+        base: "https://test.podplay.app",
+        apiKey: "offline-test-key",
+        timezone: "America/New_York",
+      })]]),
+      eventsCache: new Map<string, Promise<any[]>>(),
+      signupsCache: new Map<string, Promise<any[]>>(),
+    };
+  });
+
+  try {
+    for (const step of [1, 2] as const) {
+      reset({ candidate: fixtureCandidate(step) });
+      const before = state.candidate.context.diagnostics;
+      await assert.rejects(invoke(), /returned for review/);
+      assert.equal(state.transportCalls, 0);
+      assert.equal(state.sends.length, 0);
+      assert.equal(state.message.status, "pending");
+      assert.equal(state.message.approved_at, null);
+      assert.equal(state.message.approved_by, null);
+      assert.equal(state.message.approved_body, null);
+      assert.equal(state.candidate.status, "drafted");
+      assert.deepEqual(state.candidate.context.diagnostics, before);
+      assert.deepEqual(state.candidate.context.session_change, sessionChange);
+      assert.equal(state.candidate.context.reason, "session_changed");
+      assert.equal(state.candidate.context.ltp_text.step, step);
+      assert.equal(state.candidate.context.ltp_text.seed_nonce, 13);
+      assert.deepEqual(state.candidate.context.ltp_text.slot_indices, { opener: 1, next_step: 2 });
+      assert.ok(state.rpcCalls.some((call) =>
+        call.name === "retention_sequence_session_changed"
+        && call.args.p_candidate_id === state.candidate.id,
+      ));
+    }
+  } finally {
+    setLtpSequenceBatchOptionsFactoryForTests(null);
   }
 });
 

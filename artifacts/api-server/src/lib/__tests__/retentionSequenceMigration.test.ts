@@ -106,6 +106,10 @@ test("LTP schema functions are service-role-only, readiness-gated, and have exac
   assert.match(migration, /RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER[\s\S]*?CREATE OR REPLACE FUNCTION public\.retention_sequence_ready/);
   assert.match(migration, /to_regprocedure\('public\.retention_sequence_claim\(uuid,uuid,uuid,text,timestamptz,jsonb,timestamptz\)'\)/);
   assert.match(migration, /ALTER FUNCTION public\.retention_retry_context\([\s\S]*?RENAME TO retention_retry_context_legacy/);
+  const sessionChanged = functionBody("retention_sequence_session_changed");
+  assert.match(sessionChanged, /SET status='pending',approved_at=NULL,approved_by=NULL,approved_body=NULL/);
+  assert.match(sessionChanged, /scheduled_send_at=NULL,dispatch_claimed_at=NULL,dispatch_token=NULL/);
+  assert.match(sessionChanged, /status='drafted'/);
   for (const legacyName of [
     "retention_create_candidate_legacy",
     "retention_create_draft_legacy",

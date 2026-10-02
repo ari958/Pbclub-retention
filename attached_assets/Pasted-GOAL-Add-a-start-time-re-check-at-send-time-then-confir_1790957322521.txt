@@ -1,0 +1,47 @@
+GOAL
+Add a start-time re-check at send time, then confirm the system is ready for a live delivery test to the operator's phone.
+
+No approvals, no sends, no changes to sending settings. Leave all 8 drafts as they are.
+
+1. SEND-TIME START-TIME CHECK
+- When a draft is built, store the suggested session's raw PodPlay startTime in the candidate context (if it isn't stored already).
+- At dispatch, for both step 1 and step 2, re-fetch the suggested event and compare its current startTime to the stored value.
+- If the startTime changed, do not send. Return the candidate to drafted with reason session_changed and record the old and new times.
+- On the Approvals card, show a visible "Session time changed, regenerate before approving" banner for that candidate.
+- Regenerating the candidate rebuilds the text with the new time and clears the prior approval. It must be re-approved before it can send.
+- This check sits alongside the existing ones: event not canceled, open spots remaining, no booking since the trigger or since step 1, and, for step 1 only, LTPNEXT25 still valid.
+
+2. TESTS
+Add automated tests for each of these:
+- An unchanged startTime dispatches normally.
+- A changed startTime blocks the send, sets session_changed, and records the old and new times.
+- A regenerated candidate shows the new time in {when}, formatted in America/New_York.
+- A canceled event, a full event, and a booking found at dispatch each block the send with the correct reason.
+- A failed PodPlay lookup at dispatch blocks the send. It must fail closed.
+
+3. CONFIRM THE CURRENT SCHEDULE
+Read-only: for events 01a0f8e0-3f79-7441-9f48-105ab2a78c4c and 01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb, report:
+- the current raw startTime
+- the formatted {when}
+- whether it matches each draft's text
+
+The operator has confirmed the 30 & 30 Beginner Drills & Guided Play session on Sunday Oct 4 is at 2:00pm ET. If any draft doesn't match the current schedule, regenerate it.
+
+4. DELIVERY TEST PRE-FLIGHT REPORT
+Do not change any settings. Explain exactly what will happen when the operator sets SMS_LIVE=true with SMS_TEST_OVERRIDE_TO configured, approves 2 drafts, and resumes sending. Specifically:
+- Which messages will the queue dispatch, and roughly how soon after approval and resume, given the send window?
+- Confirm unapproved drafts cannot dispatch under any path.
+- Confirm override sends are recorded as test sends in messages and contact_ledger, not as contacts with the original players.
+- Confirm override sends do not start the step 2 clock.
+- What happens to the two test candidates' sequence_status after the test sends?
+- Confirm the kill switch blocks an approved message from dispatching, and that it fails closed if the switch can't be read.
+- List the exact steps to return to safe mode afterward.
+
+5. REPORT
+Paste:
+- the test results
+- the current schedule check for both events
+- any regenerated draft texts
+- the pre-flight answers
+
+Confirm nothing was approved, scheduled, or sent, and that sending settings are unchanged.

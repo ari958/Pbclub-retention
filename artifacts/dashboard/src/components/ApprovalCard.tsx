@@ -3,7 +3,7 @@ import { canApprove } from "@/lib/approvalGuards";
 import type { Candidate } from "@/lib/retentionApi";
 import { approvalVariantPresentation } from "@/lib/approvalVariant";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
-import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpTriggerFact, isLtpCandidate } from "@/lib/ltpPhraseSlots";
+import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpSessionWhen, formatLtpTriggerFact, isLtpCandidate } from "@/lib/ltpPhraseSlots";
 
 const D = { card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", green: "#2ea043", greenBg: "rgba(46,160,67,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -79,10 +79,12 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   const playerName = c.player?.name ?? x.player_first_name ?? "Unknown player";
   const retryContextEligible = isRetryContextEligible(c.status, x.reason);
   const step = c.step ?? x.ltp_text?.step ?? 1;
-  const legacyLtpDraft = ltpCandidate && c.status === "drafted" && !x.ltp_text;
+  const legacyLtpDraft = ltpCandidate && c.status === "drafted" && !x.ltp_text && x.reason !== "session_changed";
   const approvableLtp = canApproveLtpCandidate(c, sequenceSchemaReady);
   const resharplableLtp = canReshuffleLtpCandidate(c, sequenceSchemaReady);
   const sequenceStatusColor = c.sequence_status === "active" ? D.green : D.faint;
+  const sessionChanged = ltpCandidate && x.reason === "session_changed";
+  const sessionTimeChanged = sessionChanged && x.session_change?.reason === "start_time_changed";
 
   return (
     <div className="approval-card" data-testid={`card-candidate-${c.id}`} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
@@ -183,6 +185,13 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         </div>
       </div>
 
+      {sessionChanged && (
+        <div role="alert" data-testid={`banner-session-changed-${c.id}`} style={{ padding: "12px 16px", color: D.redText, background: D.redBg, borderTop: `1px solid ${D.border}`, fontSize: 12, lineHeight: 1.6 }}>
+          <strong>{sessionTimeChanged ? "Session time changed, regenerate before approving" : "Session changed, regenerate before approving"}</strong>
+          {sessionTimeChanged && <div>Previously: {formatLtpSessionWhen(x.session_change?.old_start_time ?? "") ?? "unavailable"} ET · Current: {formatLtpSessionWhen(x.session_change?.new_start_time ?? "") ?? "unavailable"} ET</div>}
+          <div>The prior approval has been cleared. Regenerate the draft, review the updated session, and approve it again before it can send.</div>
+        </div>
+      )}
       {(c.status === "needs_context" || c.status === "manual_edit" || x.reason || issues.length > 0) && (
         <div data-testid={`panel-context-issues-${c.id}`} role="note" style={{ padding: "10px 16px", fontSize: 12, color: c.status === "needs_context" ? D.redText : D.accent, background: c.status === "needs_context" ? D.redBg : D.accentBg, borderTop: `1px solid ${D.border}`, lineHeight: 1.55 }}>
           <strong>{c.status === "needs_context" ? "Context required" : c.status === "manual_edit" ? "Manual edit required" : "Context and validation details"}</strong>
@@ -214,7 +223,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         {open && (
           <button style={btn(false, busy)} disabled={busy} data-testid={`button-skip-${c.id}`} onClick={onSkip}>Skip</button>
         )}
-        {ltpCandidate && c.status === "drafted" && step === 1 && !x.ltp_text && sequenceSchemaReady && (
+        {ltpCandidate && c.status === "drafted" && step === 1 && !x.ltp_text && !sessionChanged && sequenceSchemaReady && (
           <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-rebuild-ltp-${c.id}`} onClick={onLtpBatchRegenerate}>
             Rebuild step 1 cohort
           </button>
@@ -229,6 +238,11 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
             {regenerating ? "Regenerating..." : "Regenerate"}
           </button>
         )}
+        {sessionChanged && c.status === "drafted" && sequenceSchemaReady && (
+          <button style={btn(false, busy || editing)} disabled={busy || editing} data-testid={`button-regenerate-session-${c.id}`} onClick={onRegenerate}>
+            {regenerating ? "Regenerating..." : "Regenerate"}
+          </button>
+        )}
         {legacyLtpDraft && (
           <span data-testid={`notice-ltp-legacy-${c.id}`} role="note" style={{ width: "100%", color: D.accent, fontSize: 11 }}>
             This pre-sequence draft is blocked from approval until its slot-based sequence text is rebuilt. Migration does not approve or send texts.
@@ -239,7 +253,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
             Migration 013 is not ready. LTP approvals, rebuilding, and reshuffling are disabled.
           </span>
         )}
-        {ltpCandidate && c.status === "drafted" && sequenceSchemaReady && !approvableLtp && !legacyLtpDraft && (
+        {ltpCandidate && c.status === "drafted" && sequenceSchemaReady && !approvableLtp && !legacyLtpDraft && !sessionChanged && (
           <span role="note" data-testid={`notice-ltp-approval-blocked-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
             This LTP draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${c.sequence_status ?? "unavailable"}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
             Rebuild the active step-one cohort and review the refreshed text before approving.
