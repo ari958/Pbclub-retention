@@ -33,7 +33,7 @@ const BulkSchema = z.object({
   candidate_ids: z.array(z.string().uuid()).min(1),
   expected_bodies: z.record(z.string(), ExpectedBodySchema),
 });
-const KillSwitchSchema = z.object({ enabled: z.boolean() });
+const KillSwitchSchema = z.object({ enabled: z.boolean(), actor: z.string().trim().min(1).max(120).optional() });
 const RetentionGenerationInputSchema = GenerateRetentionDraftsBody.extend({
   lookback_days: z.number().int().refine(
     (value) => ALLOWED_RETENTION_LOOKBACK_DAYS.includes(value as (typeof ALLOWED_RETENTION_LOOKBACK_DAYS)[number]),
@@ -290,15 +290,17 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
 router.patch("/retention/kill-switch", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   const parsed = KillSwitchSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: "enabled must be a boolean" });
-  const { data, error } = await supabase.from("clubs")
-    .update({ sms_kill_switch: parsed.data.enabled })
-    .eq("id", clubId)
-    .select("id,sms_kill_switch")
-    .maybeSingle();
-  if (error) return res.status(500).json({ error: `Could not update SMS kill switch: ${error.message}` });
+  if (!parsed.success) return res.status(400).json({ error: "enabled must be a boolean; actor, if supplied, must be a nonblank name of at most 120 characters" });
+  const { data, error } = await supabase.rpc("retention_set_kill_switch", {
+    p_club_id: clubId,
+    p_enabled: parsed.data.enabled,
+    p_actor: parsed.data.actor ?? null,
+    p_request_id: String(req.id ?? ""),
+  });
+  if (error) return res.status(500).json({ error: `Could not atomically audit and update SMS kill switch. Apply migration 014 if missing: ${error.message}` });
   if (!data) return res.status(404).json({ error: "Club not found; SMS kill switch was not changed" });
-  return res.json({ enabled: data.sms_kill_switch === true });
+  req.log.info({ actor: parsed.data.actor ?? "unidentified operator", ...data }, "SMS kill switch change audited");
+  return res.json(data);
 });
 
 router.post("/retention/generate", requireClub, async (req, res): Promise<void> => {

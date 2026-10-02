@@ -6,6 +6,7 @@ import { isInsideSendWindow } from "./playerTiming";
 import { supabase } from "./supabaseClient";
 import { validateRetentionCoupon } from "./retentionCoupons";
 import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
+import { DispatchAudit } from "./dispatchAudit";
 import {
   confirmLtpRecipientDelivery,
   applyTwilio21610OptOut,
@@ -71,6 +72,7 @@ export interface SendContext {
   source?: string;
   purpose?: string;
   experimentId?: string;
+  bookingOptions?: LtpBookingBatchOptions;
 }
 
 export class SmsPolicyBlockedError extends Error {
@@ -192,6 +194,45 @@ export async function sendViaTwilio(
   body: string,
   context?: SendContext,
 ): Promise<{ sid: string; simulated: boolean; isTest?: boolean }> {
+  const audit = new DispatchAudit(context?.messageId ?? "missing");
+  try {
+    const result = await sendApprovedMessage(to, body, context, audit);
+    audit.end("pass");
+    return result;
+  } catch (error) {
+    audit.end(isSmsPolicyBlockedError(error) || isSmsDispatchClaimError(error) ? "blocked" : "error",
+      { error: error instanceof Error ? error.message : String(error) });
+    throw error;
+  }
+}
+
+/** Shared fail-closed gate, also used before each queue message. */
+export async function assertSmsKillSwitchOff(clubId: string): Promise<void> {
+  try {
+    const { data, error } = await supabase.from("clubs").select("sms_kill_switch").eq("id", clubId).maybeSingle();
+    if (error || !data || data.sms_kill_switch !== false) {
+      throw new SmsPolicyBlockedError(`SMS kill switch blocked dispatch: ${error?.message ?? "engaged or unavailable"}`);
+    }
+  } catch (error) {
+    if (isSmsPolicyBlockedError(error)) throw error;
+    throw new SmsPolicyBlockedError(`SMS kill switch blocked dispatch; read failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function assertFinalTransportAllowed(clubId: string, audit: DispatchAudit): Promise<void> {
+  audit.begin("kill_switch_final");
+  await assertSmsKillSwitchOff(clubId);
+  audit.begin("send_window_final");
+  if (!isInsideSendWindow(currentTime())) {
+    throw new SmsPolicyBlockedError("SMS dispatch is outside the TCPA send window immediately before transport");
+  }
+  audit.end("pass");
+}
+
+async function sendApprovedMessage(
+  to: string, body: string, context: SendContext | undefined, audit: DispatchAudit,
+): Promise<{ sid: string; simulated: boolean; isTest?: boolean }> {
+  audit.begin("approval");
   if (!context?.messageId?.trim()) {
     throw new Error("SMS dispatch requires an approved messageId context");
   }
@@ -217,11 +258,13 @@ export async function sendViaTwilio(
     throw new Error("Message is not explicitly approved");
   }
 
+  audit.begin("approved_body_match");
   const approvedBody = composeApprovedMessageBody(message.body ?? "", message.signup_url);
   if (approvedBody !== message.approved_body || body !== approvedBody) {
     throw new Error("Message body does not match its approved body");
   }
 
+  audit.begin("player_eligibility");
   let playerId = message.player_id as string | null;
   if (!playerId && message.conversation_id) {
     const { data: conversation, error } = await supabase
@@ -253,6 +296,7 @@ export async function sendViaTwilio(
   if (to.trim() !== player.phone.trim()) {
     throw new SmsPolicyBlockedError("SMS destination does not match the player's current phone");
   }
+  audit.begin("retention_candidate");
   const retentionCandidate = await verifyRetentionCandidateDispatch(
     context.messageId,
     playerId,
@@ -263,11 +307,16 @@ export async function sendViaTwilio(
     ? retentionCandidate as any
     : null;
   const promoCode = (retentionCandidate?.context as any)?.promo?.code;
+  const bookingOptions = { ...(context.bookingOptions ?? ltpBatchOptionsForDispatch()), messageId: context.messageId };
+  audit.begin("stale_flag");
+  audit.end("pass", { stale: !!(retentionCandidate?.context as any)?.stale, policy: "operator-reviewed provenance; not a dispatch blocker" });
 
+  audit.begin("send_window_preclaim");
   if (!isInsideSendWindow(currentTime())) {
     throw new SmsPolicyBlockedError("SMS dispatch is outside the TCPA send window");
   }
 
+  audit.begin("kill_switch_preclaim");
   const { data: club, error: clubError } = await supabase
     .from("clubs")
     .select("sms_kill_switch")
@@ -298,6 +347,7 @@ export async function sendViaTwilio(
     : undefined;
 
   if (smsLive) {
+    audit.begin("ledger_schema");
     // Validate schema and credentials before claiming: these checks cannot
     // deliver an SMS and should not quarantine an otherwise approved draft.
     const { error: ledgerSchemaError } = await supabase
@@ -309,6 +359,7 @@ export async function sendViaTwilio(
     }
   }
 
+  audit.begin("transport_configuration");
   const client = smsLive
     ? (testClientFactory ? testClientFactory() : getTwilioClient())
     : null;
@@ -319,9 +370,10 @@ export async function sendViaTwilio(
   let claimError: any;
   if (ltpCandidate) {
     try {
+      audit.begin("ltp_preclaim");
       const firstCheck = await recheckLtpSequenceDispatch(
         ltpCandidate,
-        ltpBatchOptionsForDispatch(),
+        bookingOptions,
         message.approved_body,
       );
       if (firstCheck.booked) {
@@ -352,6 +404,7 @@ export async function sendViaTwilio(
       );
     }
 
+    audit.begin("database_claim");
     const { data, error } = await supabase.rpc("retention_sequence_claim", {
       p_club_id: player.club_id,
       p_candidate_id: ltpCandidate.id,
@@ -364,6 +417,7 @@ export async function sendViaTwilio(
     claimed = data;
     claimError = error;
   } else {
+    audit.begin("database_claim");
     const { data, error } = await supabase
       .from("messages")
       .update({ dispatch_claimed_at: claimedAt, dispatch_token: claimToken })
@@ -382,8 +436,14 @@ export async function sendViaTwilio(
   if (claimError || !claimed) {
     throw new SmsDispatchClaimError(`Message dispatch claim failed: ${claimError?.message ?? "message is no longer dispatchable"}`);
   }
+  audit.end("pass", {
+    claimed_at: claimedAt,
+    claim_commit_observed_at: new Date().toISOString(),
+    timestamp_semantics: "successful database commit acknowledgment, not the earlier in-memory claimedAt",
+  });
 
   try {
+    audit.begin("player_eligibility_final");
     const { data: finalPlayer, error: finalPlayerError } = await supabase
       .from("players")
       .select("phone, opted_out, sms_opt_in, consent_source, sms_consented_at")
@@ -402,6 +462,7 @@ export async function sendViaTwilio(
       typeof promoCode === "string" && promoCode.trim()
       && !(ltpCandidate && ltpCandidate.step === 2)
     ) {
+      audit.begin("coupon_final");
       let coupon;
       try {
         coupon = await validateRetentionCoupon(player.club_id, promoCode);
@@ -412,9 +473,11 @@ export async function sendViaTwilio(
         throw new SmsPolicyBlockedError(coupon.warning ?? `Retention coupon ${promoCode} could not be verified`);
       }
     }
+    audit.begin("send_window_before_booking");
     if (!isInsideSendWindow(currentTime())) {
       throw new SmsPolicyBlockedError("SMS dispatch crossed outside the TCPA send window");
     }
+    audit.begin("kill_switch_before_booking");
     const { data: lastChanceClub, error: lastChanceError } = await supabase
       .from("clubs")
       .select("sms_kill_switch")
@@ -427,11 +490,12 @@ export async function sendViaTwilio(
     if (ltpCandidate) {
       let finalCheck;
       try {
-        // Build fresh caches for the second authoritative lookup; first-pass
-        // provider results must not authorize the final transport check.
+        audit.begin("ltp_final");
+        // Booking history may use the <5-minute tick snapshot. The suggested
+        // event and its capacity are freshly fetched inside the second check.
         finalCheck = await recheckLtpSequenceDispatch(
           ltpCandidate,
-          ltpBatchOptionsForDispatch(),
+          bookingOptions,
           message.approved_body,
         );
       } catch (error) {
@@ -475,6 +539,7 @@ export async function sendViaTwilio(
     }
 
     if (!smsLive) {
+      await assertFinalTransportAllowed(player.club_id, audit);
       logger.info({ messageId: context.messageId, isTest }, "[SMS DRY-RUN] approved dispatch simulated");
       const sentAt = currentTime().toISOString();
       const simulatedValues: Record<string, unknown> = {
@@ -514,6 +579,7 @@ export async function sendViaTwilio(
 
     let msg;
     if (messagingServiceSid) {
+      await assertFinalTransportAllowed(player.club_id, audit);
       msg = await client!.messages.create({
         body,
         to: effectiveTo,
@@ -522,6 +588,7 @@ export async function sendViaTwilio(
         ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
       });
     } else {
+      await assertFinalTransportAllowed(player.club_id, audit);
       msg = await client!.messages.create({
         body,
         to: effectiveTo,

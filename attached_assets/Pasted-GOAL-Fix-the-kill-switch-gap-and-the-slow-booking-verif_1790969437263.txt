@@ -1,0 +1,33 @@
+GOAL
+Fix the kill-switch gap and the slow booking verification found in the delivery-test diagnosis. No approvals, sends, or changes to sending settings. Leave all drafts and sent records as they are.
+
+1. KILL SWITCH: LAST CHECK BEFORE TRANSPORT (highest priority)
+- Inside the shared Twilio transport helper, as the final step before messages.create, read clubs.sms_kill_switch and re-check the send window. This must be the last statement before the provider call, with no network lookups between it and the call.
+- Fail closed: if the switch can't be read, is missing, or is unknown, do not send.
+- If blocked: do not send, release the claim, and leave the message approved and scheduled, so it dispatches normally after Resume (with all send-time checks re-run at that point).
+- In the queue loop, also re-check the kill switch before starting each message, so a pause stops the rest of the batch immediately.
+- Add tests:
+  - pause set during the booking lookup blocks the send
+  - pause set between two messages in one batch blocks the second
+  - an unreadable switch blocks the send
+  - a blocked message is released and dispatches after Resume
+
+2. BOOKING VERIFICATION: FAST WITHOUT WEAKENING IT
+- Replace the per-message scan of every upcoming event's signups with a per-tick snapshot: fetch upcoming events and their signups once at the start of each queue tick, and share it across all messages in that tick.
+- Use the PodPlay rate limit efficiently (about 300 requests/min) with bounded concurrency instead of fixed 400ms spacing, and keep the 429 backoff.
+- Keep full coverage: all upcoming events, plus attendances after the trigger. Do not narrow the window.
+- The final pre-transport booking check may reuse the tick snapshot if it is under 5 minutes old. It must still freshly re-fetch the suggested event itself, for start time, cancellation, and capacity.
+- If the snapshot can't be built, fail closed for that tick: send nothing and log why.
+- Target: dispatch time per message under 30 seconds at current volume. Report the measured before and after.
+
+3. AUDIT LOGGING
+- Log every dispatch check with message ID, check name, result, and duration in ms.
+- Add a pause/resume audit trail: who, when, old value, new value. Store it in a table, not only in server output.
+- Log the exact time the database claim commits, separate from the in-memory claimedAt.
+
+4. REPORT
+Paste:
+- test results
+- measured dispatch time per message before and after, using a mocked or dry-run path with no real sends
+- the exact order of operations in the dispatch path from claim to Twilio call, so it's visible that the kill-switch read is last
+- confirmation that nothing was approved, scheduled, or sent, and that sending settings are unchanged

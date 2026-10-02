@@ -138,7 +138,7 @@ export const retentionApi = {
   edit: (s: string, id: string, body: string) => call<unknown>(s, `/api/retention/candidates/${id}`, "PATCH", { body }),
   approve: (s: string, id: string, approved_by: string, expected_body: string) =>
     call<unknown>(s, `/api/retention/candidates/${id}/approve`, "POST", { approved_by, expected_body }),
-  killSwitch: (s: string, enabled: boolean) => call<unknown>(s, "/api/retention/kill-switch", "PATCH", { enabled }),
+  killSwitch: (s: string, enabled: boolean, actor?: string) => call<unknown>(s, "/api/retention/kill-switch", "PATCH", { enabled, ...(actor?.trim() ? { actor: actor.trim() } : {}) }),
   skip: (s: string, id: string) => call<unknown>(s, `/api/retention/candidates/${id}/skip`, "POST", {}),
   bulk: (s: string, key: string, approved_by: string, candidate_ids: string[], expected_bodies: Record<string, string>) =>
     call<BulkResult>(s, `/api/retention/playbooks/${encodeURIComponent(key)}/approve`, "POST", { approved_by, candidate_ids, expected_bodies }),

@@ -1,6 +1,7 @@
 import { supabase } from "./supabaseClient";
 import {
   composeApprovedMessageBody,
+  assertSmsKillSwitchOff,
   isSmsDispatchClaimError,
   isSmsPolicyBlockedError,
   recordSmsDispatchFailure,
@@ -10,10 +11,19 @@ import { sanitizeScheduledSendAt, isInsideSendWindow } from "./playerTiming";
 import { logger } from "./logger";
 import { isRetentionOnlyMode, isTextEligible, requiresMarketingConsent } from "./retentionPolicy";
 import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
+import { buildLtpBookingSnapshot, createQueueBookingOptions, type LtpBookingSnapshot } from "./ltpBookingSnapshot";
+import { DispatchAudit } from "./dispatchAudit";
+import type { LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
 const BATCH_LIMIT = 50;
+let bookingOptionsFactoryForTests: (() => LtpBookingBatchOptions) | null = null;
+
+export function setQueueBookingOptionsFactoryForTests(factory: (() => LtpBookingBatchOptions) | null): void {
+  if (process.env.NODE_ENV !== "test") throw new Error("Queue booking test factory is test-only");
+  bookingOptionsFactoryForTests = factory;
+}
 
 // ─── One tick ─────────────────────────────────────────────────────────────────
 
@@ -59,7 +69,63 @@ export async function runQueueTick(): Promise<QueueTickStats> {
 
   logger.info({ count: messages.length }, "[queue] tick — messages due");
 
+  // Authorize and exclude paused clubs before doing costly provider reads.
+  const ready: Array<{ row: any; ltp: boolean }> = [];
   for (const row of messages) {
+    const audit = new DispatchAudit(row.id);
+    try {
+      audit.begin("retention_candidate_queue");
+      const candidate = await verifyRetentionCandidateDispatch(
+        row.id, row.player_id, (row.players as any)?.club_id, row.approved_at,
+      );
+      audit.begin("kill_switch_queue");
+      try {
+        await assertSmsKillSwitchOff((row.players as any)?.club_id);
+        audit.end("pass");
+      } catch (error) {
+        audit.end("blocked");
+        throw error;
+      }
+      ready.push({ row, ltp: candidate?.playbook_key === "ltp_followup" });
+    } catch (err) {
+      audit.end("blocked");
+      logger.error({ err, id: row.id }, "[queue] approval or kill-switch gate blocked dispatch");
+      stats.processed++;
+      stats.skipped++;
+    }
+  }
+
+  // Build every required snapshot before the first send. A failed club snapshot
+  // invalidates the entire tick, rather than sending a partial batch.
+  const bookingOptions = process.env.NODE_ENV === "test" && bookingOptionsFactoryForTests
+    ? bookingOptionsFactoryForTests() : createQueueBookingOptions();
+  const snapshots = new Map<string, LtpBookingSnapshot>();
+  const clubIds = [...new Set(ready.filter((item) => item.ltp).map((item) => item.row.players.club_id as string))];
+  const snapshotAudits = ready.filter((item) => item.ltp).map(({ row }) => {
+    const audit = new DispatchAudit(row.id);
+    audit.begin("booking_snapshot_build_shared");
+    return audit;
+  });
+  try {
+    await Promise.all(clubIds.map(async (clubId) => {
+      const snapshot = await buildLtpBookingSnapshot(clubId, bookingOptions);
+      snapshots.set(clubId, snapshot);
+      logger.info({
+        clubId, event_count: snapshot.eventCount,
+        duration_ms: snapshot.completedAt - snapshot.capturedAt,
+        captured_at: new Date(snapshot.capturedAt).toISOString(),
+      }, "[queue] booking snapshot ready");
+    }));
+    for (const audit of snapshotAudits) audit.end("pass");
+  } catch (err) {
+    for (const audit of snapshotAudits) audit.end("error");
+    logger.error({ err, messageIds: ready.map(({ row }) => row.id) }, "[queue] booking snapshot failed; entire tick blocked");
+    stats.processed += ready.length;
+    stats.failed += ready.length;
+    return stats;
+  }
+
+  for (const { row, ltp } of ready) {
     stats.processed++;
     const id = row.id as string;
     const player_id = row.player_id as string;
@@ -68,17 +134,17 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     const linkedPlayer = row.players as any;
     const phone = linkedPlayer?.phone as string | null;
 
-    if (isRetentionOnlyMode()) {
-      try {
-        await verifyRetentionCandidateDispatch(id, player_id, linkedPlayer?.club_id, row.approved_at as string | null);
-      } catch (err) {
-        logger.error({ err, id, player_id }, "[queue] retention approval gate blocked dispatch");
-        stats.skipped++;
-        continue;
-      }
-    }
-
     try {
+      // Never rely on the pre-snapshot flag or the previous message's check.
+      const queueAudit = new DispatchAudit(id);
+      queueAudit.begin("kill_switch_queue_before_message");
+      try {
+        await assertSmsKillSwitchOff(linkedPlayer?.club_id);
+        queueAudit.end("pass");
+      } catch (error) {
+        queueAudit.end("blocked");
+        throw error;
+      }
       // ── a. TCPA WINDOW ──────────────────────────────────────────────────────
       const tickNow = new Date();
       if (!isInsideSendWindow(tickNow)) {
@@ -158,6 +224,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
         messageId: id,
         source: "queue",
         purpose: "promotion",
+        ...(ltp ? { bookingOptions: { ...bookingOptions, bookingSnapshot: snapshots.get(linkedPlayer?.club_id) } } : {}),
       });
 
       logger.info({ id, twilio_sid: sid, simulated, isTest }, "[queue] sent");

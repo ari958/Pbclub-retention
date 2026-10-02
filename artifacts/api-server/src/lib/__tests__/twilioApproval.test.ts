@@ -56,6 +56,8 @@ const state: {
   rpcCalls: [],
 };
 
+let onAttendanceRead: (() => void) | undefined;
+
 function queryFor(table: string) {
   let operation = "select";
   let values: any;
@@ -75,6 +77,7 @@ function queryFor(table: string) {
     single() { return Promise.resolve(resolve()); },
     then(onFulfilled: any, onRejected: any) {
       if (table === "attendances" && operation === "select") {
+        onAttendanceRead?.();
         return Promise.resolve({ data: state.attendanceRows ?? [], error: null }).then(onFulfilled, onRejected);
       }
       return Promise.resolve(resolve()).then(onFulfilled, onRejected);
@@ -168,6 +171,10 @@ function queryFor(table: string) {
 async function mockRpc(name: string, args: any) {
   state.rpcCalls.push({ name, args });
   if (name === "retention_sequence_ready") return { data: true, error: null };
+  if (name === "retention_sequence_claim") {
+    state.message.dispatch_claimed_at = args.p_claimed_at;
+    return { data: { id: state.message.id }, error: null };
+  }
   if (name === "retention_sequence_session_changed") {
     state.message = {
       ...state.message,
@@ -209,6 +216,7 @@ function reset(options: {
   candidate?: any;
   candidateError?: { message: string } | null;
 } = {}) {
+  onAttendanceRead = undefined;
   state.message = {
     id: MESSAGE_ID,
     body: "Thanks for coming by!",
@@ -664,6 +672,74 @@ test("redirected live send is ledgered as a test without original-player contact
     assert.equal(state.player.last_outbound_at, "2026-01-15T16:59:00.000Z");
   } finally {
     delete process.env.SMS_TEST_OVERRIDE_TO;
+  }
+});
+
+test("pause during final booking lookup releases the LTP claim; Resume reruns checks and dispatches", async () => {
+  reset({ candidate: {
+    id: "ltp-final-pause", message_id: MESSAGE_ID, player_id: PLAYER_ID, club_id: CLUB_ID,
+    status: "approved", playbook_key: "ltp_followup", step: 2,
+    sequence_id: "sequence", sequence_status: "active", updated_at: "2026-01-15T16:00:00Z",
+    context: { variant: "no_program", ltp_text: { step: 2 }, promo: null },
+  } });
+  state.message.scheduled_send_at = "2026-01-15T16:59:00Z";
+  let bookingReads = 0;
+  onAttendanceRead = () => {
+    if (++bookingReads === 2) state.club = { data: { sms_kill_switch: true }, error: null };
+  };
+  setLtpSequenceBatchOptionsFactoryForTests(() => ({
+    bookingSnapshot: {
+      clubId: CLUB_ID, capturedAt: Date.now(), completedAt: Date.now(), eventCount: 0, bookings: new Map(),
+    },
+  }));
+  try {
+    await assert.rejects(invoke(), /kill switch blocked/);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.message.dispatch_claimed_at, null);
+    assert.equal(state.message.status, "pending");
+    assert.ok(state.message.approved_at);
+    assert.equal(state.message.scheduled_send_at, "2026-01-15T16:59:00Z");
+    onAttendanceRead = undefined;
+    state.club = { data: { sms_kill_switch: false }, error: null };
+    await invoke();
+    assert.equal(state.transportCalls, 1);
+    assert.equal(state.message.status, "sent");
+  } finally {
+    onAttendanceRead = undefined;
+    setLtpSequenceBatchOptionsFactoryForTests(null);
+  }
+});
+
+test("unreadable, missing, and unknown final kill switches fail closed after claim", async () => {
+  for (const final of [
+    { data: null, error: { message: "DB unavailable" } },
+    { data: null, error: null },
+    { data: { sms_kill_switch: null }, error: null },
+    { get data(): never { throw new Error("Offline socket failure"); }, error: null },
+  ]) {
+    reset({ clubReads: [
+      { data: { sms_kill_switch: false }, error: null },
+      { data: { sms_kill_switch: false }, error: null },
+      final,
+    ] });
+    await assert.rejects(invoke(), /kill switch blocked/);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.message.dispatch_token, null);
+    assert.ok(state.message.approved_at);
+    assert.equal(state.message.status, "pending");
+  }
+});
+
+test("the final send-window check blocks a window crossed during dispatch", async () => {
+  reset();
+  let reads = 0;
+  setTwilioClockForTests(() => new Date(++reads < 4 ? "2026-01-15T17:00:00Z" : "2026-01-16T01:00:00Z"));
+  try {
+    await assert.rejects(invoke(), /outside the TCPA send window/);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.message.dispatch_token, null);
+  } finally {
+    setTwilioClockForTests(() => new Date("2026-01-15T17:00:00Z"));
   }
 });
 

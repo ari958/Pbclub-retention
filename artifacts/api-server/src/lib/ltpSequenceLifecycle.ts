@@ -9,12 +9,17 @@ import {
 import { RetentionPodplayBatchClient } from "./retentionPodplayBatch";
 import { toEtDate } from "./retentionDates";
 import type { RetentionCandidate } from "./retentionTypes";
+import { performance } from "node:perf_hooks";
+import { logDispatchCheck } from "./dispatchAudit";
+import type { LtpBookingSnapshot } from "./ltpBookingSnapshot";
 
 export interface LtpBookingBatchOptions {
   client?: RetentionPodplayBatchClient;
   clubCache?: Map<string, Promise<RetentionLiveClub>>;
   eventsCache?: Map<string, Promise<any[]>>;
   signupsCache?: Map<string, Promise<string[]>>;
+  bookingSnapshot?: LtpBookingSnapshot;
+  messageId?: string;
 }
 
 export interface LtpBookedExit {
@@ -43,7 +48,7 @@ function isFutureSession(value: unknown, now: number): value is string {
   return Date.parse(value) > now;
 }
 
-async function loadLtpUpcomingEvents(
+export async function loadLtpUpcomingEvents(
   clubId: string,
   live: RetentionLiveClub,
   options: LtpBookingBatchOptions,
@@ -112,10 +117,15 @@ async function loadLtpUpcomingEvents(
           && event.status === "PUBLISHED"
           && event.isCanceled !== true,
         ));
+        const pageSize = Number(payload._pagination?.ipp ?? EVENT_LIST_PAGE_SIZE);
+        if (!Number.isSafeInteger(pageSize) || pageSize <= 0 || pageSize > EVENT_LIST_PAGE_SIZE) {
+          failClosed("PodPlay event listing has invalid effective page size");
+        }
+        const total = payload.total ?? payload._pagination?.total;
         const hasMore = payload.hasMore === true
           || Number(payload.totalPages ?? 0) > page
-          || (payload.total && page * EVENT_LIST_PAGE_SIZE < Number(payload.total));
-        if (!hasMore && rows.length < EVENT_LIST_PAGE_SIZE) return events;
+          || (total != null && page * pageSize < Number(total));
+        if (!hasMore && rows.length < pageSize) return events;
         if (page === PAGE_LIMIT) failClosed("PodPlay event listing exceeded the pagination safety limit");
       }
       failClosed("PodPlay event listing exceeded the pagination safety limit");
@@ -131,7 +141,7 @@ async function loadLtpUpcomingEvents(
   return promise;
 }
 
-async function fetchEventSignups(
+export async function fetchEventSignups(
   clubId: string,
   live: RetentionLiveClub,
   eventId: string,
@@ -180,10 +190,15 @@ async function fetchEventSignups(
           }
         }
         signups.push(...rows);
+        const pageSize = Number(payload._pagination?.ipp ?? SIGNUP_PAGE_SIZE);
+        if (!Number.isSafeInteger(pageSize) || pageSize <= 0 || pageSize > SIGNUP_PAGE_SIZE) {
+          failClosed("PodPlay signup lookup has invalid effective page size");
+        }
+        const total = payload.total ?? payload._pagination?.total;
         const hasMore = payload.hasMore === true
           || Number(payload.totalPages ?? 0) > page
-          || (payload.total && page * SIGNUP_PAGE_SIZE < Number(payload.total));
-        if (!hasMore && rows.length < SIGNUP_PAGE_SIZE) return signups;
+          || (total != null && page * pageSize < Number(total));
+        if (!hasMore && rows.length < pageSize) return signups;
         if (page === PAGE_LIMIT) failClosed(`PodPlay signup lookup for event ${eventId} exceeded the pagination safety limit`);
       }
       failClosed(`PodPlay signup lookup for event ${eventId} exceeded the pagination safety limit`);
@@ -205,6 +220,15 @@ async function findPodplayBooking(
   cutoffMs: number,
   options: LtpBookingBatchOptions,
 ): Promise<LtpBookedExit | null> {
+  if (options.bookingSnapshot) {
+    const snapshot = options.bookingSnapshot;
+    const age = Date.now() - snapshot.capturedAt;
+    if (snapshot.clubId !== clubId || age < 0 || age >= 5 * 60_000) {
+      failClosed("the tick booking snapshot is not fresh or belongs to another club");
+    }
+    const booked = snapshot.bookings.get(playerExternalId)?.find((event) => event.startTime > cutoffMs);
+    return booked ? { booked_event_id: booked.eventId, source: "podplay_upcoming_signup" } : null;
+  }
   const clubCache = options.clubCache ?? new Map<string, Promise<RetentionLiveClub>>();
   let live: RetentionLiveClub;
   try {
@@ -548,6 +572,7 @@ async function checkSuggestedEventAtDispatch(
   options: LtpBookingBatchOptions,
   cutoff: string,
 ): Promise<LtpSequenceDispatchCheck | null> {
+  const lookupStarted = performance.now();
   const oldStartTime = program.start_time;
   if (typeof oldStartTime !== "string" || !Number.isFinite(Date.parse(oldStartTime))) {
     failClosed("the approved next-program start time is missing or invalid");
@@ -585,6 +610,7 @@ async function checkSuggestedEventAtDispatch(
   }
 
   const newStartTime = event.startTime as string;
+  logDispatchCheck(options.messageId, "suggested_event_lookup", "pass", lookupStarted);
   const sessionChange = (
     reason: NonNullable<LtpSequenceDispatchCheck["sessionChange"]>["reason"],
   ): LtpSequenceDispatchCheck => ({
@@ -604,10 +630,13 @@ async function checkSuggestedEventAtDispatch(
     || ["CANCELED", "CANCELLED"].includes(event.status.trim().toUpperCase())
     || event.status.trim().toUpperCase() !== "PUBLISHED"
   ) {
+    logDispatchCheck(options.messageId, "event_active", "blocked", performance.now());
     return sessionChange("canceled");
   }
+  logDispatchCheck(options.messageId, "event_active", "pass", performance.now());
   if (event.name !== program.name) return sessionChange("event_changed");
 
+  const capacityStarted = performance.now();
   const signupOptions = { ...options, signupsCache: new Map<string, Promise<any[]>>() };
   const signups = await fetchEventSignups(candidate.club_id, live, program.event_id, signupOptions);
   if (signups.some((signup) => !signup || typeof signup !== "object" || typeof signup.status !== "string")) {
@@ -615,7 +644,9 @@ async function checkSuggestedEventAtDispatch(
   }
   const spotsRemaining = calculateRetentionOpenSpots(event.totalTeams, signups);
   if (spotsRemaining === null) failClosed("suggested-event lookup is missing valid capacity");
+  logDispatchCheck(options.messageId, "capacity", spotsRemaining < 1 ? "blocked" : "pass", capacityStarted);
   if (spotsRemaining < 1) return sessionChange("full");
+  logDispatchCheck(options.messageId, "start_time", newStartTime !== oldStartTime ? "blocked" : "pass", performance.now());
   if (newStartTime !== oldStartTime) return sessionChange("start_time_changed");
   if (program.signup_url !== `${live.base}/community/events/${event.id}`) return sessionChange("event_changed");
   return null;
@@ -680,7 +711,16 @@ export async function recheckLtpSequenceDispatch(
     cutoff = await stepOneRealSentAt(candidate);
   }
 
-  const booked = await checkLtpBookingSince(candidate.club_id, candidate.player_id, cutoff, batchOptions);
+  const bookingStarted = performance.now();
+  let booked: LtpBookedExit | null;
+  try {
+    booked = await checkLtpBookingSince(candidate.club_id, candidate.player_id, cutoff, batchOptions);
+    logDispatchCheck(batchOptions.messageId, "booking_attendance_and_upcoming", booked ? "blocked" : "pass", bookingStarted,
+      { snapshot_used: !!batchOptions.bookingSnapshot });
+  } catch (error) {
+    logDispatchCheck(batchOptions.messageId, "booking_attendance_and_upcoming", "error", bookingStarted);
+    throw error;
+  }
   if (booked) return { valid: false, reason: null, booked, cutoff };
 
   const program = context.next_program;
@@ -706,9 +746,11 @@ export async function recheckLtpSequenceDispatch(
     if (code !== "LTPNEXT25") {
       failClosed("step 1 does not contain the verified LTPNEXT25 offer");
     }
+    const couponStarted = performance.now();
     const validation = await validateRetentionCoupon(candidate.club_id, code, (input, init) =>
       (batchOptions.client ?? defaultBatchClient).fetch(input, init),
     );
+    logDispatchCheck(batchOptions.messageId, "ltp_coupon", validation.valid ? "pass" : "blocked", couponStarted);
     if (!validation.valid) failClosed(validation.warning ?? "LTPNEXT25 is no longer valid");
   } else {
     const bodyText = JSON.stringify({

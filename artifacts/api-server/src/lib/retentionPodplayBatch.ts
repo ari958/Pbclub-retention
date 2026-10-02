@@ -40,6 +40,8 @@ export interface RetentionPodplayBatchOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   minimumSpacingMs?: number;
   timeoutSignalFactory?: (timeoutMs: number) => AbortSignal;
+  maxConcurrentRequests?: number;
+  maxRequestsPerMinute?: number;
 }
 
 const defaultSleep = (milliseconds: number) =>
@@ -95,22 +97,71 @@ export class RetentionPodplayBatchClient {
   private readonly sleep: (milliseconds: number) => Promise<void>;
   private readonly minimumSpacingMs: number;
   private readonly timeoutSignalFactory: (timeoutMs: number) => AbortSignal;
+  private readonly concurrency: number;
+  private active = 0;
+  private pending: Array<() => void> = [];
+  private startQueue: Promise<void> = Promise.resolve();
+  private lastStartedAt: number | null = null;
+  private cooldownUntil = 0;
+  private readonly perMinute: number | null;
+  private starts: number[] = [];
 
   constructor(options: RetentionPodplayBatchOptions = {}) {
     this.fetchImpl = options.fetchImpl ?? ((input, init) => globalThis.fetch(input, init));
     this.sleep = options.sleep ?? defaultSleep;
     this.minimumSpacingMs = options.minimumSpacingMs ?? 400;
     this.timeoutSignalFactory = options.timeoutSignalFactory ?? ((timeoutMs) => AbortSignal.timeout(timeoutMs));
+    this.concurrency = Math.max(1, Math.min(8, Math.floor(options.maxConcurrentRequests ?? 1)));
+    this.perMinute = options.maxRequestsPerMinute ?? null;
+    if (this.perMinute !== null && (!Number.isSafeInteger(this.perMinute) || this.perMinute < 1)) {
+      throw new Error("PodPlay per-minute budget must be a positive integer");
+    }
   }
 
   /** Fetch-client override shape usable by coupon validation helpers. */
   fetch: RetentionPodplayFetch = (input, init) => {
+    if (this.concurrency > 1) {
+      return new Promise<Response>((resolve, reject) => {
+        const run = () => {
+          this.active++;
+          void this.fetchWithRetry(input, init).then(resolve, reject).finally(() => {
+            this.active--;
+            this.pending.shift()?.();
+          });
+        };
+        if (this.active < this.concurrency) run();
+        else this.pending.push(run);
+      });
+    }
     const result = this.queue.then(() => this.fetchWithRetry(input, init));
     this.queue = result.then(() => undefined, () => undefined);
     return result;
   };
 
   private async startSpacedRequest(): Promise<void> {
+    if (this.concurrency > 1 || this.perMinute !== null) {
+      const start = this.startQueue.then(async () => {
+        // Serialize admission only. A rolling minute budget permits bounded
+        // bursts without exceeding the provider's requests/minute allowance.
+        for (;;) {
+          const now = Date.now();
+          this.starts = this.starts.filter((at) => at > now - 60_000);
+          const quotaReadyAt = this.perMinute !== null && this.starts.length >= this.perMinute
+            ? this.starts[0] + 60_000 : now;
+          const wait = Math.max(
+            quotaReadyAt, this.cooldownUntil,
+            (this.lastStartedAt ?? (now - this.minimumSpacingMs)) + this.minimumSpacingMs,
+          ) - now;
+          if (wait <= 0) break;
+          await this.sleep(wait);
+        }
+        this.lastStartedAt = Date.now();
+        if (this.perMinute !== null) this.starts.push(this.lastStartedAt);
+      });
+      this.startQueue = start.catch(() => {});
+      await start;
+      return;
+    }
     if (this.lastRequestCompletedAt !== null) {
       const elapsed = Date.now() - this.lastRequestCompletedAt;
       const remaining = this.minimumSpacingMs - elapsed;
@@ -160,6 +211,7 @@ export class RetentionPodplayBatchClient {
       const retryNumber = attempt;
       const retryAfter = retryAfterMilliseconds(response.headers.get("retry-after"), Date.now());
       const waitMs = retryAfter ?? 1000 * (2 ** (retryNumber - 1));
+      if (this.concurrency > 1 || this.perMinute !== null) this.cooldownUntil = Math.max(this.cooldownUntil, Date.now() + waitMs);
       this.telemetry.retries.push({
         path,
         attempt,

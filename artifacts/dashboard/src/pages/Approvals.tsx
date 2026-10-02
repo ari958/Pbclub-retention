@@ -281,7 +281,7 @@ export default function Approvals() {
 
   const setKill = async (enabled: boolean) => {
     setKsBusy(true);
-    try { await retentionApi.killSwitch(slug, enabled); toast.success(enabled ? "Sending paused" : "Sending resumed. Existing approvals will go out on schedule."); setConfirmResume(false); await load(); }
+    try { await retentionApi.killSwitch(slug, enabled, operator); toast.success(enabled ? "Sending paused" : "Sending resumed. Existing approvals will go out on schedule."); setConfirmResume(false); await load(); }
     catch (e) { toast.error(e instanceof Error ? e.message : "Kill switch update failed"); }
     finally { setKsBusy(false); }
   };
