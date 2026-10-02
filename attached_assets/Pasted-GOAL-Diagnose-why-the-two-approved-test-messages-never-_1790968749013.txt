@@ -1,0 +1,45 @@
+GOAL
+Diagnose why the two approved test messages never arrived on the operator's phone. READ-ONLY: do not retry, re-approve, resume, change settings, or modify any rows. Report facts with timestamps.
+
+1. RUNTIME CONFIGURATION (as actually loaded by the running API process, not just as set in Secrets)
+- SMS_LIVE: the value the running process sees, and when the API was last restarted.
+- SMS_TEST_OVERRIDE_TO: whether it is set, whether it is valid E.164, and its last 4 digits only.
+- RETENTION_ONLY_MODE, and the clubs.sms_kill_switch / paused state right now, with timestamps of every change since the operator began the test.
+- Which Twilio sender is used: TWILIO_MESSAGING_SERVICE_SID or TWILIO_PHONE_NUMBER (identify which, without revealing secrets).
+
+2. PER-MESSAGE TRACE
+For each candidate the operator approved (expected: 2 for delivery, plus 1 approved while paused for the kill-switch test), report:
+- player name, candidate status, sequence_status, and any reason or error fields
+- the message row: status, approved_at, approved_by, scheduled_send_at, any claim/lock fields, sent_at, simulated, delivery kind, twilio_message_sid, delivery_status, error_code, error_message
+- whether the queue poller ever selected the row, and when
+- the result of every dispatch check with a timestamp: approval and exact-body match, kill switch, send window, event still active, open spots, startTime unchanged, booking check, LTPNEXT25 coupon check, phone and opt-out eligibility, stale-flag handling
+- the first check that blocked it, if any
+
+3. QUEUE POLLER
+- Is the poller running in the current process?
+- Its poll ticks since the test began: rows selected, rows dispatched, errors.
+- All job_logs and server log lines mentioning these message IDs, candidate IDs, or retention dispatch since the test began.
+
+4. PAUSE / RESUME TIMING
+The operator suspects they may have approved while sending was paused and resumed only after the scheduled send time had passed, and that dispatch doesn't recover after resume. Answer each of these from source code AND from the live data:
+- Was sending paused at the moment each draft was approved? Does approving while paused behave differently from approving while resumed (for example: rejected, scheduled anyway, or scheduled relative to approval time)?
+- Compare, for each message: approved_at, scheduled_send_at, the time resume was clicked, and the first poll tick after resume.
+- What happens to an approved message whose scheduled_send_at passes while sending is paused? Is it skipped, expired, marked failed, unscheduled, or claimed and released? Is it ever picked up again after resume?
+- Does the poller query or the dispatch path have any lower bound or staleness cutoff on scheduled_send_at (for example, ignoring rows scheduled more than N minutes ago), or any condition that excludes overdue rows?
+- When the poller hit these rows while paused, did it claim or lock them? If so, were the claims released on resume, or are the rows stuck in a claimed state?
+- Does resume itself trigger anything (re-scheduling, an immediate poll, clearing claims), or does it only flip the flag?
+- If this is the cause, state plainly whether approved messages scheduled during a pause are currently stranded, and describe the intended behavior that would fix it. Do NOT change anything.
+
+5. TWILIO (read-only API calls)
+- For any message with a twilio_message_sid: fetch it from Twilio and report status, error_code, error_message, to (last 4 digits only), from, and date_sent.
+- If no SID exists: report whether a Twilio API call was attempted, and the exact error returned.
+- Report the A2P 10DLC registration status for the sending number or messaging service: brand status and campaign status. State whether unregistered-traffic blocking (for example error 30034) applies.
+- Check whether the override number has opted out of this sender (error 21610, or a STOP received from that number).
+
+6. TIMELINE AND ROOT CAUSE
+- Build a single ordered timeline from the operator's first setting change to now: setting changes, restarts, approvals, pause/resume clicks, poll ticks, claims, check results, Twilio calls, status callbacks.
+- State the root cause, supported by evidence, or rank the top candidates if it can't be determined. Include at minimum: (a) SMS_LIVE not loaded, (b) pause/resume timing stranding the messages, (c) a send-time check blocking, (d) Twilio or carrier rejection.
+- List exactly what would need to change to make the next test succeed. Do NOT make any of those changes.
+
+7. CURRENT SAFETY STATE
+- Confirm current SMS_LIVE, the paused/kill switch state, and every message that is approved but unsent, including the kill-switch test draft. Flag anything that would dispatch if sending were resumed, and how soon.
