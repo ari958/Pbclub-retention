@@ -1,0 +1,34 @@
+GOAL
+Test ltp_followup step 2 end to end without waiting 7 days. Add test-only tooling for this. Do not approve, send, or change sending settings; the operator will do the approval and send.
+
+1. TEST-ONLY STEP 1 BACKDATE
+- Add an operator action, available ONLY when SMS_TEST_OVERRIDE_TO is set (refuse with 403 otherwise), that takes one candidate whose step 1 was a test send and:
+  - marks that step 1 as qualifying for step 2 in test mode
+  - backdates its effective step 1 send time by step2_gap_days (7)
+  - records an audit entry: who, when, candidate, original and backdated times
+- Never modify real (non-test) sends. Never make a test send count toward real step 2 eligibility outside test mode.
+- Use Joe Stephenson and Ke Shi (both have test step 1 sends).
+
+2. RUN THE STEP 2 TRIGGER
+- Run the step 2 drafting job for those two candidates only.
+- Expected for each: a step 2 draft with no promo code and no percentage, fresh next-program lookup with capacity and time checks, step 1 text and date shown on the card, sequence_status still active.
+- If either player has booked or attended anything since step 1, expected result is exited_booked with no draft. Report which happened and why.
+
+3. BOOKING EXIT TEST
+- Add a test-only simulated-booking flag on a candidate, available ONLY when SMS_TEST_OVERRIDE_TO is set, audited the same way. When set, the booking check treats the player as booked.
+- Apply it to Ke AFTER Ke's step 2 draft exists. Then confirm:
+  - at dispatch, Ke's step 2 is blocked, the sequence becomes exited_booked, and the draft is withdrawn
+  - nothing is sent for Ke
+- Leave Joe without the flag so his step 2 can be approved and delivered by the operator.
+
+4. AUTOMATED TESTS
+- Backdate refused when override is not set.
+- Backdated test step 1 produces a step 2 draft; real-mode logic unaffected.
+- Step 2 text rejected if it contains a code or percentage.
+- Booking found at drafting → exited_booked, no draft.
+- Booking found at dispatch → blocked, exited_booked, draft withdrawn.
+- Reply received → paused_reply, no further drafts.
+- Step 2 delivered → completed; no step 3 ever created.
+
+5. REPORT
+Paste: test results; Joe's and Ke's step 2 status, variant, suggested session, and full text; the audit entries; and confirmation that nothing was approved, scheduled, or sent and sending settings are unchanged.
