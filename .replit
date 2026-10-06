@@ -2,7 +2,7 @@ modules = ["nodejs-24", "python-3.11", "postgresql-16"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "vm"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]
@@ -43,3 +43,6 @@ REQUIRE_MARKETING_CONSENT = "false"
 RETENTION_ONLY_MODE = "true"
 VITE_NAV_MODE = "retention"
 DEFAULT_CLUB_SLUG = "pb-club"
+
+[userenv.development]
+RUN_BACKGROUND_JOBS = "false"

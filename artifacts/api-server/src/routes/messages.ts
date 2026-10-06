@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
 import {
@@ -467,6 +468,9 @@ router.post("/messages/webhook/status", async (req, res) => {
   }
 
   req.log.info({ MessageSid, MessageStatus, event }, "Twilio status webhook received");
+  if (MessageStatus === "failed" || MessageStatus === "undelivered") {
+    void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
+  }
 
   // Link click event
   const isClick =

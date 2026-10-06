@@ -4,6 +4,8 @@ import { startScheduler } from "./lib/scheduler";
 import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
 import { getDefaultClubSlug, resolveClubSlug } from "./lib/clubResolver";
+import { backgroundJobsEnabled } from "./lib/backgroundPolicy";
+import { startOperatorWatchdog } from "./lib/operatorMonitoring";
 
 const rawPort = process.env["PORT"];
 
@@ -14,6 +16,12 @@ if (!rawPort) {
 }
 
 const port = Number(rawPort);
+if (process.env.NODE_ENV === "production") {
+  if (!process.env.OPERATOR_PASSWORD || process.env.OPERATOR_PASSWORD.length < 16) throw new Error("Production requires OPERATOR_PASSWORD with at least 16 characters");
+  const publicUrl = process.env.PUBLIC_API_URL;
+  if (!publicUrl || !publicUrl.startsWith("https://") || new URL(publicUrl).hostname.endsWith(".replit.dev")) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin, not the workspace URL");
+  if (backgroundJobsEnabled() && !process.env.ALERT_OPERATOR_TO) throw new Error("Production background jobs require ALERT_OPERATOR_TO");
+}
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
@@ -107,7 +115,12 @@ app.listen(port, async (err) => {
     process.exit(1);
   }
 
-  logger.info({ port, sms_live: process.env.SMS_LIVE === "true", process_started_at: new Date().toISOString() }, "Server listening");
+  logger.info({ port, environment: process.env.NODE_ENV ?? "development",
+    RUN_BACKGROUND_JOBS: process.env.RUN_BACKGROUND_JOBS ?? "false", background_jobs_enabled: backgroundJobsEnabled(),
+    sms_live: process.env.SMS_LIVE === "true",
+    override_set: !!process.env.SMS_TEST_OVERRIDE_TO?.trim(),
+    operator_login_configured: !!process.env.OPERATOR_PASSWORD,
+    process_started_at: new Date().toISOString() }, "Server listening");
 
   try {
     const defaultSlug = getDefaultClubSlug();
@@ -118,7 +131,16 @@ app.listen(port, async (err) => {
     process.exit(1);
   }
 
-  await seedAllClubTemplates();
-  startScheduler();
-  startQueuePoller();
+  if (backgroundJobsEnabled()) {
+    const { error: lockError } = await supabase.from("operator_job_locks").select("name").limit(1);
+    const { error: runtimeError } = await supabase.from("operator_runtime").select("name").limit(1);
+    if (lockError || runtimeError) {
+      logger.fatal({ lock_error: lockError?.message, runtime_error: runtimeError?.message }, "Install migration 017 before enabling background jobs");
+      process.exit(1);
+    }
+    await seedAllClubTemplates();
+    startScheduler();
+    startQueuePoller();
+    startOperatorWatchdog();
+  } else logger.info("Background jobs disabled; no scheduler, queue, retention triggers, or watchdog started");
 });

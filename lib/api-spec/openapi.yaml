@@ -77,7 +77,7 @@ paths:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
+      description: Public aggregate operational health; no player data. Returns 503 when database or runtime schema is unavailable.
       responses:
         "200":
           description: Healthy
@@ -85,6 +85,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+        "503":
+          description: Degraded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /operator/login:
+    get:
+      operationId: operatorLoginPage
+      summary: Public server-rendered operator login form
+      responses:
+        "200": {description: Login HTML}
+    post:
+      operationId: operatorLogin
+      summary: Rate-limited single-operator password login
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: {type: string}
+                label: {type: string, maxLength: 80}
+      responses:
+        "303": {description: Secure httpOnly SameSite Strict session cookie and dashboard redirect}
+        "401": {description: Invalid password}
+        "429": {description: Too many attempts}
+        "503": {description: Operator secret not configured}
+  /operator/session:
+    get:
+      operationId: operatorSession
+      summary: Current operator session
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [authenticated, actor]
+                properties:
+                  authenticated: {type: boolean}
+                  actor: {type: string}
+        "401": {description: No operator session}
+  /operator/logout:
+    post:
+      operationId: operatorLogout
+      summary: Revoke operator session and clear cookie
+      responses:
+        "303": {description: Login redirect}
   /retention/approvals:
     get:
       operationId: listRetentionApprovals
@@ -498,6 +550,18 @@ components:
       properties:
         status:
           type: string
+        db_reachable: {type: boolean}
+        runtime_schema_ready: {type: boolean}
+        background_jobs: {type: boolean}
+        last_queue_tick_at: {type: [string, "null"], format: date-time}
+        last_nightly_sync:
+          type: object
+          properties:
+            result: {type: string}
+            at: {type: [string, "null"], format: date-time}
+        sms_live: {type: boolean}
+        paused: {type: [boolean, "null"]}
+        alerts_configured: {type: boolean}
       required:
         - status
     RetentionDraftUpdate:

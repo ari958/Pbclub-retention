@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { backgroundJobsEnabled } from "../lib/backgroundPolicy";
 // @ts-ignore — plain JS module
 import { importAllPlayers, syncDuprRatings } from "../importAllPlayers.js";
 // @ts-ignore — plain JS module
@@ -54,8 +55,8 @@ router.post("/import/players", requireClub, async (req, res) => {
     startedAt: new Date().toISOString(),
   });
 
-  const heartbeat = setInterval(() => { void heartbeatJob(JOB_IMPORT_PLAYERS); }, 30_000);
-  heartbeat.unref();
+  const heartbeat = backgroundJobsEnabled() ? setInterval(() => { void heartbeatJob(JOB_IMPORT_PLAYERS); }, 30_000) : undefined;
+  heartbeat?.unref();
   importAllPlayers(
     clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_PLAYERS, msg),
@@ -207,8 +208,8 @@ router.post("/import/dupr", requireClub, async (req, res) => {
     startedAt: new Date().toISOString(),
   });
 
-  const heartbeat = setInterval(() => { void heartbeatJob(JOB_IMPORT_DUPR); }, 30_000);
-  heartbeat.unref();
+  const heartbeat = backgroundJobsEnabled() ? setInterval(() => { void heartbeatJob(JOB_IMPORT_DUPR); }, 30_000) : undefined;
+  heartbeat?.unref();
   syncDuprRatings(
     clubId,
     (msg: string) => appendJobLog(JOB_IMPORT_DUPR, msg),

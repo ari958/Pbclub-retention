@@ -5,7 +5,18 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { HealthStatusLastNightlySync } from "./healthStatusLastNightlySync";
 
 export interface HealthStatus {
   status: string;
+  db_reachable?: boolean;
+  runtime_schema_ready?: boolean;
+  background_jobs?: boolean;
+  /** @nullable */
+  last_queue_tick_at?: Date | null;
+  last_nightly_sync?: HealthStatusLastNightlySync;
+  sms_live?: boolean;
+  /** @nullable */
+  paused?: boolean | null;
+  alerts_configured?: boolean;
 }

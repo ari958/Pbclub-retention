@@ -54,11 +54,32 @@ export const DraftLtpTestStep2Response = zod.record(
 );
 
 /**
- * Returns server health status
+ * Public aggregate operational health; no player data. Returns 503 when database or runtime schema is unavailable.
  * @summary Health check
  */
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
+  db_reachable: zod.boolean().optional(),
+  runtime_schema_ready: zod.boolean().optional(),
+  background_jobs: zod.boolean().optional(),
+  last_queue_tick_at: zod.coerce.date().nullish(),
+  last_nightly_sync: zod
+    .object({
+      result: zod.string().optional(),
+      at: zod.coerce.date().nullish(),
+    })
+    .optional(),
+  sms_live: zod.boolean().optional(),
+  paused: zod.boolean().nullish(),
+  alerts_configured: zod.boolean().optional(),
+});
+
+/**
+ * @summary Current operator session
+ */
+export const OperatorSessionResponse = zod.object({
+  authenticated: zod.boolean(),
+  actor: zod.string(),
 });
 
 /**

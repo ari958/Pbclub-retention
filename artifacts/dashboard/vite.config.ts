@@ -3,6 +3,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
+import { operatorGate } from "./operatorGate";
 
 const rawPort = process.env.PORT;
 
@@ -43,6 +44,7 @@ export default defineConfig({
     "import.meta.env.VITE_DEFAULT_CLUB_SLUG": JSON.stringify(defaultClubSlug),
   },
   plugins: [
+    operatorGate(),
     react(),
     tailwindcss(),
     runtimeErrorOverlay(),

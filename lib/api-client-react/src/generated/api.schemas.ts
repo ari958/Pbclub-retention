@@ -5,8 +5,24 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type HealthStatusLastNightlySync = {
+  result?: string;
+  /** @nullable */
+  at?: string | null;
+};
+
 export interface HealthStatus {
   status: string;
+  db_reachable?: boolean;
+  runtime_schema_ready?: boolean;
+  background_jobs?: boolean;
+  /** @nullable */
+  last_queue_tick_at?: string | null;
+  last_nightly_sync?: HealthStatusLastNightlySync;
+  sms_live?: boolean;
+  /** @nullable */
+  paused?: boolean | null;
+  alerts_configured?: boolean;
 }
 
 export interface RetentionDraftUpdate {
@@ -667,6 +683,17 @@ export type DraftLtpTestStep2Body = {
 };
 
 export type DraftLtpTestStep2200 = { [key: string]: unknown };
+
+export type OperatorLoginBody = {
+  password: string;
+  /** @maxLength 80 */
+  label?: string;
+};
+
+export type OperatorSession200 = {
+  authenticated: boolean;
+  actor: string;
+};
 
 export type ListRetentionApprovalsParams = {
   /**

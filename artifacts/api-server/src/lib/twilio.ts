@@ -17,6 +17,7 @@ import {
   type LtpBookingBatchOptions,
 } from "./ltpSequenceLifecycle";
 import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
+import { alertOperator } from "./operatorMonitoring";
 
 export function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -157,6 +158,7 @@ export function isTwilio21610(error: unknown): boolean {
 export async function recordSmsDispatchFailure(error: unknown): Promise<boolean> {
   const claim = getSmsDispatchClaim(error);
   if (!claim) return false;
+  void alertOperator(`send-failed:${claim.messageId}`, "An SMS dispatch failed. Check dispatch logs; do not retry an ambiguous provider submission without reconciliation.");
   const code = twilioErrorCode(error);
 
   let failureQuery = supabase
@@ -348,7 +350,7 @@ async function sendApprovedMessage(
   // per-club Twilio numbers are a future milestone.
   const from = process.env.TWILIO_PHONE_NUMBER;
   const statusCallbackUrl = process.env.PUBLIC_API_URL
-    ? `${process.env.PUBLIC_API_URL}/api/messages/webhook/status`
+    ? `${process.env.PUBLIC_API_URL.replace(/\/$/, "")}/api/messages/webhook/status`
     : undefined;
 
   if (smsLive) {
@@ -688,6 +690,7 @@ async function sendApprovedMessage(
       }
       throw error;
     }
+    void alertOperator(`send-failed:${context.messageId}`, "An SMS dispatch failed after claim. Check dispatch logs before retrying.");
     throw new SmsDispatchClaimedError(
       error?.message ?? "SMS dispatch failed after the message was claimed",
       context.messageId,

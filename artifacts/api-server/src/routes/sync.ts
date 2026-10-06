@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { backgroundJobsEnabled } from "../lib/backgroundPolicy";
 import { z } from "zod";
 // @ts-ignore — plain JS module
 import { syncSinglePlayer } from "../syncPlayerAttendance.js";
@@ -308,6 +309,7 @@ router.post("/sync/events/cancel", async (_req, res) => {
 const JOB_NIGHTLY = "nightly_sync";
 
 router.post("/sync/nightly", async (req, res) => {
+  if (!backgroundJobsEnabled()) return res.status(409).json({ error: "Background jobs are disabled in this process" });
   const current = await getJob(JOB_NIGHTLY);
   if (current.status === "running") {
     return res.status(409).json({ error: "Nightly sync already running" });

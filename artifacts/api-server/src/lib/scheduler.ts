@@ -16,6 +16,9 @@ import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 import { isRetentionOnlyMode } from "./retentionPolicy";
 import { generateDueLtpStep2Drafts, generateRetentionDrafts } from "./retentionEngine";
+import { backgroundJobsEnabled } from "./backgroundPolicy";
+import { withBackgroundLock } from "./backgroundLock";
+import { recordRuntime, alertOperator } from "./operatorMonitoring";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -70,6 +73,16 @@ function isTimeToRun(scheduledTime: string, timezone: string): boolean {
 }
 
 export async function runNightlyChain(todayStr?: string, incrementalDaysOverride?: number): Promise<void> {
+  if (!backgroundJobsEnabled()) throw new Error("Background jobs are disabled");
+  try {
+    await withBackgroundLock("nightly-chain", () => runNightlyChainUnlocked(todayStr, incrementalDaysOverride));
+  } catch (error) {
+    await alertOperator(`nightly-start:${new Date().toISOString().slice(0, 10)}`, "Nightly sync could not start or finish. Check worker and database logs.");
+    throw error;
+  }
+}
+
+async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverride?: number): Promise<void> {
   const INCREMENTAL_DAYS_EFFECTIVE = incrementalDaysOverride ?? INCREMENTAL_DAYS;
   logger.info("[scheduler] Starting nightly chain");
   await startJob(JOB_NIGHTLY);
@@ -353,17 +366,21 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
     );
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
     logger.info("[scheduler] Nightly chain completed");
+    await recordRuntime("nightly", "done");
   } catch (err: any) {
     const wasCancelled = err.name === "CancelledError";
     await finishJob(JOB_NIGHTLY, wasCancelled ? "cancelled" : "error", undefined, err.message);
     await appendJobLog(JOB_NIGHTLY, `Nightly chain ${wasCancelled ? "cancelled" : "failed"}: ${err.message}`);
     logger.error({ err }, "[scheduler] Nightly chain ended with error");
+    await recordRuntime("nightly", wasCancelled ? "cancelled" : "error");
+    await alertOperator(`nightly:${new Date().toISOString().slice(0, 10)}`, "Nightly sync failed or was cancelled. Check job logs.");
   } finally {
     clearInterval(heartbeat);
   }
 }
 
 export function startScheduler(): void {
+  if (!backgroundJobsEnabled()) return;
   logger.info("[scheduler] Scheduler started — checking every 60s");
 
   // Feedback poller — retained but parked by RETENTION_ONLY_MODE.

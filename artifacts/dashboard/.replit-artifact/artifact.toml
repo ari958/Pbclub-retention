@@ -18,13 +18,7 @@ localPort = 23183
 run = "pnpm --filter @workspace/dashboard run dev"
 
 [services.production]
-build = [ "pnpm", "--filter", "@workspace/dashboard", "run", "build" ]
-publicDir = "artifacts/dashboard/dist/public"
-serve = "static"
-
-[[services.production.rewrites]]
-from = "/*"
-to = "/index.html"
+run = ["node", "artifacts/dashboard/production-gateway.mjs"]
 
 [services.env]
 PORT = "23183"

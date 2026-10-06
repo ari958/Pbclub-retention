@@ -29,6 +29,8 @@ import type {
   LtpTestAction200,
   LtpTestActionBody,
   LtpTestActionParams,
+  OperatorLoginBody,
+  OperatorSession200,
   RegenerateRetentionDraft409,
   RegenerateRetentionDraftParams,
   RegenerateRetentionLtpBatch400,
@@ -296,7 +298,7 @@ export const useDraftLtpTestStep2 = <
 };
 
 /**
- * Returns server health status
+ * Public aggregate operational health; no player data. Returns 503 when database or runtime schema is unavailable.
  * @summary Health check
  */
 export const getHealthCheckUrl = () => {
@@ -318,7 +320,7 @@ export const getHealthCheckQueryKey = () => {
 
 export const getHealthCheckQueryOptions = <
   TData = Awaited<ReturnType<typeof healthCheck>>,
-  TError = ErrorType<unknown>,
+  TError = ErrorType<HealthStatus>,
 >(options?: {
   query?: UseQueryOptions<
     Awaited<ReturnType<typeof healthCheck>>,
@@ -345,7 +347,7 @@ export const getHealthCheckQueryOptions = <
 export type HealthCheckQueryResult = NonNullable<
   Awaited<ReturnType<typeof healthCheck>>
 >;
-export type HealthCheckQueryError = ErrorType<unknown>;
+export type HealthCheckQueryError = ErrorType<HealthStatus>;
 
 /**
  * @summary Health check
@@ -353,7 +355,7 @@ export type HealthCheckQueryError = ErrorType<unknown>;
 
 export function useHealthCheck<
   TData = Awaited<ReturnType<typeof healthCheck>>,
-  TError = ErrorType<unknown>,
+  TError = ErrorType<HealthStatus>,
 >(options?: {
   query?: UseQueryOptions<
     Awaited<ReturnType<typeof healthCheck>>,
@@ -370,6 +372,332 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Public server-rendered operator login form
+ */
+export const getOperatorLoginPageUrl = () => {
+  return `/api/operator/login`;
+};
+
+export const operatorLoginPage = async (
+  options?: RequestInit,
+): Promise<void> => {
+  return customFetch<void>(getOperatorLoginPageUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getOperatorLoginPageQueryKey = () => {
+  return [`/api/operator/login`] as const;
+};
+
+export const getOperatorLoginPageQueryOptions = <
+  TData = Awaited<ReturnType<typeof operatorLoginPage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof operatorLoginPage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getOperatorLoginPageQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof operatorLoginPage>>
+  > = ({ signal }) => operatorLoginPage({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof operatorLoginPage>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type OperatorLoginPageQueryResult = NonNullable<
+  Awaited<ReturnType<typeof operatorLoginPage>>
+>;
+export type OperatorLoginPageQueryError = ErrorType<unknown>;
+
+/**
+ * @summary Public server-rendered operator login form
+ */
+
+export function useOperatorLoginPage<
+  TData = Awaited<ReturnType<typeof operatorLoginPage>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof operatorLoginPage>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getOperatorLoginPageQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Rate-limited single-operator password login
+ */
+export const getOperatorLoginUrl = () => {
+  return `/api/operator/login`;
+};
+
+export const operatorLogin = async (
+  operatorLoginBody: OperatorLoginBody,
+  options?: RequestInit,
+): Promise<unknown> => {
+  const formUrlEncoded = new URLSearchParams();
+  formUrlEncoded.append(`password`, operatorLoginBody.password);
+  if (operatorLoginBody.label !== undefined) {
+    formUrlEncoded.append(`label`, operatorLoginBody.label);
+  }
+
+  return customFetch<unknown>(getOperatorLoginUrl(), {
+    ...options,
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      ...options?.headers,
+    },
+    body: formUrlEncoded,
+  });
+};
+
+export const getOperatorLoginMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof operatorLogin>>,
+    TError,
+    { data: BodyType<OperatorLoginBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof operatorLogin>>,
+  TError,
+  { data: BodyType<OperatorLoginBody> },
+  TContext
+> => {
+  const mutationKey = ["operatorLogin"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof operatorLogin>>,
+    { data: BodyType<OperatorLoginBody> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return operatorLogin(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OperatorLoginMutationResult = NonNullable<
+  Awaited<ReturnType<typeof operatorLogin>>
+>;
+export type OperatorLoginMutationBody = BodyType<OperatorLoginBody>;
+export type OperatorLoginMutationError = ErrorType<void>;
+
+/**
+ * @summary Rate-limited single-operator password login
+ */
+export const useOperatorLogin = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof operatorLogin>>,
+    TError,
+    { data: BodyType<OperatorLoginBody> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof operatorLogin>>,
+  TError,
+  { data: BodyType<OperatorLoginBody> },
+  TContext
+> => {
+  return useMutation(getOperatorLoginMutationOptions(options));
+};
+
+/**
+ * @summary Current operator session
+ */
+export const getOperatorSessionUrl = () => {
+  return `/api/operator/session`;
+};
+
+export const operatorSession = async (
+  options?: RequestInit,
+): Promise<OperatorSession200> => {
+  return customFetch<OperatorSession200>(getOperatorSessionUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getOperatorSessionQueryKey = () => {
+  return [`/api/operator/session`] as const;
+};
+
+export const getOperatorSessionQueryOptions = <
+  TData = Awaited<ReturnType<typeof operatorSession>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof operatorSession>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getOperatorSessionQueryKey();
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof operatorSession>>> = ({
+    signal,
+  }) => operatorSession({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof operatorSession>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type OperatorSessionQueryResult = NonNullable<
+  Awaited<ReturnType<typeof operatorSession>>
+>;
+export type OperatorSessionQueryError = ErrorType<void>;
+
+/**
+ * @summary Current operator session
+ */
+
+export function useOperatorSession<
+  TData = Awaited<ReturnType<typeof operatorSession>>,
+  TError = ErrorType<void>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof operatorSession>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getOperatorSessionQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+/**
+ * @summary Revoke operator session and clear cookie
+ */
+export const getOperatorLogoutUrl = () => {
+  return `/api/operator/logout`;
+};
+
+export const operatorLogout = async (
+  options?: RequestInit,
+): Promise<unknown> => {
+  return customFetch<unknown>(getOperatorLogoutUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getOperatorLogoutMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof operatorLogout>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof operatorLogout>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["operatorLogout"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof operatorLogout>>,
+    void
+  > = () => {
+    return operatorLogout(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type OperatorLogoutMutationResult = NonNullable<
+  Awaited<ReturnType<typeof operatorLogout>>
+>;
+
+export type OperatorLogoutMutationError = ErrorType<void>;
+
+/**
+ * @summary Revoke operator session and clear cookie
+ */
+export const useOperatorLogout = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof operatorLogout>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof operatorLogout>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getOperatorLogoutMutationOptions(options));
+};
 
 /**
  * @summary List retention candidates by status with global status counts

@@ -105,3 +105,17 @@ mtime_ms = 1790882369784
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/a26f391e-f96f-4c91-804e-0cbcf1ae9161/cf4e46b0-30db-4b3d-9699-687ab760510d"
 storage_version_token = "1790882370640944"
 content_type = "text/html"
+
+[[outputs]]
+id = "G20apLTvVE3v_sQJ-6r6i"
+uri = "file://reports/production-deployment-preparation.html"
+type = "html"
+title = "Production deployment preparation report"
+description = "Implementation, verification results, secrets checklist, Twilio callback paths, Supabase read inventory, and step-by-step Reserved VM setup."
+logical_id = "0845b486-a9ec-4235-beec-2c8e05031ad4"
+content_hash = "sha256:8e56fe3b403c2ecc1184adf823d3c633566470f140d91c6ebbd7f85754d657a3"
+size = 16054
+mtime_ms = 1791322337563
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/0845b486-a9ec-4235-beec-2c8e05031ad4/25fed2aa-ff66-4660-9ac1-6e08a30658ce"
+storage_version_token = "1791322338149761"
+content_type = "text/html"

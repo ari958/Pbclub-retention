@@ -380,6 +380,11 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
           );
         })}
       </nav>
+      <form action="/api/operator/logout" method="post" style={{ padding: "12px 20px" }}>
+        <button type="submit" style={{ background: "transparent", color: "var(--text-tertiary)", border: "1px solid var(--border-dark)", borderRadius: 6, padding: "8px 14px", cursor: "pointer" }}>
+          Log out
+        </button>
+      </form>
 
       {!RETENTION && <div
         style={{

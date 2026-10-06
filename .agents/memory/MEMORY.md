@@ -22,3 +22,4 @@
 - [Retention SQL verification](retention-sql-verification.md) — compile and exercise migrations in isolated PostgreSQL fixtures; source-contract tests do not prove SQL validity or safe backfills.
 - [CLI runtime parity](frontend-test-runtime.md) — CLI scripts and tests can resolve mixed JS/TS and JSX differently from production; align the harness, not working imports.
 - [Live sending holds](sms-live-holds.md) — live-off preserves approvals; simulation resets need override, audit, and proof no provider delivery occurred.
+- [Background worker leases](background-locks.md) — Supabase REST cannot retain session advisory locks across long jobs; use owner-bound leases and fail-stop on renewal loss.

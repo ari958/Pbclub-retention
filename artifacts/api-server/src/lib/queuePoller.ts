@@ -14,6 +14,9 @@ import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
 import { buildLtpBookingSnapshot, createQueueBookingOptions, type LtpBookingSnapshot } from "./ltpBookingSnapshot";
 import { DispatchAudit } from "./dispatchAudit";
 import type { LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
+import { backgroundJobsEnabled } from "./backgroundPolicy";
+import { withBackgroundLock } from "./backgroundLock";
+import { recordRuntime, alertOperator } from "./operatorMonitoring";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
@@ -36,6 +39,20 @@ export interface QueueTickStats {
 }
 
 export async function runQueueTick(): Promise<QueueTickStats> {
+  // Existing offline transport fixtures call the tick directly; production never bypasses the lock.
+  if (process.env.NODE_ENV === "test") return runQueueTickUnlocked();
+  const empty = { processed: 0, sent: 0, rolled: 0, skipped: 0, failed: 0 };
+  if (!backgroundJobsEnabled()) return empty;
+  const result = await withBackgroundLock("sms-queue", async () => {
+    const value = await runQueueTickUnlocked();
+    await recordRuntime("queue", value.failed ? "error" : "ok");
+    if (value.failed) await alertOperator(`queue-failure:${new Date().toISOString().slice(0, 13)}`, "A queue dispatch failed. Check dispatch logs before retrying.");
+    return value;
+  });
+  return result.value ?? empty;
+}
+
+async function runQueueTickUnlocked(): Promise<QueueTickStats> {
   const stats: QueueTickStats = {
     processed: 0,
     sent: 0,
@@ -254,6 +271,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
 // ─── Poller ───────────────────────────────────────────────────────────────────
 
 export function startQueuePoller(): void {
+  if (!backgroundJobsEnabled()) return;
   let running = false;
 
   logger.info(

@@ -70,7 +70,8 @@ pnpm workspace monorepo. React+Vite+TS dashboard, Express 5 API server, Supabase
 - `/` and `/onboarding` open the default club's dashboard. In the dashboard artifact, its base path is `/dashboard/`, so the final URL is `/dashboard/c/pb-club/dashboard`.
 - `OnboardingGuard` and the wizard remain in the source tree but are not mounted. The stored `clubs.onboarded` value must not gate dashboard access or be rewritten to bypass onboarding.
 - `/api/onboarding/*` returns 404 while `RETENTION_ONLY_MODE=true`. The existing wizard/API implementation is parked for a later phase.
-- Retention navigation includes Dashboard and Approvals; the multi-club switcher is parked. Authentication and login are deferred.
+- Retention navigation includes Dashboard and Approvals; the multi-club switcher is parked. Operator password login gates pages, assets, and APIs; only login/session/logout, signed Twilio callbacks and aggregate health are public.
+- Production runs in one Reserved VM. Only production may enable `RUN_BACKGROUND_JOBS=true`; development must remain false to avoid duplicate work against the shared Supabase database. See `PRODUCTION_DEPLOYMENT.md` for manual setup and verification boundaries.
 - Dashboard reads are scoped to the active club, including messages with no conversation. This routing policy does not change SMS approval, dispatch, kill-switch, live-mode or operator-override rules.
 
 ### Preserved wizard implementation (currently parked)

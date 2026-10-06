@@ -1,0 +1,34 @@
+GOAL
+Prepare the app for a production Replit deployment. Implement and verify, then report. Do not deploy, approve, send, or change live sending settings.
+
+1. DEPLOYMENT TYPE
+- Configure for a Reserved VM deployment with exactly one instance (background jobs must run continuously; Autoscale is not acceptable).
+- Production build: API serves the built dashboard; confirm the production start command and port.
+- List every secret the deployment needs (names only), noting which differ from the dev workspace.
+
+2. BACKGROUND JOBS ONLY IN PRODUCTION
+- Add RUN_BACKGROUND_JOBS (default false). Queue poller, scheduler, nightly sync, retention triggers, and any other timers start only when it is exactly "true".
+- Dev workspace: false. Production deployment: true.
+- Log at startup: environment, RUN_BACKGROUND_JOBS, sms_live, override set yes/no.
+- Add a guard so two processes can't run the nightly chain or queue tick simultaneously (database lock), as a backstop.
+
+3. OPERATOR LOGIN (minimum viable)
+- Single operator password from a secret (OPERATOR_PASSWORD), session cookie (httpOnly, secure, sameSite), logout, rate-limited login attempts.
+- Gate everything: dashboard pages, static assets, and all /api routes, EXCEPT Twilio webhooks and the health check.
+- Record the logged-in session as the approver on approvals and pause/resume (operator label still allowed).
+
+4. TWILIO WEBHOOKS
+- Validate the X-Twilio-Signature on every Twilio webhook using the production public URL; reject invalid requests.
+- Report the exact production webhook URLs (status callback, inbound) the operator must set in the Twilio console, and confirm PUBLIC_API_URL drives them.
+- Confirm inbound STOP sets opted_out and exits active sequences; replies set paused_reply.
+
+5. HEALTH AND ALERTS
+- /api/healthz returns: DB reachable, last queue tick time, last nightly sync result and time, live/paused state. No auth, no player data.
+- Alert the operator by email or SMS-to-operator (whichever is simpler with existing services) when: nightly sync fails or doesn't run, no queue tick for 15+ minutes, any send fails, or the kill switch changes.
+
+6. SUPABASE EXPOSURE (report only, don't change yet)
+- List every direct dashboard-to-Supabase read and the tables it touches.
+- Estimate the work to move all of them behind authenticated API routes and revoke anon SELECT.
+
+7. REPORT
+Test results, the deployment checklist for the operator (step by step: create Reserved VM deployment, set secrets, set Twilio URLs, set dev RUN_BACKGROUND_JOBS=false, verify healthz, verify login), and confirmation that nothing was deployed, approved, or sent.
