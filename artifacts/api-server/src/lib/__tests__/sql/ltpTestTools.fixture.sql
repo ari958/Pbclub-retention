@@ -7,7 +7,7 @@ CREATE TABLE public.players(id uuid PRIMARY KEY,club_id uuid,opted_out boolean D
 CREATE TABLE public.messages(
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),player_id uuid,body text,status text,
   direction text,sent_by text,approved_at timestamptz,approved_by text,approved_body text,
-  scheduled_send_at timestamptz,sent_at timestamptz,simulated boolean DEFAULT false,
+  scheduled_send_at timestamptz,sent_at timestamptz DEFAULT now(),simulated boolean DEFAULT false,
   retention_delivery_kind text,dispatch_claimed_at timestamptz,dispatch_token uuid,
   delivery_status text,delivered_at timestamptz,error_message text
 );

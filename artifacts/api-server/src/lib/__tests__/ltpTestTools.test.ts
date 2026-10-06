@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { supabase } from "../supabaseClient";
-import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride } from "../ltpTestTools";
+import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride, normalizeCreatedLtpTestDrafts } from "../ltpTestTools";
 import { stepOneRealSentAt, recheckLtpSequenceDispatch } from "../ltpSequenceLifecycle";
 import { buildLtpStepText } from "../ltpPhraseBuilder";
 import { validateLtpSequenceText } from "../retentionText";
@@ -79,6 +79,44 @@ test("step 2 no-program copy has no promotion; code and percentage edits are rej
   for (const promotion of ["Use code LTPNEXT25.", "25% off.", "25 percent off."]) {
     assert.ok(validateLtpSequenceText(`${promotion} ${built.body}`, built.context, built.context.ltp_text!).length > 0);
   }
+});
+
+test("legacy creation-time defaults are cleared only on verified unapproved test drafts", async () => {
+  const row = { id: "draft", message_id: "pending-message", player_id: "player", club_id: "club",
+    sequence_id: "sequence", step: 2, status: "drafted", created_at: sentAt, context: { ltp_test_mode: true } };
+  let updates = 0;
+  let delivered = false;
+  let guards: Array<[string, unknown]> = [];
+  try {
+    process.env.SMS_TEST_OVERRIDE_TO = "configured-test-fixture";
+    supabase.rpc = (async (name: string, args: any) => {
+      assert.equal(name, "retention_ltp_test_rpc"); assert.equal(args.p_operation, "due");
+      return { data: [], error: null };
+    }) as any;
+    supabase.from = ((table: string) => {
+      let updating = false;
+      const q: any = { select: () => q, eq: (key: string, value: unknown) => { guards.push([key,value]); return q; },
+        in: () => q, is: (key: string, value: unknown) => { guards.push([key,value]); return q; },
+        update: (values: unknown) => { updating = true; updates++; assert.deepEqual(values, { sent_at: null }); return q; },
+        maybeSingle: async () => ({ data: updating ? { id: "pending-message" } : {
+          id: "pending-message", status: delivered ? "sent" : "pending", sent_at: sentAt,
+          approved_at: null, scheduled_send_at: null, dispatch_claimed_at: null,
+          retention_delivery_kind: null, delivery_status: null, delivered_at: null,
+        }, error: null }),
+        then: (resolve: any, reject: any) => Promise.resolve({ data: [{ candidate_id: "source" }], error: null }).then(resolve,reject) };
+      return q;
+    }) as any;
+    await normalizeCreatedLtpTestDrafts("club", [row]);
+    assert.equal(updates, 1);
+    assert.ok(guards.some(([key,value]) => key === "status" && value === "pending"));
+    for (const key of ["approved_at","scheduled_send_at","dispatch_claimed_at","retention_delivery_kind","delivery_status","delivered_at"]) {
+      assert.ok(guards.some(([field,value]) => field === key && value === null));
+    }
+    delivered = true;
+    await assert.rejects(normalizeCreatedLtpTestDrafts("club", [row]), /evidence/);
+    await assert.rejects(normalizeCreatedLtpTestDrafts("club", [{ ...row, context: {} }]), /Only newly/);
+    assert.equal(updates, 1);
+  } finally { restore(); }
 });
 
 test("attendance found during test drafting exits the sequence without saving any step-2 draft", async () => {

@@ -39,10 +39,13 @@ BEGIN
   result:=public.retention_ltp_test_rpc(club,'due',jsonb_build_object('candidate_ids',jsonb_build_array(step1)),true);
   PERFORM public.fixture_assert(jsonb_array_length(result)=1 AND result->0->>'step1_delivery_kind'='test','backdated test step 1 is due only in test job');
   PERFORM public.fixture_assert(public.retention_sequence_due_step2(club)='[]'::jsonb,'normal due job unaffected by test backdate');
-  UPDATE public.retention_sequences SET sequence_status='paused_reply' WHERE id='00000000-0000-4000-8000-000000000006';
+   result:=public.retention_sequence_transition(club,'00000000-0000-4000-8000-000000000002',
+     'ltp_followup','paused_reply','player_reply',NULL);
+   PERFORM public.fixture_assert(result->>'sequence_status'='paused_reply','reply transition pauses the sequence');
   result:=public.retention_ltp_test_rpc(club,'due',jsonb_build_object('candidate_ids',jsonb_build_array(step1)),true);
   PERFORM public.fixture_assert(result='[]'::jsonb,'reply pause prevents another draft');
-  UPDATE public.retention_sequences SET sequence_status='active' WHERE id='00000000-0000-4000-8000-000000000006';
+   UPDATE public.retention_sequences SET sequence_status='active',exit_reason=NULL WHERE id='00000000-0000-4000-8000-000000000006';
+   UPDATE public.retention_candidates SET sequence_status='active',exit_reason=NULL WHERE sequence_id='00000000-0000-4000-8000-000000000006';
 END $test$;
 
 -- Exercise the actual installed save-batch body, not a source-pattern mock.

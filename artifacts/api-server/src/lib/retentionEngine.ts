@@ -7,7 +7,7 @@ import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateL
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { sanitizeScheduledSendAt } from "./playerTiming";
 import { checkLtpBookingSince, transitionLtpSequence, type LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
-import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl } from "./ltpTestTools";
+import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl, normalizeCreatedLtpTestDrafts } from "./ltpTestTools";
 import {
   DEFAULT_RETENTION_LOOKBACK_DAYS,
   MAX_RETENTION_LOOKBACK_DAYS,
@@ -1192,7 +1192,8 @@ async function transitionLtpSequenceBooked(clubId: string, playerId: string, eve
 
 async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[], testMode = false): Promise<void> {
   if (testMode) {
-    await ltpTestRpc("save", clubId, { items });
+    const saved = await ltpTestRpc("save", clubId, { items });
+    await normalizeCreatedLtpTestDrafts(clubId, saved);
     return;
   }
   const { error } = await supabase.rpc("retention_sequence_save_batch", {

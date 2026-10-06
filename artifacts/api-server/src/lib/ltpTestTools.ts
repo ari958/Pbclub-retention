@@ -39,3 +39,44 @@ export async function readLtpTestControl(clubId: string, sequenceId: string): Pr
   }
   return data;
 }
+
+/**
+ * Compatibility with legacy databases whose messages.sent_at defaults to now().
+ * Only freshly created, unapproved test step-2 drafts may lose that creation-time
+ * default. Verified sent messages, delivery evidence, and real drafts are excluded.
+ */
+export async function normalizeCreatedLtpTestDrafts(clubId: string, saved: any[]): Promise<void> {
+  requireLtpTestOverride();
+  if (!Array.isArray(saved)) throw new Error("Test save returned invalid candidate rows");
+  const drafts = saved.filter((c) => c.step === 2 && c.status === "drafted");
+  if (!drafts.length) return;
+  if (drafts.some((c) => c.club_id !== clubId || c.context?.ltp_test_mode !== true || !c.created_at)) {
+    throw new Error("Only newly created test step-2 drafts can normalize creation-time defaults");
+  }
+  const { data: controls, error: controlError } = await supabase.from("retention_ltp_test_controls")
+    .select("candidate_id").eq("club_id", clubId).in("sequence_id", drafts.map((c) => c.sequence_id));
+  if (controlError || controls?.length !== drafts.length) throw new Error("Verified test controls are required");
+  // The wrapper validates original test-send/ledger evidence even when an
+  // existing step-2 candidate means this read-only due call returns no rows.
+  await ltpTestRpc("due", clubId, { candidate_ids: controls.map((c: any) => c.candidate_id) });
+  for (const candidate of drafts) {
+    const { data: message, error } = await supabase.from("messages")
+      .select("id,status,sent_at,approved_at,scheduled_send_at,dispatch_claimed_at,retention_delivery_kind,delivery_status,delivered_at")
+      .eq("id", candidate.message_id).eq("player_id", candidate.player_id).maybeSingle();
+    if (error || !message || message.status !== "pending" || message.approved_at
+      || message.scheduled_send_at || message.dispatch_claimed_at || message.retention_delivery_kind
+      || message.delivery_status || message.delivered_at) {
+      throw new Error("Draft changed or has approval/dispatch/delivery evidence; no timestamp normalized");
+    }
+    if (message.sent_at === null) continue;
+    if (Date.parse(message.sent_at) !== Date.parse(candidate.created_at)) {
+      throw new Error("Unexpected draft timestamp; no timestamp normalized");
+    }
+    const { data: updated, error: updateError } = await supabase.from("messages").update({ sent_at: null })
+      .eq("id", candidate.message_id).eq("player_id", candidate.player_id).eq("status", "pending")
+      .eq("sent_at", message.sent_at).is("approved_at", null).is("scheduled_send_at", null)
+      .is("dispatch_claimed_at", null).is("retention_delivery_kind", null)
+      .is("delivery_status", null).is("delivered_at", null).select("id").maybeSingle();
+    if (updateError || !updated) throw new Error(updateError?.message ?? "Draft changed before normalization");
+  }
+}
