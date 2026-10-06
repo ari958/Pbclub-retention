@@ -15,6 +15,12 @@ For the Learn to Play rollout, present each actual draft's full text alongside i
 
 **How to apply:** Keep draft-only runs separate from approval and sending-setting changes. Wait for the user's review before the live-test phase, and use a test number the user controls; the assistant has no phone number.
 
+New nightly-generated LTP first-touch candidates are real outreach candidates, not delivery-test records.
+
+**Why:** The user explicitly said these new candidates “are real first-touch candidates and must not be used for testing.”
+
+**How to apply:** Limit delivery-retest preparation to the explicitly selected existing test cohort. Report new first-touch candidates read-only; do not approve, regenerate, or change them during that test work.
+
 Treat permission to sync PodPlay phone numbers as contact-data permission only, not permission to infer SMS consent or change sending eligibility settings. Preserve existing numbers, opt-outs, and affirmative-consent evidence.
 
 **Why:** The user authorized contact synchronization to unblock draft review while retaining the draft-only boundary. Having a phone number does not establish consent, and a legacy importer previously coupled phone availability to opt-in.
