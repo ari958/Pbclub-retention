@@ -629,6 +629,44 @@ export const RetentionApprovalStatusParameter = {
   manual_edit: "manual_edit",
 } as const;
 
+export type LtpTestActionParams = {
+  slug: string;
+};
+
+export type LtpTestActionBodyAction =
+  (typeof LtpTestActionBodyAction)[keyof typeof LtpTestActionBodyAction];
+
+export const LtpTestActionBodyAction = {
+  backdate: "backdate",
+  simulate_booking: "simulate_booking",
+  dispatch_check: "dispatch_check",
+} as const;
+
+export type LtpTestActionBody = {
+  action: LtpTestActionBodyAction;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  actor: string;
+};
+
+export type LtpTestAction200 = { [key: string]: unknown };
+
+export type DraftLtpTestStep2Params = {
+  slug: string;
+};
+
+export type DraftLtpTestStep2Body = {
+  /**
+   * @minItems 1
+   * @maxItems 50
+   */
+  candidate_ids: string[];
+};
+
+export type DraftLtpTestStep2200 = { [key: string]: unknown };
+
 export type ListRetentionApprovalsParams = {
   /**
    * Club UUID; supply either clubId or slug

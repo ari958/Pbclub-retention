@@ -7,6 +7,7 @@ import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateL
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { sanitizeScheduledSendAt } from "./playerTiming";
 import { checkLtpBookingSince, transitionLtpSequence, type LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
+import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl } from "./ltpTestTools";
 import {
   DEFAULT_RETENTION_LOOKBACK_DAYS,
   MAX_RETENTION_LOOKBACK_DAYS,
@@ -990,7 +991,10 @@ async function buildLtpBatchWriteItems(
         transitions.push({ player_id: candidate.player_id, booked_event_id: booking.event_id });
       } else {
         if (candidate.attendance_cutoff) {
-          const recentBooking = await checkLtpBookingSince(
+          const testControl = candidate.sequence_id ? await readLtpTestControl(clubId, candidate.sequence_id) : null;
+          const recentBooking = testControl?.simulated_booking
+            ? { booked_event_id: "test-simulated-booking", source: "test_simulated_booking" }
+            : await checkLtpBookingSince(
             clubId, candidate.player_id, candidate.attendance_cutoff, bookingOptions,
           );
           if (recentBooking) {
@@ -1086,6 +1090,7 @@ async function buildLtpBatchWriteItems(
               : undefined,
           });
           nextContext = built.context;
+          if (previousContext.ltp_test_mode === true) nextContext.ltp_test_mode = true;
           const validationErrors = validateRetentionTextBody(built.body, nextContext, playbook);
           if (validationErrors !== built.body) throw new Error("LTP sequence text validator returned an unexpected body");
           const validation = validateLtpBodyForErrors(built.body, nextContext, playbook);
@@ -1185,7 +1190,11 @@ async function transitionLtpSequenceBooked(clubId: string, playerId: string, eve
   await transitionLtpSequence(clubId, playerId, "ltp_followup", "exited_booked", "booked_after_ltp", eventId);
 }
 
-async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[]): Promise<void> {
+async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[], testMode = false): Promise<void> {
+  if (testMode) {
+    await ltpTestRpc("save", clubId, { items });
+    return;
+  }
   const { error } = await supabase.rpc("retention_sequence_save_batch", {
     p_club_id: clubId,
     p_items: items,
@@ -1341,14 +1350,23 @@ export async function reshuffleLtpCandidate(
 }
 
 /** Creates unscheduled step-2 drafts only from migration-gated real step-1 delivery cohorts. */
-export async function generateDueLtpStep2Drafts(clubId: string): Promise<LtpSequenceBatchResult> {
+export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds?: string[]): Promise<LtpSequenceBatchResult> {
+  const testMode = testCandidateIds !== undefined;
+  if (testMode) {
+    requireLtpTestOverride();
+    if (!testCandidateIds.length || testCandidateIds.length > 50 || new Set(testCandidateIds).size !== testCandidateIds.length) {
+      throw Object.assign(new Error("Select 1–50 distinct test step-1 candidates"), { status: 400 });
+    }
+  }
   await requireRetentionSequenceReady();
   if (activeLtpCandidateBatches.has(clubId)) {
     throw Object.assign(new Error("An LTP candidate batch is already running for this club"), { status: 409 });
   }
   activeLtpCandidateBatches.add(clubId);
   try {
-    const { data, error } = await supabase.rpc("retention_sequence_due_step2", { p_club_id: clubId });
+    const { data, error } = testMode
+      ? { data: await ltpTestRpc("due", clubId, { candidate_ids: testCandidateIds }), error: null }
+      : await supabase.rpc("retention_sequence_due_step2", { p_club_id: clubId });
     if (error) throw new Error(error.message);
     if (data != null && !Array.isArray(data)) throw new Error("Step-2 due-candidate RPC returned an invalid payload");
     const dueRows = (data ?? []) as any[];
@@ -1361,7 +1379,7 @@ export async function generateDueLtpStep2Drafts(clubId: string): Promise<LtpSequ
       player_id: String(row.player_id),
       playbook_key: "ltp_followup",
       trigger_event_id: String(row.trigger_event_id),
-      context: row.context as RetentionContext,
+      context: { ...row.context, ...(testMode ? { ltp_test_mode: true } : {}) } as RetentionContext,
       status: "sent",
       message_id: null,
       updated_at: "",
@@ -1371,7 +1389,8 @@ export async function generateDueLtpStep2Drafts(clubId: string): Promise<LtpSequ
     }));
     for (let index = 0; index < dueRows.length; index++) {
       const row = dueRows[index];
-      if (row.step1_delivery_kind !== "real"
+      if (row.step1_delivery_kind !== (testMode ? "test" : "real")
+        || (testMode && (row.test_mode !== true || !testCandidateIds!.includes(row.id)))
         || !row.step1_sent_at || !Number.isFinite(Date.parse(String(row.step1_sent_at)))
         || String(row.step) !== "1" || !row.context?.trigger?.date) {
         throw Object.assign(new Error(`Due step-2 cohort row ${row.id ?? index} lacks verified real step-1 facts`), { status: 409 });
@@ -1387,7 +1406,12 @@ export async function generateDueLtpStep2Drafts(clubId: string): Promise<LtpSequ
       ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(
         clubId, candidates, playbook, client, "create",
       ));
-      if (items.length) await saveLtpSequenceBatch(clubId, items);
+      if (testMode) {
+        // Exits do not create an empty step-2 candidate. The shared transition
+        // atomically withdraws existing drafts, just as at real dispatch.
+        items = items.filter((item) => !["already_returned", "already_booked"].includes(item.context.reason ?? ""));
+      }
+      if (items.length) await saveLtpSequenceBatch(clubId, items, testMode);
       for (const transition of transitions) {
         await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
       }

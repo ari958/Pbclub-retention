@@ -12,6 +12,7 @@ import type { RetentionCandidate } from "./retentionTypes";
 import { performance } from "node:perf_hooks";
 import { logDispatchCheck } from "./dispatchAudit";
 import type { LtpBookingSnapshot } from "./ltpBookingSnapshot";
+import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
 
 export interface LtpBookingBatchOptions {
   client?: RetentionPodplayBatchClient;
@@ -20,11 +21,12 @@ export interface LtpBookingBatchOptions {
   signupsCache?: Map<string, Promise<string[]>>;
   bookingSnapshot?: LtpBookingSnapshot;
   messageId?: string;
+  testSequenceId?: string;
 }
 
 export interface LtpBookedExit {
   booked_event_id: string;
-  source: "podplay_upcoming_signup" | "attendances";
+  source: "podplay_upcoming_signup" | "attendances" | "test_simulated_booking";
 }
 
 const PAGE_LIMIT = 100;
@@ -404,6 +406,14 @@ export async function recordLtpSequenceSend(
   messageId: string,
   deliveryKind: "real" | "test" | "simulated",
 ): Promise<unknown> {
+  if (deliveryKind === "test" && process.env.SMS_TEST_OVERRIDE_TO?.trim()) {
+    const { data: candidate, error: lookupError } = await supabase.from("retention_candidates")
+      .select("step,sequence_id").eq("club_id", clubId).eq("message_id", messageId).maybeSingle();
+    if (lookupError) throw new Error(`Could not verify test delivery sequence: ${lookupError.message}`);
+    if (candidate?.step === 2 && candidate.sequence_id && await readLtpTestControl(clubId, candidate.sequence_id)) {
+      return ltpTestRpc("record_send", clubId, { message_id: messageId, delivery_kind: "test" });
+    }
+  }
   const { data, error } = await supabase.rpc("retention_sequence_record_send", {
     p_club_id: clubId,
     p_message_id: messageId,
@@ -421,7 +431,7 @@ export async function recordLtpSequenceSend(
  */
 export async function confirmLtpRecipientDelivery(messageId: string): Promise<boolean> {
   const { data: candidate, error: candidateError } = await supabase.from("retention_candidates")
-    .select("playbook_key,club_id,player_id")
+    .select("playbook_key,club_id,player_id,step,sequence_id")
     .eq("message_id", messageId).maybeSingle();
   if (candidateError) throw new Error(`Could not resolve LTP sequence for delivered message: ${candidateError.message}`);
   if (candidate?.playbook_key !== "ltp_followup") return false;
@@ -430,6 +440,13 @@ export async function confirmLtpRecipientDelivery(messageId: string): Promise<bo
     .select("status,delivery_status,delivered_at,retention_delivery_kind")
     .eq("id", messageId).maybeSingle();
   if (messageError || !message) throw new Error(`Could not verify delivered LTP message: ${messageError?.message ?? "message is missing"}`);
+  if (candidate.step === 2 && candidate.sequence_id && message.status === "sent"
+    && message.delivery_status === "delivered" && message.delivered_at
+    && message.retention_delivery_kind === "test"
+    && await readLtpTestControl(candidate.club_id, candidate.sequence_id)) {
+    await recordLtpSequenceSend(candidate.club_id, messageId, "test");
+    return false; // Test delivery never becomes a real delivery.
+  }
   if (
     message.status !== "sent"
     || message.delivery_status !== "delivered"
@@ -531,7 +548,10 @@ export async function stepOneRealSentAt(
   if (sequenceError || !sequence) {
     failClosed(`shared LTP sequence lookup failed: ${sequenceError?.message ?? "sequence is missing"}`);
   }
-  if (sequence.sequence_status !== "active" || sequence.step1_delivery_kind !== "real" || !sequence.step1_sent_at) {
+  const testControl = sequence.step1_delivery_kind === "test"
+    ? await readLtpTestControl(candidate.club_id, candidate.sequence_id) : null;
+  const verifiedTest = !!testControl && Date.parse(testControl.original_sent_at) === Date.parse(sequence.step1_sent_at);
+  if (sequence.sequence_status !== "active" || (sequence.step1_delivery_kind !== "real" && !verifiedTest) || !sequence.step1_sent_at) {
     failClosed("step 2 requires an active sequence and a confirmed real step-1 delivery");
   }
   const { data: stepOne, error } = await supabase.from("retention_candidates")
@@ -546,9 +566,15 @@ export async function stepOneRealSentAt(
     message.status !== "sent"
     || !message.sent_at
     || message.simulated !== false
-    || message.retention_delivery_kind !== "real"
+    || message.retention_delivery_kind !== (verifiedTest ? "test" : "real")
+    || Date.parse(message.sent_at) !== Date.parse(sequence.step1_sent_at)
   ) {
     failClosed("step 2 requires an actual recipient delivery of step 1");
+  }
+  if (verifiedTest) {
+    const { data: ledger, error: ledgerError } = await supabase.from("contact_ledger")
+      .select("is_test").eq("message_id", stepOne.message_id).limit(1).maybeSingle();
+    if (ledgerError || ledger?.is_test !== true) failClosed("test step 1 has no verified test contact ledger");
   }
   return sequence.step1_sent_at as string;
 }
@@ -709,6 +735,11 @@ export async function recheckLtpSequenceDispatch(
     cutoff = event.startTime;
   } else {
     cutoff = await stepOneRealSentAt(candidate);
+    const control = await readLtpTestControl(candidate.club_id, candidate.sequence_id!);
+    if (control?.simulated_booking) {
+      return { valid: false, reason: null, cutoff,
+        booked: { booked_event_id: "test-simulated-booking", source: "test_simulated_booking" } };
+    }
   }
 
   const bookingStarted = performance.now();

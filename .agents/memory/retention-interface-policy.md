@@ -21,6 +21,12 @@ New nightly-generated LTP first-touch candidates are real outreach candidates, n
 
 **How to apply:** Limit delivery-retest preparation to the explicitly selected existing test cohort. Report new first-touch candidates read-only; do not approve, regenerate, or change them during that test work.
 
+For accelerated LTP step-2 tests, backdate only an effective eligibility clock, not the original sent message or real-delivery classification. Booking and attendance checks still start at the actual step-1 send time.
+
+**Why:** The user requested accelerated test eligibility without changing real-mode eligibility. Moving the booking cutoff backward would incorrectly treat activity before delivery as a response to step 1.
+
+**How to apply:** Keep test controls explicitly override-gated and separate from real eligibility. Do not shorten the shared gap, recategorize test sends as real, or rewrite historical send evidence.
+
 Treat permission to sync PodPlay phone numbers as contact-data permission only, not permission to infer SMS consent or change sending eligibility settings. Preserve existing numbers, opt-outs, and affirmative-consent evidence.
 
 **Why:** The user authorized contact synchronization to unblock draft review while retaining the draft-only boundary. Having a phone number does not establish consent, and a legacy importer previously coupled phone availability to opt-in.

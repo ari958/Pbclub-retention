@@ -42,7 +42,7 @@ function formatIssue(issue: unknown): string {
   try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
 }
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate }: {
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate, testTools }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
   onSave: (body: string) => Promise<boolean>; onApprove: () => void; onSkip: () => void;
@@ -52,6 +52,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   onReshuffle: () => void;
   reshuffling: boolean;
   onLtpBatchRegenerate: () => void;
+  testTools?: React.ReactNode;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -276,6 +277,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           {c.message?.sent_at && <> / {c.message.simulated ? "simulated, not delivered" : "sent"} {fmt(c.message.sent_at)}</>}
         </span>
       </div>
+      {testTools}
     </div>
   );
 }

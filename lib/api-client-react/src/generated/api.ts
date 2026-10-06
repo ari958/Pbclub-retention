@@ -19,10 +19,16 @@ import type {
 import type {
   ApproveRetentionDraftParams,
   ApproveRetentionPlaybookDraftsParams,
+  DraftLtpTestStep2200,
+  DraftLtpTestStep2Body,
+  DraftLtpTestStep2Params,
   EditRetentionDraftParams,
   GenerateRetentionDraftsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
+  LtpTestAction200,
+  LtpTestActionBody,
+  LtpTestActionParams,
   RegenerateRetentionDraft409,
   RegenerateRetentionDraftParams,
   RegenerateRetentionLtpBatch400,
@@ -66,6 +72,228 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Audited test-only LTP action; never approves or sends
+ */
+export const getLtpTestActionUrl = (
+  id: string,
+  params: LtpTestActionParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/test-tools/candidates/${id}?${stringifiedParams}`
+    : `/api/retention/test-tools/candidates/${id}`;
+};
+
+export const ltpTestAction = async (
+  id: string,
+  ltpTestActionBody: LtpTestActionBody,
+  params: LtpTestActionParams,
+  options?: RequestInit,
+): Promise<LtpTestAction200> => {
+  return customFetch<LtpTestAction200>(getLtpTestActionUrl(id, params), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(ltpTestActionBody),
+  });
+};
+
+export const getLtpTestActionMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ltpTestAction>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<LtpTestActionBody>;
+      params: LtpTestActionParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof ltpTestAction>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<LtpTestActionBody>;
+    params: LtpTestActionParams;
+  },
+  TContext
+> => {
+  const mutationKey = ["ltpTestAction"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof ltpTestAction>>,
+    {
+      id: string;
+      data: BodyType<LtpTestActionBody>;
+      params: LtpTestActionParams;
+    }
+  > = (props) => {
+    const { id, data, params } = props ?? {};
+
+    return ltpTestAction(id, data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type LtpTestActionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof ltpTestAction>>
+>;
+export type LtpTestActionMutationBody = BodyType<LtpTestActionBody>;
+export type LtpTestActionMutationError = ErrorType<void>;
+
+/**
+ * @summary Audited test-only LTP action; never approves or sends
+ */
+export const useLtpTestAction = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof ltpTestAction>>,
+    TError,
+    {
+      id: string;
+      data: BodyType<LtpTestActionBody>;
+      params: LtpTestActionParams;
+    },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof ltpTestAction>>,
+  TError,
+  {
+    id: string;
+    data: BodyType<LtpTestActionBody>;
+    params: LtpTestActionParams;
+  },
+  TContext
+> => {
+  return useMutation(getLtpTestActionMutationOptions(options));
+};
+
+/**
+ * @summary Draft step 2 for explicitly selected backdated test step-1 candidates only
+ */
+export const getDraftLtpTestStep2Url = (params: DraftLtpTestStep2Params) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/test-tools/draft-step2?${stringifiedParams}`
+    : `/api/retention/test-tools/draft-step2`;
+};
+
+export const draftLtpTestStep2 = async (
+  draftLtpTestStep2Body: DraftLtpTestStep2Body,
+  params: DraftLtpTestStep2Params,
+  options?: RequestInit,
+): Promise<DraftLtpTestStep2200> => {
+  return customFetch<DraftLtpTestStep2200>(getDraftLtpTestStep2Url(params), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(draftLtpTestStep2Body),
+  });
+};
+
+export const getDraftLtpTestStep2MutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof draftLtpTestStep2>>,
+    TError,
+    { data: BodyType<DraftLtpTestStep2Body>; params: DraftLtpTestStep2Params },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof draftLtpTestStep2>>,
+  TError,
+  { data: BodyType<DraftLtpTestStep2Body>; params: DraftLtpTestStep2Params },
+  TContext
+> => {
+  const mutationKey = ["draftLtpTestStep2"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof draftLtpTestStep2>>,
+    { data: BodyType<DraftLtpTestStep2Body>; params: DraftLtpTestStep2Params }
+  > = (props) => {
+    const { data, params } = props ?? {};
+
+    return draftLtpTestStep2(data, params, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type DraftLtpTestStep2MutationResult = NonNullable<
+  Awaited<ReturnType<typeof draftLtpTestStep2>>
+>;
+export type DraftLtpTestStep2MutationBody = BodyType<DraftLtpTestStep2Body>;
+export type DraftLtpTestStep2MutationError = ErrorType<void>;
+
+/**
+ * @summary Draft step 2 for explicitly selected backdated test step-1 candidates only
+ */
+export const useDraftLtpTestStep2 = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof draftLtpTestStep2>>,
+    TError,
+    { data: BodyType<DraftLtpTestStep2Body>; params: DraftLtpTestStep2Params },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof draftLtpTestStep2>>,
+  TError,
+  { data: BodyType<DraftLtpTestStep2Body>; params: DraftLtpTestStep2Params },
+  TContext
+> => {
+  return useMutation(getDraftLtpTestStep2MutationOptions(options));
+};
 
 /**
  * Returns server health status

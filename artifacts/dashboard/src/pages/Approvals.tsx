@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Sidebar } from "@/components/Sidebar";
 import { ApprovalCard, btn } from "@/components/ApprovalCard";
 import { LtpSequenceConfigEditor } from "@/components/LtpSequenceConfigEditor";
+import { LtpTestTools } from "@/components/LtpTestTools";
 import { useToast } from "@/components/Toast";
 import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
@@ -588,6 +589,7 @@ export default function Approvals() {
                   </div>
                   {list.map((c) => (
                     <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
+                      testTools={data?.mode.test_override_configured ? <LtpTestTools candidate={c} slug={slug} actor={operator} onChanged={load} /> : undefined}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
                       onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}
                       onApprove={() => { if (!editingIds.has(c.id) && c.message && needOperator()) withBusy(c.id, () => retentionApi.approve(slug, c.id, operator.trim(), c.message?.body ?? ""), "Approved and scheduled"); }}

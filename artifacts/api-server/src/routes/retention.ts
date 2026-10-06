@@ -241,7 +241,7 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     const messageIds = [...new Set([...candidates, ...step1Candidates].map((c) => c.message_id).filter(Boolean))] as string[];
     const [playerRows, messageRows] = await Promise.all([
       fetchByIds("players", "id,name", playerIds, clubId),
-      fetchByIds("messages", "id,body,status,approved_at,approved_by,scheduled_send_at,sent_at,simulated", messageIds),
+      fetchByIds("messages", "id,body,status,approved_at,approved_by,scheduled_send_at,sent_at,simulated,retention_delivery_kind", messageIds),
     ]);
     const players = new Map(playerRows.map((row: any) => [row.id, row]));
     const messages = new Map(messageRows.map((row: any) => [row.id, row]));

@@ -4,8 +4,10 @@ import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { regenerateLtpCandidateBatch, reshuffleLtpCandidate } from "../lib/retentionEngine";
 import { LtpSequenceConfigSchema } from "../lib/ltpPhraseBuilder";
+import ltpTestToolsRouter from "./ltpTestTools";
 
 const router: IRouter = Router();
+router.use(ltpTestToolsRouter);
 const CandidateIdsSchema = z.object({
   candidate_ids: z.array(z.string().uuid()).min(1).max(50)
     .refine((ids) => new Set(ids).size === ids.length, "Candidate IDs must be distinct"),

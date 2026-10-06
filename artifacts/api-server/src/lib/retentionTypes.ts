@@ -58,6 +58,7 @@ export interface RetentionNextProgram {
 }
 
 export interface RetentionContext {
+  ltp_test_mode?: boolean;
   /** Omitted only on legacy contexts; infer with_program only when next_program exists. */
   variant?: "with_program" | "no_program";
   trigger: { event_id: string; name: string; date: string };

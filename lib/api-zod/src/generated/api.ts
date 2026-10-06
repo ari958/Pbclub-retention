@@ -8,6 +8,47 @@
 import * as zod from "zod";
 
 /**
+ * @summary Audited test-only LTP action; never approves or sends
+ */
+export const LtpTestActionParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const LtpTestActionQueryParams = zod.object({
+  slug: zod.coerce.string(),
+});
+
+export const ltpTestActionBodyActorMax = 120;
+
+export const LtpTestActionBody = zod.object({
+  action: zod.enum(["backdate", "simulate_booking", "dispatch_check"]),
+  actor: zod.string().min(1).max(ltpTestActionBodyActorMax),
+});
+
+export const LtpTestActionResponse = zod.record(zod.string(), zod.unknown());
+
+/**
+ * @summary Draft step 2 for explicitly selected backdated test step-1 candidates only
+ */
+export const DraftLtpTestStep2QueryParams = zod.object({
+  slug: zod.coerce.string(),
+});
+
+export const draftLtpTestStep2BodyCandidateIdsMax = 50;
+
+export const DraftLtpTestStep2Body = zod.object({
+  candidate_ids: zod
+    .array(zod.string().uuid())
+    .min(1)
+    .max(draftLtpTestStep2BodyCandidateIdsMax),
+});
+
+export const DraftLtpTestStep2Response = zod.record(
+  zod.string(),
+  zod.unknown(),
+);
+
+/**
  * Returns server health status
  * @summary Health check
  */

@@ -13,6 +13,65 @@ tags:
   - name: retention
     description: Draft-only retention generation and explicit message approvals
 paths:
+  /retention/test-tools/candidates/{id}:
+    post:
+      operationId: ltpTestAction
+      tags: [retention]
+      summary: Audited test-only LTP action; never approves or sends
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+        - { name: slug, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [action, actor]
+              properties:
+                action: { type: string, enum: [backdate, simulate_booking, dispatch_check] }
+                actor: { type: string, minLength: 1, maxLength: 120 }
+      responses:
+        "200":
+          description: Audit entry or no-send dispatch-check result
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "403": { description: Test override absent }
+        "409": { description: Not an eligible test candidate }
+        "503": { description: Test-tools migration not installed }
+  /retention/test-tools/draft-step2:
+    post:
+      operationId: draftLtpTestStep2
+      tags: [retention]
+      summary: Draft step 2 for explicitly selected backdated test step-1 candidates only
+      parameters:
+        - { name: slug, in: query, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [candidate_ids]
+              properties:
+                candidate_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Drafting results and failures
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "403": { description: Test override absent }
+        "409": { description: Not an eligible test cohort }
+        "503": { description: Test-tools migration not installed }
   /healthz:
     get:
       operationId: healthCheck

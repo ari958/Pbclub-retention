@@ -8,6 +8,9 @@
 
 export * from "./approveRetentionDraftParams";
 export * from "./approveRetentionPlaybookDraftsParams";
+export * from "./draftLtpTestStep2200";
+export * from "./draftLtpTestStep2Body";
+export * from "./draftLtpTestStep2Params";
 export * from "./editRetentionDraftParams";
 export * from "./generateRetentionDraftsParams";
 export * from "./healthStatus";
@@ -16,6 +19,10 @@ export * from "./ltpPhraseArray";
 export * from "./ltpSequenceConfig";
 export * from "./ltpStepOnePhraseSlots";
 export * from "./ltpStepTwoPhraseSlots";
+export * from "./ltpTestAction200";
+export * from "./ltpTestActionBody";
+export * from "./ltpTestActionBodyAction";
+export * from "./ltpTestActionParams";
 export * from "./regenerateRetentionDraft409";
 export * from "./regenerateRetentionDraftParams";
 export * from "./regenerateRetentionLtpBatch400";

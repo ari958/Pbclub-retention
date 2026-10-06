@@ -21,6 +21,7 @@ export interface ProgramFact { event_id: string; name: string; start_time: strin
 export interface Candidate {
   id: string; playbook_key: string; player_id: string; trigger_event_id: string; status: CandidateStatus;
   context: {
+    ltp_test_mode?: boolean;
     ltp_text?: { step: 1 | 2; seed_nonce: number; slot_indices: Record<string, number>; slot_templates: Record<string, string>; opener: string; ltp_date: string; when: string | null };
     variant?: "with_program" | "no_program";
     booking_url?: string;
@@ -122,6 +123,10 @@ async function call<T>(slug: string, path: string, method = "GET", body?: unknow
 }
 
 export const retentionApi = {
+  ltpTestAction: (s: string, id: string, action: "backdate" | "simulate_booking" | "dispatch_check", actor: string) =>
+    call<Record<string, unknown>>(s, `/api/retention/test-tools/candidates/${id}`, "POST", { action, actor }),
+  draftTestStep2: (s: string, candidate_ids: string[]) =>
+    call<LtpRegenerateBatchEnvelope>(s, "/api/retention/test-tools/draft-step2", "POST", { candidate_ids }),
   list: (s: string, status: ApprovalListStatus) => call<ApprovalsResponse>(s, approvalListPath(status)),
   generate: (s: string, lookbackDays: number = DEFAULT_LOOKBACK_DAYS) => call<GenerateResult>(s, "/api/retention/generate", "POST", { lookback_days: lookbackDays }),
   regenerate: (s: string, id: string) => call<RegenerateResult>(s, `/api/retention/candidates/${id}/regenerate`, "POST"),

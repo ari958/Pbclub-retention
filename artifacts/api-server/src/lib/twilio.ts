@@ -16,6 +16,7 @@ import {
   transitionLtpSequence,
   type LtpBookingBatchOptions,
 } from "./ltpSequenceLifecycle";
+import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
 
 export function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -405,7 +406,7 @@ async function sendApprovedMessage(
     }
 
     audit.begin("database_claim");
-    const { data, error } = await supabase.rpc("retention_sequence_claim", {
+    const claimArgs = {
       p_club_id: player.club_id,
       p_candidate_id: ltpCandidate.id,
       p_message_id: context.messageId,
@@ -413,7 +414,15 @@ async function sendApprovedMessage(
       p_claimed_at: claimedAt,
       p_expected_context: ltpCandidate.context,
       p_expected_updated_at: ltpCandidate.updated_at,
-    });
+    };
+    const testControl = ltpCandidate.step === 2 && ltpCandidate.sequence_id
+      ? await readLtpTestControl(player.club_id, ltpCandidate.sequence_id) : null;
+    const { data, error } = testControl
+      ? { data: await ltpTestRpc("claim", player.club_id, {
+        message_id: context.messageId, expected_body: message.body ?? "", claimed_at: claimedAt,
+        expected_context: ltpCandidate.context, expected_updated_at: ltpCandidate.updated_at,
+      }), error: null }
+      : await supabase.rpc("retention_sequence_claim", claimArgs);
     claimed = data;
     claimError = error;
   } else {
