@@ -19,6 +19,24 @@ export async function resetSimulatedLtpTestMessage(clubId: string, candidateId: 
   }
 }
 
+/** Adapt the reset marker to the installed retry-context RPC's reason enum.
+ * Keep needs_context throughout; never promote stale text to an approvable draft.
+ */
+export async function prepareLtpSimulationResetRetry(clubId: string, candidate: {
+  id: string; status: string; context: Record<string, any>; updated_at: string;
+}): Promise<void> {
+  requireLtpTestOverride();
+  if (candidate.status !== "needs_context" || candidate.context?.reason !== "test_reset_requires_rebuild") {
+    throw Object.assign(new Error("Only a reset awaiting fresh context can enter recovery"), { status: 409 });
+  }
+  const { data, error } = await supabase.from("retention_candidates").update({
+    context: { ...candidate.context, reason: "context_lookup_failed", recovery_reason: "test_reset_requires_rebuild" },
+  }).eq("id", candidate.id).eq("club_id", clubId).eq("status", "needs_context")
+    .eq("updated_at", candidate.updated_at).eq("context", JSON.stringify(candidate.context))
+    .select("id").maybeSingle();
+  if (error || !data) throw Object.assign(new Error(error?.message ?? "Reset candidate changed before context recovery"), { status: 409 });
+}
+
 export async function ltpTestRpc(operation: string, clubId: string, payload: Record<string, unknown>) {
   requireLtpTestOverride();
   const { data, error } = await supabase.rpc("retention_ltp_test_rpc", {

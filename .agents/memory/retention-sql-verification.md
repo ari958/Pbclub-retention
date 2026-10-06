@@ -20,3 +20,9 @@ Include legacy column defaults in retention fixtures, especially creation-time d
 **Why:** A null-default fixture proved draft guards correct but missed the live database populating `sent_at` on unsent pending drafts. A timestamp alone is not delivery evidence.
 
 **How to apply:** Test pending drafts with both null and creation-time defaults. Normalize only newly created, verified test drafts with no approval, schedule, dispatch, or delivery evidence; never reinterpret or rewrite actual sent messages.
+
+Exercise reset followed by fresh regeneration through the application entry point, not just the atomic reset primitive.
+
+**Why:** A guarded reset passed SQL assertions but left a needs-context state that ordinary regeneration rejected. The context-retry path also had narrower accepted reasons and needed the retained pending message's body for its compare-and-swap checks.
+
+**How to apply:** Verify the complete recovery transition, including reason compatibility, existing-message snapshots, approval blocking while facts are rebuilt, and the final unapproved draft. A passing SQL reset test does not establish that the application can finish recovery.

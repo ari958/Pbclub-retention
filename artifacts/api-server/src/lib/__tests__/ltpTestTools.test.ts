@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { supabase } from "../supabaseClient";
-import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride, normalizeCreatedLtpTestDrafts, resetSimulatedLtpTestMessage } from "../ltpTestTools";
+import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride, normalizeCreatedLtpTestDrafts, resetSimulatedLtpTestMessage, prepareLtpSimulationResetRetry } from "../ltpTestTools";
 import { stepOneRealSentAt, recheckLtpSequenceDispatch } from "../ltpSequenceLifecycle";
 import { buildLtpStepText } from "../ltpPhraseBuilder";
 import { validateLtpSequenceText } from "../retentionText";
@@ -36,6 +36,40 @@ function restore() {
   if (override === undefined) delete process.env.SMS_TEST_OVERRIDE_TO;
   else process.env.SMS_TEST_OVERRIDE_TO = override;
 }
+
+test("simulation recovery keeps needs_context, preserves the cause, and fails closed on races", async () => {
+  const reset = { id: "reset", status: "needs_context", updated_at: sentAt,
+    context: { reason: "test_reset_requires_rebuild", errors: ["Fresh facts required"] } };
+  let loseRace = false;
+  let updates = 0;
+  let guards: Array<[string, unknown]> = [];
+  try {
+    process.env.SMS_TEST_OVERRIDE_TO = "configured-test-fixture";
+    supabase.from = ((table: string) => {
+      assert.equal(table, "retention_candidates");
+      const q: any = { select: () => q,
+        eq: (key: string, value: unknown) => { guards.push([key, value]); return q; },
+        update: (value: any) => {
+          updates++;
+          assert.deepEqual(value, { context: { ...reset.context,
+            reason: "context_lookup_failed", recovery_reason: "test_reset_requires_rebuild" } });
+          return q;
+        },
+        maybeSingle: async () => ({ data: loseRace ? null : { id: reset.id }, error: null }) };
+      return q;
+    }) as any;
+    await prepareLtpSimulationResetRetry("club", reset);
+    assert.ok(guards.some(([key,value]) => key === "status" && value === "needs_context"));
+    assert.ok(guards.some(([key,value]) => key === "updated_at" && value === sentAt));
+    assert.ok(guards.some(([key,value]) => key === "context" && value === JSON.stringify(reset.context)));
+    await assert.rejects(prepareLtpSimulationResetRetry("club", { ...reset, status: "approved" }), /Only a reset/);
+    assert.equal(updates, 1);
+    loseRace = true;
+    await assert.rejects(prepareLtpSimulationResetRetry("club", reset), /changed before context recovery/);
+    delete process.env.SMS_TEST_OVERRIDE_TO;
+    await assert.rejects(prepareLtpSimulationResetRetry("club", reset), (e: any) => e.status === 403);
+  } finally { restore(); }
+});
 
 test("all test actions refuse with 403 before database access when override is absent", async () => {
   try {

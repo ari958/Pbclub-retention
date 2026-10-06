@@ -7,7 +7,7 @@ import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateL
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { sanitizeScheduledSendAt } from "./playerTiming";
 import { checkLtpBookingSince, transitionLtpSequence, type LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
-import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl, normalizeCreatedLtpTestDrafts } from "./ltpTestTools";
+import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl, normalizeCreatedLtpTestDrafts, prepareLtpSimulationResetRetry } from "./ltpTestTools";
 import {
   DEFAULT_RETENTION_LOOKBACK_DAYS,
   MAX_RETENTION_LOOKBACK_DAYS,
@@ -631,10 +631,19 @@ export async function regenerateRetentionCandidate(
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
   const { data: row, error } = await supabase.from("retention_candidates")
-    .select("playbook_key").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
+    .select("id,playbook_key,status,context,updated_at").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
   if (error) throw new Error(error.message);
   if (row?.playbook_key === "ltp_followup") {
-    const result = await regenerateLtpCandidateBatch(clubId, [candidateId]);
+    const recoveringReset = row.status === "needs_context"
+      && (row.context?.reason === "test_reset_requires_rebuild"
+        || row.context?.recovery_reason === "test_reset_requires_rebuild");
+    if (recoveringReset) {
+      requireLtpTestOverride();
+      if (row.context.reason === "test_reset_requires_rebuild") await prepareLtpSimulationResetRetry(clubId, row);
+    }
+    const result = recoveringReset
+      ? await runLtpCandidateBatch(clubId, [candidateId], { retryContext: true })
+      : await regenerateLtpCandidateBatch(clubId, [candidateId]);
     if (result.failures.length) {
       throw Object.assign(new Error(result.failures[0].error), { status: result.failures[0].http_status });
     }
@@ -830,9 +839,12 @@ async function readLtpCandidatesForBatch(
     if (step !== 1 && step !== 2) throw Object.assign(new Error(`Candidate ${candidate.id} has an invalid LTP step`), { status: 409 });
     if (options.retryContext) {
       if (candidate.status !== "needs_context") throw Object.assign(new Error(`Candidate ${candidate.id} no longer needs context`), { status: 409 });
-      continue;
+      // A reset retains its pending message. Capture and validate its body for
+      // the same SQL compare-and-swap checks as ordinary draft regeneration.
+      if (candidate.message_id == null) continue;
+    } else if (candidate.status !== "drafted") {
+      throw Object.assign(new Error(`Candidate ${candidate.id} is not a drafted, editable LTP message`), { status: 409 });
     }
-    if (candidate.status !== "drafted") throw Object.assign(new Error(`Candidate ${candidate.id} is not a drafted, editable LTP message`), { status: 409 });
     if (candidate.message_id == null) throw Object.assign(new Error(`Candidate ${candidate.id} has no pending draft message`), { status: 409 });
     const { data: message, error: messageError } = await supabase.from("messages")
       .select("id,body,status,approved_at,approved_by,approved_body,scheduled_send_at,dispatch_claimed_at,sent_at,simulated,retention_delivery_kind")
