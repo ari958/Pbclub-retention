@@ -42,9 +42,10 @@ function formatIssue(issue: unknown): string {
   try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
 }
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate, testTools }: {
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate, testTools, liveSending = true }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
+  liveSending?: boolean;
   onSave: (body: string) => Promise<boolean>; onApprove: () => void; onSkip: () => void;
   onRegenerate: () => void; regenerating: boolean;
   onRetryContext: () => void; retryContextReady: boolean;
@@ -114,6 +115,9 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           <span data-testid={`badge-stale-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>
             Stale test draft · {x.lookback_days ?? "unknown"}-day test lookback
           </span>
+        )}
+        {c.status === "approved" && !liveSending && (
+          <span data-testid={`badge-held-${c.id}`} style={{ fontFamily: mono, fontSize: 10, color: D.accent }}>held — live sending off</span>
         )}
         {c.message?.simulated && (
           <span data-testid={`badge-simulated-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.accentBg, color: D.accent, border: "1px solid rgba(232,168,56,0.3)" }}>

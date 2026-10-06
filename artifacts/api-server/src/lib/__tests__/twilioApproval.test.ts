@@ -558,7 +558,19 @@ test("STOP/opt-out blocks dispatch before claim and contact", async () => {
   assert.equal(state.message.dispatch_token, null);
 });
 
-test("missing message context is blocked even for dry-run calls", async () => {
+test("live off blocks direct dispatch without consuming an approved message", async () => {
+  reset();
+  const before = JSON.stringify({ message: state.message, candidate: state.candidate });
+  process.env.SMS_LIVE = "false";
+  try {
+    await assert.rejects(sendViaTwilio(state.player.phone, state.message.approved_body, { messageId: MESSAGE_ID }), /held untouched/);
+    assert.equal(JSON.stringify({ message: state.message, candidate: state.candidate }), before);
+    assert.equal(state.transportCalls, 0);
+    assert.equal(state.ledger.length, 0);
+  } finally { process.env.SMS_LIVE = "true"; }
+});
+
+test("missing message context is blocked even with live sending off", async () => {
   reset();
   process.env.SMS_LIVE = "false";
   try {

@@ -13,4 +13,5 @@ export const LtpTestActionBodyAction = {
   backdate: "backdate",
   simulate_booking: "simulate_booking",
   dispatch_check: "dispatch_check",
+  reset_simulated: "reset_simulated",
 } as const;

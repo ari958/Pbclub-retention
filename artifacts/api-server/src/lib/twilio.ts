@@ -62,7 +62,7 @@ const ltpBatchOptionsForDispatch = (): LtpBookingBatchOptions =>
   testLtpBatchOptionsFactory ? testLtpBatchOptionsFactory() : {};
 
 /**
- * Send an SMS via Twilio (live) or log a dry-run (when SMS_LIVE !== "true").
+ * Send an SMS via Twilio only when SMS_LIVE is true; otherwise hold untouched.
  *
  * Every dispatch is bound to an approved, immutable message row. A successful
  * claim is deliberately retained after errors: a caller must reconcile an
@@ -221,6 +221,7 @@ export async function assertSmsKillSwitchOff(clubId: string): Promise<void> {
 }
 
 async function assertFinalTransportAllowed(clubId: string, audit: DispatchAudit): Promise<void> {
+  if (process.env.SMS_LIVE !== "true") throw new SmsPolicyBlockedError("Live sending is off; dispatch held");
   audit.begin("kill_switch_final");
   await assertSmsKillSwitchOff(clubId);
   audit.begin("send_window_final");
@@ -237,6 +238,10 @@ async function sendApprovedMessage(
   if (!context?.messageId?.trim()) {
     throw new Error("SMS dispatch requires an approved messageId context");
   }
+  audit.begin("live_sending");
+  const smsLive = process.env.SMS_LIVE === "true";
+  audit.end(smsLive ? "pass" : "blocked", { sms_live: smsLive, held: !smsLive });
+  if (!smsLive) throw new SmsPolicyBlockedError("Live sending is off; approved message held untouched");
 
   const { data: message, error: messageError } = await supabase
     .from("messages")
@@ -330,7 +335,6 @@ async function sendApprovedMessage(
     throw new SmsPolicyBlockedError("SMS kill switch is engaged or unavailable");
   }
 
-  const smsLive   = process.env.SMS_LIVE === "true";
   const overrideTo = (process.env.SMS_TEST_OVERRIDE_TO ?? "").trim();
   const effectiveTo = overrideTo || to;
   const isTest = !!overrideTo;
@@ -365,6 +369,7 @@ async function sendApprovedMessage(
     ? (testClientFactory ? testClientFactory() : getTwilioClient())
     : null;
 
+  if (process.env.SMS_LIVE !== "true") throw new SmsPolicyBlockedError("Live sending is off; approved message held untouched");
   const claimToken = randomUUID();
   const claimedAt = currentTime().toISOString();
   let claimed: any;
@@ -545,45 +550,6 @@ async function sendApprovedMessage(
         }
         throw new SmsPolicyBlockedError("Approved LTP session changed; the draft was returned for review");
       }
-    }
-
-    if (!smsLive) {
-      await assertFinalTransportAllowed(player.club_id, audit);
-      logger.info({ messageId: context.messageId, isTest }, "[SMS DRY-RUN] approved dispatch simulated");
-      const sentAt = currentTime().toISOString();
-      const simulatedValues: Record<string, unknown> = {
-        status: "sent",
-        twilio_message_sid: "SIMULATED",
-        simulated: true,
-        sent_at: sentAt,
-      };
-      if (ltpCandidate) simulatedValues.retention_delivery_kind = "simulated";
-      let updateQuery = supabase
-        .from("messages")
-        .update(simulatedValues)
-        .eq("id", context.messageId)
-        .eq("status", "pending");
-      updateQuery = ltpCandidate
-        ? updateQuery.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
-        : updateQuery.eq("dispatch_token", claimToken);
-      const { data: updated, error: updateError } = await updateQuery.select("id").maybeSingle();
-      if (updateError || !updated) throw new Error(`Could not record simulated dispatch: ${updateError?.message ?? "claim no longer owns the pending message"}`);
-      const { error: candidateError } = await supabase
-        .from("retention_candidates")
-        .update({ status: "sent", updated_at: sentAt })
-        .eq("message_id", context.messageId)
-        .eq("status", "approved");
-      if (candidateError && !/does not exist|schema cache/i.test(candidateError.message)) {
-        logger.error({ messageId: context.messageId, err: candidateError.message }, "Could not record linked retention candidate as simulated-sent");
-      }
-      if (ltpCandidate) {
-        try {
-          await recordLtpSequenceSend(player.club_id, context.messageId, "simulated");
-        } catch (error) {
-          logger.error({ messageId: context.messageId, err: error }, "Simulated LTP delivery persisted but its sequence bookkeeping failed");
-        }
-      }
-      return { sid: "SIMULATED", simulated: true, isTest };
     }
 
     let msg;

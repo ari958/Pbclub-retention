@@ -107,7 +107,7 @@ app.listen(port, async (err) => {
     process.exit(1);
   }
 
-  logger.info({ port }, "Server listening");
+  logger.info({ port, sms_live: process.env.SMS_LIVE === "true", process_started_at: new Date().toISOString() }, "Server listening");
 
   try {
     const defaultSlug = getDefaultClubSlug();

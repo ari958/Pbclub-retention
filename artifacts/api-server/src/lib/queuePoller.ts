@@ -43,6 +43,11 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     skipped: 0,
     failed: 0,
   };
+  // Off means hold, not simulate. Do not roll schedules or read providers.
+  if (process.env.SMS_LIVE !== "true") {
+    logger.info({ sms_live: false }, "[queue] live sending off — approved messages held untouched");
+    return stats;
+  }
 
   const { data: rows, error } = await supabase
     .from("messages")
@@ -72,6 +77,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
   // Authorize and exclude paused clubs before doing costly provider reads.
   const ready: Array<{ row: any; ltp: boolean }> = [];
   for (const row of messages) {
+    if (process.env.SMS_LIVE !== "true") return stats;
     const audit = new DispatchAudit(row.id);
     try {
       audit.begin("retention_candidate_queue");
@@ -126,6 +132,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
   }
 
   for (const { row, ltp } of ready) {
+    if (process.env.SMS_LIVE !== "true") break;
     stats.processed++;
     const id = row.id as string;
     const player_id = row.player_id as string;

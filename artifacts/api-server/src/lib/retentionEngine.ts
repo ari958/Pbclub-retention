@@ -1246,7 +1246,11 @@ async function runLtpCandidateBatch(
       };
     }
     try {
-      if (items.length) await saveLtpSequenceBatch(clubId, items);
+      const testItems = items.filter((item) => item.step === 2 && item.context.ltp_test_mode === true);
+      if (testItems.length && testItems.length !== items.length) {
+        throw new Error("Test step-2 regeneration must not be mixed with real-mode candidates");
+      }
+      if (items.length) await saveLtpSequenceBatch(clubId, items, testItems.length > 0);
       for (const transition of transitions) {
         await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
       }

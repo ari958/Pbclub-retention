@@ -3,8 +3,8 @@ import { z } from "zod";
 import { LtpTestActionBody, DraftLtpTestStep2Body } from "@workspace/api-zod";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { supabase } from "../lib/supabaseClient";
-import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl } from "../lib/ltpTestTools";
-import { generateDueLtpStep2Drafts } from "../lib/retentionEngine";
+import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl, resetSimulatedLtpTestMessage } from "../lib/ltpTestTools";
+import { generateDueLtpStep2Drafts, regenerateRetentionCandidate } from "../lib/retentionEngine";
 import { recheckLtpSequenceDispatch } from "../lib/ltpSequenceLifecycle";
 import type { RetentionCandidate } from "../lib/retentionTypes";
 
@@ -23,6 +23,11 @@ router.post("/retention/test-tools/candidates/:id", requireClub, async (req, res
   if (!parsed.success || !id.success) { res.status(400).json({ error: "Candidate UUID, action, and actor are required" }); return; }
   const clubId = (req as ClubScopedRequest).clubId;
   try {
+    if (parsed.data.action === "reset_simulated") {
+      await resetSimulatedLtpTestMessage(clubId, id.data, parsed.data.actor);
+      res.json(await regenerateRetentionCandidate(clubId, id.data));
+      return;
+    }
     if (parsed.data.action !== "dispatch_check") {
       let sourceId = id.data;
       if (parsed.data.action === "simulate_booking") {

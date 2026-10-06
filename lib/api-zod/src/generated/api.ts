@@ -21,7 +21,12 @@ export const LtpTestActionQueryParams = zod.object({
 export const ltpTestActionBodyActorMax = 120;
 
 export const LtpTestActionBody = zod.object({
-  action: zod.enum(["backdate", "simulate_booking", "dispatch_check"]),
+  action: zod.enum([
+    "backdate",
+    "simulate_booking",
+    "dispatch_check",
+    "reset_simulated",
+  ]),
   actor: zod.string().min(1).max(ltpTestActionBodyActorMax),
 });
 

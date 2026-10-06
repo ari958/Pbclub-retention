@@ -6,6 +6,19 @@ export function requireLtpTestOverride(): void {
   }
 }
 
+export async function resetSimulatedLtpTestMessage(clubId: string, candidateId: string, actor: string): Promise<void> {
+  requireLtpTestOverride();
+  const { error } = await supabase.rpc("retention_ltp_test_reset", {
+    p_club_id: clubId, p_candidate_id: candidateId, p_actor: actor, p_override_enabled: true,
+  });
+  if (error) {
+    const missing = /schema cache|could not find the function|does not exist/i.test(error.message);
+    throw Object.assign(new Error(missing
+      ? "Apply migration 016_ltp_simulation_reset_and_draft_timestamps.sql in the existing Supabase SQL Editor first"
+      : error.message), { status: missing ? 503 : error.code === "42501" ? 403 : 409 });
+  }
+}
+
 export async function ltpTestRpc(operation: string, clubId: string, payload: Record<string, unknown>) {
   requireLtpTestOverride();
   const { data, error } = await supabase.rpc("retention_ltp_test_rpc", {

@@ -4,6 +4,7 @@ import { supabase } from "../supabaseClient.js";
 import { runQueueTick } from "../queuePoller.js";
 
 const originalRetentionMode = process.env.RETENTION_ONLY_MODE;
+const originalSmsLive = process.env.SMS_LIVE;
 const originalSupabaseFrom = (supabase as any).from;
 
 const MESSAGE_ID = "00000000-0000-4000-8000-000000000011";
@@ -77,6 +78,7 @@ function reset(candidate: any, candidateError: { message: string } | null = null
   state.updates = [];
   state.reads = [];
   process.env.RETENTION_ONLY_MODE = "true";
+  process.env.SMS_LIVE = "true";
   (supabase as any).from = (table: string) => queryFor(table);
 }
 
@@ -110,4 +112,6 @@ test("queue poller test environment is restored", () => {
   (supabase as any).from = originalSupabaseFrom;
   if (originalRetentionMode === undefined) delete process.env.RETENTION_ONLY_MODE;
   else process.env.RETENTION_ONLY_MODE = originalRetentionMode;
+  if (originalSmsLive === undefined) delete process.env.SMS_LIVE;
+  else process.env.SMS_LIVE = originalSmsLive;
 });

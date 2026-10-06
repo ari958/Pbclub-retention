@@ -405,8 +405,8 @@ export default function Approvals() {
 
         <main className="approvals-content" style={{ flex: 1, minWidth: 0, overflowY: "auto", padding: "20px 28px", display: "flex", flexDirection: "column", gap: 16 }}>
           {data && data.mode.sms_live === false && (
-            <div role="alert" data-testid="banner-simulated" style={{ background: D.accentBg, border: "1px solid rgba(232,168,56,0.3)", borderRadius: 7, padding: "10px 14px", color: D.accent, fontSize: 12, lineHeight: 1.6 }}>
-              Live sending is off. Approved texts are consumed by the queue as simulated sends and will not be delivered. Do not approve the acceptance-test texts until live sending and the operator test override are both on.
+            <div role="alert" data-testid="banner-held" style={{ background: D.accentBg, border: "1px solid rgba(232,168,56,0.3)", borderRadius: 7, padding: "10px 14px", color: D.accent, fontSize: 12, lineHeight: 1.6 }}>
+              Live sending is off. Approved texts will wait and send when live sending is turned on.
             </div>
           )}
           {(warnings.length > 0 || couponFails > 0 || (data && (!data.schema_ready || !data.retry_context_ready || !ltpSequenceReady))) && (
@@ -430,7 +430,7 @@ export default function Approvals() {
               {data.mode.sms_live !== undefined && <span>live sending: {data.mode.sms_live ? "on" : "off"}</span>}
               {data.mode.test_override_configured !== undefined && <span>test override: {data.mode.test_override_configured ? "configured, texts go to the test number" : "not configured"}</span>}
               {data.mode.sms_live === false && (
-                <span data-testid="text-simulated-mode" style={{ color: D.accent }}>Approved texts will be simulated, not delivered.</span>
+                <span data-testid="text-held-mode" style={{ color: D.accent }}>Approved texts are held; nothing is simulated or consumed. Sending must also be resumed.</span>
               )}
               {ks === true && <span style={{ color: D.redText }}>Paused: nothing sends, including approved messages.</span>}
               {ks == null && <span style={{ color: D.redText }}>Kill switch state unknown: sends are blocked.</span>}
@@ -589,6 +589,7 @@ export default function Approvals() {
                   </div>
                   {list.map((c) => (
                     <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
+                      liveSending={data?.mode.sms_live === true}
                       testTools={data?.mode.test_override_configured ? <LtpTestTools candidate={c} slug={slug} actor={operator} onChanged={load} /> : undefined}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
                       onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}

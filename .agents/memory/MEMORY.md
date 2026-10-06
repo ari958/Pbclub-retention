@@ -21,3 +21,4 @@
 - [PodPlay context rate limits](podplay-context-rate-limits.md) — sequential candidate rebuilds can still hit signup-read limits; pace/share batch reads and fail closed on 429.
 - [Retention SQL verification](retention-sql-verification.md) — compile and exercise migrations in isolated PostgreSQL fixtures; source-contract tests do not prove SQL validity or safe backfills.
 - [CLI runtime parity](frontend-test-runtime.md) — CLI scripts and tests can resolve mixed JS/TS and JSX differently from production; align the harness, not working imports.
+- [Live sending holds](sms-live-holds.md) — live-off preserves approvals; simulation resets need override, audit, and proof no provider delivery occurred.

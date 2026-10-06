@@ -9,8 +9,9 @@ export function LtpTestTools({ candidate, slug, actor, onChanged }: {
   const stepOne = candidate.step === 1 && candidate.status === "sent"
     && candidate.message?.retention_delivery_kind === "test";
   const stepTwo = candidate.step === 2 && candidate.status === "drafted" && candidate.context.ltp_test_mode === true;
-  if (candidate.playbook_key !== "ltp_followup" || candidate.sequence_status !== "active" || (!stepOne && !stepTwo)) return null;
-  const run = async (action: "backdate" | "draft" | "simulate_booking" | "dispatch_check") => {
+  const resettable = candidate.status === "sent" && candidate.message?.simulated === true;
+  if (candidate.playbook_key !== "ltp_followup" || (!resettable && candidate.sequence_status !== "active") || (!stepOne && !stepTwo && !resettable)) return null;
+  const run = async (action: "backdate" | "draft" | "simulate_booking" | "dispatch_check" | "reset_simulated") => {
     if (!actor.trim()) { setResult("Enter your operator name above before using test tools."); return; }
     setBusy(true); setResult(null);
     try {
@@ -26,6 +27,7 @@ export function LtpTestTools({ candidate, slug, actor, onChanged }: {
     <strong>Test-only step 2 tools</strong>
     <p>Requires a verified test step-1 send and the configured test override. These actions never approve, schedule, or send.</p>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+      {resettable && <button disabled={busy} onClick={() => void run("reset_simulated")}>Reset never-delivered simulation and rebuild draft</button>}
       {stepOne && <>
         <button disabled={busy} onClick={() => void run("backdate")}>Backdate test eligibility</button>
         <button disabled={busy} onClick={() => void run("draft")}>Draft test step 2</button>

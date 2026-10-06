@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { supabase } from "../supabaseClient";
-import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride, normalizeCreatedLtpTestDrafts } from "../ltpTestTools";
+import { ltpTestRpc, readLtpTestControl, requireLtpTestOverride, normalizeCreatedLtpTestDrafts, resetSimulatedLtpTestMessage } from "../ltpTestTools";
 import { stepOneRealSentAt, recheckLtpSequenceDispatch } from "../ltpSequenceLifecycle";
 import { buildLtpStepText } from "../ltpPhraseBuilder";
 import { validateLtpSequenceText } from "../retentionText";
@@ -43,6 +43,7 @@ test("all test actions refuse with 403 before database access when override is a
     supabase.rpc = (() => { throw new Error("Unexpected database call"); }) as any;
     assert.throws(requireLtpTestOverride, (e: any) => e.status === 403);
     await assert.rejects(ltpTestRpc("backdate", "club", {}), (e: any) => e.status === 403);
+    await assert.rejects(resetSimulatedLtpTestMessage("club", "candidate", "Fixture operator"), (e: any) => e.status === 403);
     assert.equal(await readLtpTestControl("club", "sequence"), null);
   } finally { restore(); }
 });

@@ -112,4 +112,42 @@ BEGIN
   PERFORM public.fixture_assert(NOT EXISTS((SELECT * FROM public.messages WHERE id IN(SELECT id FROM unchanged_messages))
     EXCEPT (SELECT * FROM unchanged_messages)),'original sent messages and approval/send evidence unchanged');
 END $test$;
+
+DO $test$
+DECLARE club uuid:='00000000-0000-4000-8000-000000000001';
+  candidate uuid:='00000000-0000-4000-8000-000000000010'; msg uuid;
+  refused boolean:=false; result jsonb;
+BEGIN
+  SELECT message_id INTO msg FROM public.retention_candidates WHERE id=candidate;
+  BEGIN PERFORM public.retention_ltp_test_reset(club,candidate,'Fixture operator',false);
+  EXCEPTION WHEN insufficient_privilege THEN refused:=true; END;
+  PERFORM public.fixture_assert(refused,'reset refused without override');
+  PERFORM public.fixture_assert(has_function_privilege('service_role',
+    'public.retention_ltp_test_reset(uuid,uuid,text,boolean)','EXECUTE'),'service role may invoke reset');
+  PERFORM public.fixture_assert(NOT has_function_privilege('authenticated',
+    'public.retention_ltp_test_reset(uuid,uuid,text,boolean)','EXECUTE'),'authenticated role cannot invoke reset');
+  DELETE FROM public.contact_ledger WHERE message_id=msg;
+  UPDATE public.messages SET simulated=true,retention_delivery_kind='simulated' WHERE id=msg;
+  refused:=false;
+  BEGIN PERFORM public.retention_ltp_test_reset(club,candidate,'Fixture operator',true);
+  EXCEPTION WHEN OTHERS THEN refused:=true; END;
+  PERFORM public.fixture_assert(refused,'delivered step cannot be reset');
+  UPDATE public.messages SET delivered_at=NULL,delivery_status=NULL,simulated=true,
+    retention_delivery_kind='simulated',twilio_message_sid='SMactual-provider-sid' WHERE id=msg;
+  refused:=false;
+  BEGIN PERFORM public.retention_ltp_test_reset(club,candidate,'Fixture operator',true);
+  EXCEPTION WHEN OTHERS THEN refused:=true; END;
+  PERFORM public.fixture_assert(refused,'any actual Twilio SID prevents reset');
+  UPDATE public.messages SET twilio_message_sid='SIMULATED' WHERE id=msg;
+  result:=public.retention_ltp_test_reset(club,candidate,'Fixture operator',true);
+  PERFORM public.fixture_assert(result->>'status'='needs_context','reset requires fresh context before approval');
+  PERFORM public.fixture_assert(EXISTS(SELECT 1 FROM public.messages WHERE id=msg AND status='pending'
+    AND approved_at IS NULL AND scheduled_send_at IS NULL AND sent_at IS NULL
+    AND dispatch_claimed_at IS NULL AND twilio_message_sid IS NULL),'reset clears simulation and approval without scheduling or sending');
+  PERFORM public.fixture_assert(EXISTS(SELECT 1 FROM public.retention_sequences
+    WHERE id='00000000-0000-4000-8000-000000000006' AND sequence_status='active' AND step2_sent_at IS NULL),'reset restores active sequence and clears simulated step-2 clock');
+  PERFORM public.fixture_assert(EXISTS(SELECT 1 FROM public.retention_ltp_test_audit
+    WHERE action='reset_simulated' AND candidate_id=candidate AND actor='Fixture operator'
+      AND details->'message'->>'twilio_message_sid'='SIMULATED'),'reset audit preserves simulation and approval evidence');
+END $test$;
 ROLLBACK;

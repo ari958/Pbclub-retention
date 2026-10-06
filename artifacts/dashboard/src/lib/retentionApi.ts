@@ -123,7 +123,7 @@ async function call<T>(slug: string, path: string, method = "GET", body?: unknow
 }
 
 export const retentionApi = {
-  ltpTestAction: (s: string, id: string, action: "backdate" | "simulate_booking" | "dispatch_check", actor: string) =>
+  ltpTestAction: (s: string, id: string, action: "backdate" | "simulate_booking" | "dispatch_check" | "reset_simulated", actor: string) =>
     call<Record<string, unknown>>(s, `/api/retention/test-tools/candidates/${id}`, "POST", { action, actor }),
   draftTestStep2: (s: string, candidate_ids: string[]) =>
     call<LtpRegenerateBatchEnvelope>(s, "/api/retention/test-tools/draft-step2", "POST", { candidate_ids }),

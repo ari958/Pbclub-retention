@@ -55,5 +55,6 @@ with tempfile.TemporaryDirectory(prefix="ltp-test-sql-") as directory:
         "psql", "-X", "-v", "ON_ERROR_STOP=1", *connection,
         "-f", str(role_safe), "-f", str(original),
         "-f", str(root / "migrations/015_ltp_test_tools.sql"),
+        "-f", str(root / "migrations/016_ltp_simulation_reset_and_draft_timestamps.sql"),
         "-f", str(root / "src/lib/__tests__/sql/ltpTestTools.assert.sql"),
     ], check=True)

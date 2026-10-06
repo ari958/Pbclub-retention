@@ -361,8 +361,8 @@ BEGIN
   ON CONFLICT(player_id,playbook_key,step) DO NOTHING RETURNING id INTO v_id;
   IF v_id IS NULL THEN RETURN NULL; END IF;
   IF p_status='drafted' THEN
-    INSERT INTO public.messages(player_id,body,direction,sent_by,status)
-    VALUES(p_player_id,btrim(p_body),'outbound','agent','pending')
+    INSERT INTO public.messages(player_id,body,direction,sent_by,status,sent_at)
+    VALUES(p_player_id,btrim(p_body),'outbound','agent','pending',NULL)
     RETURNING id INTO v_msg_id;
     UPDATE public.retention_candidates SET message_id=v_msg_id WHERE id=v_id;
   END IF;
@@ -1106,8 +1106,8 @@ BEGIN
 
     IF v_operation='create' THEN
       IF v_status='drafted' THEN
-        INSERT INTO public.messages(player_id,body,direction,sent_by,status)
-        VALUES(v_player_id,btrim(v_item->>'body'),'outbound','agent','pending')
+        INSERT INTO public.messages(player_id,body,direction,sent_by,status,sent_at)
+        VALUES(v_player_id,btrim(v_item->>'body'),'outbound','agent','pending',NULL)
         RETURNING id INTO v_message_id;
       END IF;
       INSERT INTO public.retention_candidates(
@@ -1120,8 +1120,8 @@ BEGIN
     ELSE
       SELECT * INTO v_candidate FROM public.retention_candidates WHERE id=v_candidate_id;
       IF v_candidate.message_id IS NULL AND v_status='drafted' THEN
-        INSERT INTO public.messages(player_id,body,direction,sent_by,status)
-        VALUES(v_player_id,btrim(v_item->>'body'),'outbound','agent','pending')
+        INSERT INTO public.messages(player_id,body,direction,sent_by,status,sent_at)
+        VALUES(v_player_id,btrim(v_item->>'body'),'outbound','agent','pending',NULL)
         RETURNING id INTO v_message_id;
       ELSE
         v_message_id:=v_candidate.message_id;

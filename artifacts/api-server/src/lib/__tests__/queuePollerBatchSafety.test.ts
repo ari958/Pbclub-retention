@@ -162,6 +162,25 @@ after(() => {
   }
 });
 
+test("live sending off holds approvals untouched; live on still requires resume and reruns dispatch checks", async () => {
+  const before = JSON.stringify({ messages, candidates });
+  process.env.SMS_LIVE = "false";
+  const held = await runQueueTick();
+  assert.equal(held.processed, 0);
+  assert.equal(held.sent, 0);
+  assert.deepEqual(submissions, []);
+  assert.equal(JSON.stringify({ messages, candidates }), before);
+  assert.equal(calls.length, 0);
+  process.env.SMS_LIVE = "true";
+  paused = true;
+  assert.equal((await runQueueTick()).sent, 0);
+  assert.equal(JSON.stringify({ messages, candidates }), before);
+  paused = false;
+  assert.equal((await runQueueTick()).sent, 2);
+  assert.equal(submissions.length, 2);
+  assert.ok(calls.some((url) => url.includes("/signups")));
+});
+
 test("pause between two batch messages blocks the second; Resume dispatches it next tick", async () => {
   pauseAfterFirst = true;
   const first = await runQueueTick();

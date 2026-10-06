@@ -74,7 +74,10 @@ BEGIN
         'v_sequence.step1_delivery_kind IS DISTINCT FROM ''test''');
       amended:=replace(amended,'now()-v_sequence.step1_sent_at',
         'now()-public.retention_ltp_test_effective_time(v_sequence.id)');
-      IF strpos(source,'INSERT INTO public.messages(player_id,body,direction,sent_by,status)')=0
+      IF strpos(source,'INSERT INTO public.messages(player_id,body,direction,sent_by,status,sent_at)')>0
+        AND strpos(source,'''outbound'',''agent'',''pending'',NULL)')>0 THEN
+        NULL; -- Source already creates unsent drafts explicitly.
+      ELSIF strpos(source,'INSERT INTO public.messages(player_id,body,direction,sent_by,status)')=0
         OR strpos(source,'''outbound'',''agent'',''pending'')')=0 THEN
         RAISE EXCEPTION 'Unexpected draft insertion; inspect before installing';
       END IF;

@@ -30,7 +30,7 @@ paths:
               additionalProperties: false
               required: [action, actor]
               properties:
-                action: { type: string, enum: [backdate, simulate_booking, dispatch_check] }
+                action: { type: string, enum: [backdate, simulate_booking, dispatch_check, reset_simulated] }
                 actor: { type: string, minLength: 1, maxLength: 120 }
       responses:
         "200":
