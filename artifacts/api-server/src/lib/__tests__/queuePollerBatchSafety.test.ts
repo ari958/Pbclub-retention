@@ -28,12 +28,27 @@ let messageSubmitted: Map<string, number>;
 
 function fakeQuery(table: string) {
   const filters: Record<string, any> = {};
+  const orGroups: Array<Array<(row: any) => boolean>> = [];
   let op = "read";
   let changes: any;
   const q: any = {
     select: () => q, order: () => q, limit: () => q,
     eq: (key: string, value: any) => { filters[key] = value; return q; },
     is: (key: string, value: any) => { filters[key] = value; return q; },
+    or: (expression: string) => {
+      // Evaluate the actual PostgREST alternatives rather than accepting every row.
+      orGroups.push(expression.split(",").map(term => {
+        const condition = /^([a-zA-Z_]\w*)\.(is|eq)\.(.+)$/.exec(term);
+        if (!condition || (condition[2] === "is" && condition[3] !== "null")) {
+          throw new Error(`Unsupported mock .or() condition: ${term}`);
+        }
+        const [, key, operator, value] = condition;
+        return (row: any) => operator === "is"
+          ? row[key] == null
+          : String(row[key]) === value;
+      }));
+      return q;
+    },
     not: () => q, neq: () => q, lte: () => q, gt: () => q,
     update: (value: any) => { op = "update"; changes = value; return q; },
     insert: () => { op = "insert"; return q; },
@@ -49,7 +64,8 @@ function fakeQuery(table: string) {
       } else if (filters.id) {
         data = messages.find((m) => m.id === filters.id);
         if (op === "read" && !messageStarted.has(filters.id)) messageStarted.set(filters.id, Date.now());
-        if (op === "update") Object.assign(data, changes);
+        if (data && !orGroups.every(group => group.some(matches => matches(data)))) data = null;
+        if (op === "update" && data) Object.assign(data, changes);
       } else data = messages.filter((m) => m.status === "pending");
     } else if (table === "clubs") {
       data = { sms_kill_switch: paused };
@@ -160,6 +176,26 @@ after(() => {
     if (originals.env[key] === undefined) delete process.env[key];
     else process.env[key] = originals.env[key];
   }
+});
+
+test("mock .or permits a null or matching SID and rejects a conflicting SID without updating it", async () => {
+  const query = () => fakeQuery("messages").eq("id", "one")
+    .or("twilio_message_sid.is.null,twilio_message_sid.eq.SM-offline-1");
+  const nullSid = await query().update({ error_message: "null SID matched" }).maybeSingle();
+  assert.equal(nullSid.data.id, "one");
+  assert.equal(messages[0].error_message, "null SID matched");
+
+  messages[0].twilio_message_sid = "SM-offline-1";
+  const sameSid = await query().update({ error_message: "matching SID matched" }).maybeSingle();
+  assert.equal(sameSid.data.id, "one");
+  assert.equal(messages[0].error_message, "matching SID matched");
+
+  messages[0].twilio_message_sid = "SM-conflicting";
+  const before = JSON.stringify(messages[0]);
+  const differentSid = await query().update({ error_message: "must not update" }).maybeSingle();
+  assert.equal(differentSid.data, null);
+  assert.equal(JSON.stringify(messages[0]), before);
+  assert.throws(() => fakeQuery("messages").or("twilio_message_sid.is.not_supported"), /Unsupported/);
 });
 
 test("live sending off holds approvals untouched; live on still requires resume and reruns dispatch checks", async () => {
