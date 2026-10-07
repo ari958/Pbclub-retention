@@ -239,14 +239,24 @@ export async function submitProductionSms(
   clubId: string, to: string, body: string, audit: DispatchAudit,
   client = testClientFactory ? testClientFactory() : getTwilioClient(),
   operatorTestId?: string,
+  memberClaim?: { messageId: string; claimedAt: string; token?: string },
 ) {
   await assertFinalTransportAllowed(clubId, audit);
   const callback = process.env.PUBLIC_API_URL?.replace(/\/$/, "");
   const service = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  const correlation = operatorTestId
+    ? new URLSearchParams({ operator_test_id: operatorTestId })
+    : memberClaim
+      ? new URLSearchParams({
+          member_message_id: memberClaim.messageId,
+          dispatch_claimed_at: memberClaim.claimedAt,
+          ...(memberClaim.token ? { dispatch_token: memberClaim.token } : {}),
+        })
+      : null;
   return client.messages.create({
     to, body,
     ...(service ? { messagingServiceSid: service, shortenUrls: true } : { from: process.env.TWILIO_PHONE_NUMBER! }),
-    ...(callback ? { statusCallback: `${callback}/api/messages/webhook/status${operatorTestId ? `?operator_test_id=${encodeURIComponent(operatorTestId)}` : ""}` } : {}),
+    ...(callback ? { statusCallback: `${callback}/api/messages/webhook/status${correlation ? `?${correlation}` : ""}` } : {}),
   });
 }
 
@@ -362,15 +372,6 @@ async function sendApprovedMessage(
   if (LEGACY_SMS_OVERRIDE_DIAGNOSTIC_PARKED && overrideTo) {
     logger.info({ messageId: context.messageId, isTest }, "[SMS OVERRIDE] legacy diagnostic (parked)");
   }
-  const messagingServiceSid = process.env.TWILIO_MESSAGING_SERVICE_SID;
-  // TWILIO_PHONE_NUMBER is the canonical from-number env var.
-  // clubs.twilio_number exists in the DB but is intentionally unused here;
-  // per-club Twilio numbers are a future milestone.
-  const from = process.env.TWILIO_PHONE_NUMBER;
-  const statusCallbackUrl = process.env.PUBLIC_API_URL
-    ? `${process.env.PUBLIC_API_URL.replace(/\/$/, "")}/api/messages/webhook/status`
-    : undefined;
-
   if (smsLive) {
     audit.begin("ledger_schema");
     // Validate schema and credentials before claiming: these checks cannot
@@ -572,7 +573,20 @@ async function sendApprovedMessage(
       }
     }
 
-    const msg = await submitProductionSms(player.club_id, effectiveTo, body, audit, client!);
+    // Redirected member sends must be classified before a fast receipt arrives.
+    // The claim still has to belong to this fully approved dispatch.
+    const ownClaim = (query: any) => ltpCandidate
+      ? query.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
+      : query.eq("dispatch_claimed_at", claimedAt).eq("dispatch_token", claimToken);
+    if (isTest) {
+      const { data, error } = await ownClaim(supabase.from("messages")
+        .update({ retention_delivery_kind: "test" })
+        .eq("id", context.messageId).eq("status", "pending")).select("id").maybeSingle();
+      if (error || !data) throw new Error(`Could not classify redirected dispatch: ${error?.message ?? "claim lost"}`);
+    }
+    const msg = await submitProductionSms(player.club_id, effectiveTo, body, audit, client!, undefined, {
+      messageId: context.messageId, claimedAt, ...(!ltpCandidate ? { token: claimToken } : {}),
+    });
     const sentAt = currentTime().toISOString();
     const ledgerRow = {
       club_id: player.club_id,
@@ -592,33 +606,36 @@ async function sendApprovedMessage(
       throw new Error(`SMS may have been delivered but contact ledger write failed: ${ledgerError.message}`);
     }
 
-    let messageUpdateQuery = supabase
+    // Acceptance evidence is independent of delivery outcome: an early failed
+    // receipt is not a lost claim, and must never become "sent" again.
+    const messageUpdateQuery = ownClaim(supabase
       .from("messages")
       .update({
-        status: "sent",
         twilio_message_sid: msg.sid,
         simulated: false,
         sent_at: sentAt,
-        ...(ltpCandidate
-          ? {
-              ...(isTest
-                ? { retention_delivery_kind: "test" }
-                : msg.status === "delivered" ? { retention_delivery_kind: "real" } : {}),
-              ...(msg.status === "delivered" ? { delivery_status: "delivered", delivered_at: sentAt } : {}),
-            }
-          : {}),
       })
       .eq("id", context.messageId)
-      .eq("status", "pending");
-    messageUpdateQuery = ltpCandidate
-      ? messageUpdateQuery.eq("dispatch_claimed_at", claimedAt).is("dispatch_token", null)
-      : messageUpdateQuery.eq("dispatch_token", claimToken);
+      .or(`twilio_message_sid.is.null,twilio_message_sid.eq.${msg.sid}`));
     const { data: updated, error: messageUpdateError } = await messageUpdateQuery
-      .select(ltpCandidate ? "id,delivery_status,delivered_at" : "id")
+      .select("id")
       .maybeSingle();
     if (messageUpdateError || !updated) {
       throw new Error(`SMS may have been delivered but message bookkeeping failed: ${messageUpdateError?.message ?? "claim no longer owns the pending message"}`);
     }
+
+    const { error: sentError } = await ownClaim(supabase.from("messages")
+      .update({ status: "sent" }).eq("id", context.messageId).eq("status", "pending"));
+    if (sentError) throw new Error(`Could not record SMS acceptance: ${sentError.message}`);
+    // Provider responses are only an initial receipt, never a replacement for
+    // a callback that raced the response (including queued/failed/delivered).
+    const { error: receiptError } = await ownClaim(supabase.from("messages")
+      .update({
+        delivery_status: msg.status,
+        ...(msg.status === "delivered" ? { delivered_at: sentAt } : {}),
+        ...(["failed", "undelivered"].includes(msg.status) ? { status: msg.status } : {}),
+      }).eq("id", context.messageId).is("delivery_status", null));
+    if (receiptError) throw new Error(`Could not record initial SMS receipt: ${receiptError.message}`);
 
     const { error: candidateError } = await supabase
       .from("retention_candidates")
@@ -635,23 +652,12 @@ async function sendApprovedMessage(
       } catch (error) {
         logger.error({ messageId: context.messageId, err: error }, "Redirected LTP test delivery persisted but its sequence bookkeeping failed");
       }
-    } else if (ltpCandidate && msg.status === "delivered") {
+    } else if (ltpCandidate) {
       try {
         await confirmLtpRecipientDelivery(context.messageId);
       } catch (error) {
         logger.error({ messageId: context.messageId, err: error }, "Delivered LTP message persisted but its real-delivery bookkeeping failed");
         throw new Error(`LTP SMS was delivered but its sequence could not be updated: ${error instanceof Error ? error.message : String(error)}`);
-      }
-    } else if (
-      ltpCandidate
-      && !isTest
-      && (updated as any)?.delivery_status === "delivered"
-      && (updated as any)?.delivered_at
-    ) {
-      try {
-        await confirmLtpRecipientDelivery(context.messageId);
-      } catch (error) {
-        logger.error({ messageId: context.messageId, err: error }, "Earlier Twilio delivery receipt could not be applied to the LTP sequence");
       }
     }
 

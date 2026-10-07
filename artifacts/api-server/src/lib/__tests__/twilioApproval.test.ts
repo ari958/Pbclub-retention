@@ -71,6 +71,7 @@ function queryFor(table: string) {
     is(key: string, value: any) { filters[key] = value; return query; },
     neq(key: string, value: any) { filters[key] = { neq: value }; return query; },
     not(key: string, operator: string, value: any) { filters[key] = { operator, value }; return query; },
+    or(value: string) { filters.or = value; return query; },
     order() { return query; },
     limit() { return query; },
     maybeSingle() { return Promise.resolve(resolve()); },
@@ -116,6 +117,12 @@ function queryFor(table: string) {
       }
     }
     if (table === "messages" && operation === "update") {
+      if (filters.or && !filters.or.split(",").some((clause: string) => {
+        const [key, op, ...parts] = clause.split(".");
+        return op === "is" ? state.message[key] == null : String(state.message[key]) === parts.join(".");
+      })) return { data: null, error: null };
+      if (Object.hasOwn(filters, "delivery_status") && filters.delivery_status === null
+        && state.message.delivery_status != null) return { data: null, error: null };
       if (filters.status && state.message.status !== filters.status) {
         return { data: null, error: null };
       }

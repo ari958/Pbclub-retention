@@ -504,14 +504,47 @@ router.post("/messages/webhook/status", async (req, res) => {
 
   let affected: any;
   let statusError: { message: string } | null = null;
+  // These query parameters are covered by Twilio's signature validation in
+  // app.ts. They correlate receipts only; they never authorize a dispatch.
+  const memberId = req.query.member_message_id;
+  const claimedAt = req.query.dispatch_claimed_at;
+  const claimToken = req.query.dispatch_token;
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  const memberCorrelation = memberId !== undefined;
+  if (memberCorrelation && (
+    typeof memberId !== "string" || !uuid.test(memberId)
+    || typeof claimedAt !== "string" || !Number.isFinite(Date.parse(claimedAt))
+    || (claimToken !== undefined && (typeof claimToken !== "string" || !uuid.test(claimToken)))
+  )) {
+    res.status(400).send("Invalid member dispatch correlation");
+    return;
+  }
+  const bindMemberClaim = (query: any) => {
+    if (!memberCorrelation) return query;
+    query = query.eq("id", memberId).eq("dispatch_claimed_at", claimedAt)
+      .not("approved_at", "is", null).not("approved_by", "is", null).not("approved_body", "is", null)
+      .or("player_id.not.is.null,conversation_id.not.is.null");
+    return claimToken === undefined ? query.is("dispatch_token", null) : query.eq("dispatch_token", claimToken);
+  };
   try {
-    const result = await supabase
+    const result = await bindMemberClaim(supabase
       .from("messages")
       .update(update)
-      .eq("twilio_message_sid", messageSid)
+      .eq("twilio_message_sid", messageSid))
       .select("id,player_id,conversation_id,retention_delivery_kind");
     affected = result.data;
     statusError = result.error;
+    if (!statusError && !affected?.length && memberCorrelation) {
+      const early = await bindMemberClaim(supabase.from("messages")
+        .update({ ...update, twilio_message_sid: messageSid })
+        .is("twilio_message_sid", null))
+        .select("id,player_id,conversation_id,retention_delivery_kind");
+      affected = early.data;
+      statusError = early.error;
+      if (!statusError && !affected?.length) {
+        statusError = { message: "Signed member receipt did not match its approved dispatch claim" };
+      }
+    }
     const operatorId = req.query.operator_test_id;
     if (!statusError && !affected?.length && typeof operatorId === "string"
       && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operatorId)) {
@@ -537,10 +570,10 @@ router.post("/messages/webhook/status", async (req, res) => {
   if (isTwilio21610(ErrorCode) && !operatorTestReceipt) {
     let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
     if (!messages.length) {
-      const { data: linked, error: lookupError } = await supabase
+      const { data: linked, error: lookupError } = await bindMemberClaim(supabase
         .from("messages")
         .select("id,player_id,conversation_id")
-        .eq("twilio_message_sid", messageSid)
+        .eq("twilio_message_sid", messageSid))
         .maybeSingle();
       if (lookupError) {
         req.log.error({ err: lookupError.message, MessageSid }, "Could not resolve message for Twilio opt-out");
