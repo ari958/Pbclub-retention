@@ -174,7 +174,7 @@ const VALID_SIGNUP_STATUSES = ATTENDANCE_SIGNUP_STATUSES;
  *                                   ~100 players so the jobs table last_heartbeat
  *                                   stays current (prevents stale-job reclaim).
  */
-export async function syncEventAttendance(clubId, log = console.log, isCancelled = () => false, sinceDays = 0, heartbeat = async () => {}) {
+export async function syncEventAttendance(clubId, log = console.log, isCancelled = () => false, sinceDays = 0, heartbeat = async () => {}, { preserveMessageHistory = false } = {}) {
   if (!clubId) throw new Error("syncEventAttendance requires clubId");
 
   const stats = {
@@ -486,7 +486,7 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
       }
 
       const newAttendance = newAttendancesByPlayer.get(player.id);
-      if (newAttendance) {
+      if (newAttendance && !preserveMessageHistory) {
         const wasWinback = await checkAndMarkWinback(player.id, newAttendance, log);
         if (wasWinback) {
           stats.winbacksDetected++;
