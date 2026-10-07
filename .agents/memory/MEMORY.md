@@ -24,3 +24,4 @@
 - [Live sending holds](sms-live-holds.md) — live-off preserves approvals; simulation resets need override, audit, and proof no provider delivery occurred.
 - [Background worker leases](background-locks.md) — Supabase REST cannot retain session advisory locks across long jobs; use owner-bound leases and fail-stop on renewal loss.
 - [SMS receipt races](sms-receipt-races.md) — provider acceptance and delivery evidence are separate; correlate early receipts to claims, not dispatch authorization.
+- [Test environment isolation](test-environment-isolation.md) — isolate inherited SMS overrides in child test runners; fixtures must explicitly select recipient mode.
