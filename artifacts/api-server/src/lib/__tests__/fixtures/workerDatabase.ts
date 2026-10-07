@@ -37,6 +37,12 @@ function request(operation: (signal?: AbortSignal) => Promise<unknown>) {
   };
 }
 
+function initialFailure(kind: string) {
+  if (process.env.FIXTURE_STARTUP_FAULT === kind) {
+    process.send?.({ type: "startup-fault", kind, pid: process.pid });
+    throw new Error(`Injected initial ${kind} failure`);
+  }
+}
 async function failure(kind: string, signal?: AbortSignal) {
   const mode = await sql(`SELECT mode FROM fixture_faults WHERE pid=${process.pid} AND kind=${literal(kind)}`, signal);
   if (mode === "error") throw new Error(`Injected ${kind} failure`);
@@ -51,6 +57,9 @@ async function failure(kind: string, signal?: AbortSignal) {
 export const supabase = {
   rpc(name: string, args: Record<string, unknown>) {
     return request(async signal => {
+      if (name === "operator_acquire_job_lock" && args.p_name === "background-worker") {
+        initialFailure("acquire");
+      }
       if (name === "operator_renew_job_lock" && args.p_name === "background-worker") {
         if (!await failure("renew", signal)) return false;
       }
@@ -69,9 +78,17 @@ export const supabase = {
     });
   },
   from(table: string) {
+    // Application template seeding is unrelated to lifecycle verification.
+    if (table === "clubs") return {
+      select(columns: string) {
+        if (columns !== "id") throw new Error("Unexpected fixture club selector");
+        return request(async () => []);
+      },
+    };
     if (table === "operator_worker_instances") return {
       upsert(row: Record<string, unknown>) {
         return request(async signal => {
+          initialFailure(`initial-registry-${row.state}`);
           if (row.state === "leader") await failure("registry", signal);
           const keys = Object.keys(row);
           await sql(`INSERT INTO operator_worker_instances(${keys.join(",")})

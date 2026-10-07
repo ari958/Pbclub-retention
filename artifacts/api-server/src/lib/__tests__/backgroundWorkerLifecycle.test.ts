@@ -7,7 +7,7 @@ import { operatorPostgresFixture } from "./fixtures/operatorPostgres";
 
 type Message = {
   type: string; instance_id?: string; pid?: number; enabled?: boolean;
-  level?: string; message?: string; renewal?: boolean; acquisition?: boolean;
+  level?: string; message?: string; renewal?: boolean; acquisition?: boolean; kind?: string;
 };
 type Worker = {
   process: ChildProcess; messages: Message[]; stderr: string;
@@ -26,25 +26,32 @@ async function until(check: () => boolean, description: string, workers: Worker[
   })))}`);
 }
 
-test("isolated production worker lifecycle through crashes, failed heartbeats and overlapping releases",
+test("isolated production worker lifecycle through startup failures, crashes, failed heartbeats and overlapping releases",
   { timeout: 120_000 }, async t => {
     const fixture = operatorPostgresFixture();
     const { sql } = fixture;
     const workers: Worker[] = [];
     const bundle = join(fixture.root, "worker.cjs");
+    const applicationBundle = join(fixture.root, "application-worker.cjs");
     try {
       sql(`CREATE TABLE fixture_starts(owner uuid PRIMARY KEY,pid integer,release text);
         CREATE TABLE fixture_work(id bigserial PRIMARY KEY,owner uuid,pid integer,release text);
         CREATE TABLE fixture_sms(event_id uuid PRIMARY KEY,owner uuid,pid integer);
         CREATE TABLE fixture_faults(pid integer,kind text,mode text,PRIMARY KEY(pid,kind));`);
       const fake = new URL("./fixtures/workerDatabase.ts", import.meta.url).pathname;
-      const output = await build({
-        entryPoints: [new URL("./fixtures/lifecycleWorker.ts", import.meta.url).pathname],
-        outfile: bundle, bundle: true, platform: "node", format: "cjs", metafile: true,
+      const services = new URL("./fixtures/applicationServices.ts", import.meta.url).pathname;
+      const outputs = await Promise.all([
+        ["lifecycleWorker.ts", bundle], ["applicationWorker.ts", applicationBundle],
+      ].map(([entry, outfile]) => build({
+        entryPoints: [new URL(`./fixtures/${entry}`, import.meta.url).pathname],
+        outfile, bundle: true, platform: "node", format: "cjs", metafile: true,
         plugins: [{
           name: "offline-worker-only",
           setup(builder) {
-            builder.onResolve({ filter: /^\.\/(supabaseClient|logger)$/ }, () => ({ path: fake }));
+            builder.onResolve({ filter: /^\.\/(?:lib\/)?(supabaseClient|logger)$/ }, () => ({ path: fake }));
+            builder.onResolve({
+              filter: /^(?:\.\/app|\.\/lib\/(?:scheduler|queuePoller|clubResolver|operatorMonitoring)|\.\.\/schema-readiness\.mjs)$/,
+            }, () => ({ path: services }));
           },
         }],
         // Only scale production's fixed wait/renew/abort deadlines. Keep the
@@ -55,18 +62,31 @@ test("isolated production worker lifecycle through crashes, failed heartbeats an
           global.setTimeout = (fn, ms, ...args) => realTimeout(fn, ms === 30000 ? 150 : ms, ...args);
           const realAbortTimeout = AbortSignal.timeout.bind(AbortSignal);
           AbortSignal.timeout = ms => realAbortTimeout(ms === 10000 ? 2000 : ms);` },
-      });
+      })));
       // Compile-time guard in addition to a scrubbed child environment: neither
       // Supabase, Twilio, production clients nor real schedulers may be bundled.
-      for (const input of Object.keys(output.metafile!.inputs)) {
-        assert.doesNotMatch(input, /node_modules|supabaseClient|\/logger\.ts|queuePoller|feedbackPoller|twilio/i);
+      for (const output of outputs) {
+        for (const input of Object.keys(output.metafile!.inputs)) {
+          assert.doesNotMatch(input, /node_modules|supabaseClient|\/logger\.ts|queuePoller|feedbackPoller|twilio/i);
+        }
       }
-      const launch = (release: string, legacyOwner?: string): Worker => {
-        const child = spawn(process.execPath, [bundle], {
+      const applicationInputs = Object.keys(outputs[1].metafile!.inputs);
+      for (const required of ["src/index.ts", "src/lib/backgroundWorker.ts", "src/lib/backgroundLock.ts"]) {
+        assert.ok(applicationInputs.some(input => input.endsWith(required)), `Must exercise real ${required}`);
+      }
+      const launch = (release: string, legacyOwner?: string, application = false, startupFault?: string): Worker => {
+        const child = spawn(process.execPath, [application ? applicationBundle : bundle], {
           // Allowlist, not a copy of process.env: no shared credentials or URLs.
           env: {
             PATH: process.env.PATH, NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true",
             SMS_LIVE: "false", WORKER_FIXTURE_SOCKET: fixture.root, FIXTURE_RELEASE: release,
+            ...(application ? {
+              PORT: "1", PUBLIC_API_URL: "https://fixture.invalid",
+              OPERATOR_PASSWORD: "synthetic-fixture-only-password",
+              ALERT_OPERATOR_TO: "+15555550100", TWILIO_PHONE_NUMBER: "+15555550101",
+              TWILIO_ACCOUNT_SID: "fixture-not-a-credential", TWILIO_AUTH_TOKEN: "fixture-not-a-credential",
+            } : {}),
+            ...(startupFault ? { FIXTURE_STARTUP_FAULT: startupFault } : {}),
             ...(legacyOwner ? { FIXTURE_LEGACY: "true", FIXTURE_LEGACY_OWNER: legacyOwner } : {}),
           },
           stdio: ["ignore", "ignore", "pipe", "ipc"],
@@ -146,6 +166,68 @@ test("isolated production worker lifecycle through crashes, failed heartbeats an
           WHERE w.pid<>s.pid OR w.release<>s.release`), "0");
         assert.equal(standby.exited, false, standby.stderr);
       };
+
+      for (const fault of ["acquire", "initial-registry-standby", "initial-registry-leader", "scheduler"]) {
+        await t.test(`${fault}: actual application startup exits before safe replacement`, async subtest => {
+          subtest.after(reset);
+          const began = Date.now();
+          const failed = launch("failed-startup", undefined, true, fault);
+          await until(() => failed.exited, "bounded application startup shutdown", [failed], 5_000);
+          assert.ok(Date.now() - began < 5_000);
+          assert.equal(failed.code, 1, failed.stderr);
+          assert.equal(failed.signal, null, "application exits itself, not via harness SIGKILL");
+          assert.ok(failed.messages.some(message => message.type === "schema-ready"),
+            "fault must be reached after startup preflight");
+          assert.ok(failed.messages.some(message => message.type === "log" && message.level === "fatal"
+            && message.message === "Background worker startup failed; terminating"),
+          "must execute index.ts startup rejection handler, not a fixture catch or renewal failure");
+          if (fault === "scheduler") {
+            assert.equal(failed.messages.filter(message => message.type === "scheduler-timer-started").length, 1,
+              "partial scheduler creates exactly one live timer before throwing");
+          } else {
+            assert.ok(failed.messages.some(message => message.type === "startup-fault" && message.kind === fault));
+            assert.ok(!failed.messages.some(message => message.type === "scheduler-timer-started"));
+          }
+          for (const type of ["protected-callback", "schedulers-started", "queue-started", "watchdog-started"]) {
+            assert.ok(!failed.messages.some(message => message.type === type), `failed startup must not reach ${type}`);
+          }
+          assert.equal(starts(), 0);
+          assert.equal(sql("SELECT count(*) FROM fixture_work"), "0");
+          assert.equal(sql("SELECT count(*) FROM fixture_sms"), "0");
+          assert.equal(owner(), "", "startup exception releases any acquired global lease");
+
+          // Start two replacements only after observing OS exit. No artificial
+          // expiry: the failed startup's real finally path must release its lease.
+          const failedMessages = failed.messages.length;
+          const replacements = [
+            launch("replacement-one", undefined, true),
+            launch("replacement-two", undefined, true),
+          ];
+          await until(() => replacements.every(worker => worker.messages.some(message => message.type === "ready"))
+            && starts() === 1 && sql("SELECT count(*) FROM fixture_sms") === "1",
+          "one replacement starts safely after startup failure", replacements);
+          const winner = replacements.find(worker => identity(worker) === owner())!;
+          const standby = replacements.find(worker => worker !== winner)!;
+          assert.ok(winner);
+          await until(() => standby.messages.some(message => message.type === "log"
+            && message.message?.includes("standby")), "replacement contender stays standby", replacements);
+          await Promise.all(replacements.map(ping));
+          await until(() => replacements.every(worker => worker.messages.some(message => message.type === "api")),
+            "replacement APIs responsive", replacements);
+          await sleep(650); // Let the partial timer and multiple renewals have time to fire.
+          assert.equal(starts(), 1);
+          assert.equal(sql("SELECT count(*) FROM fixture_sms"), "1");
+          assert.equal(sql(`SELECT count(*) FROM fixture_work WHERE pid=${failed.process.pid}`), "0");
+          assert.equal(sql(`SELECT count(*) FROM fixture_sms WHERE pid=${failed.process.pid}`), "0");
+          assert.equal(failed.messages.length, failedMessages, "dead process leaves no protected callbacks");
+          assert.equal(sql(`SELECT count(*) FROM fixture_work WHERE pid=${standby.process.pid}`), "0");
+          assert.ok(!standby.messages.some(message => message.type === "scheduler-timer-started"));
+          assert.equal(winner.messages.filter(message => message.type === "scheduler-timer-started").length, 1);
+          assert.equal(winner.messages.find(message => message.type === "api")!.enabled, true);
+          assert.equal(standby.messages.find(message => message.type === "api")!.enabled, false);
+          for (const worker of replacements) assert.equal(worker.exited, false, worker.stderr);
+        });
+      }
 
       await t.test("SIGKILL leaves standby alive and elects exactly one replacement", async subtest => {
         subtest.after(reset);
