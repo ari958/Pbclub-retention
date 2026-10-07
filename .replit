@@ -12,6 +12,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "publishing-health"
+
+[[workflows.workflow]]
+name = "publishing-health"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "env -u SMS_TEST_OVERRIDE_TO NODE_ENV=test RUN_BACKGROUND_JOBS=false SMS_LIVE=false pnpm --filter @workspace/api-server run test:publishing-health"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
