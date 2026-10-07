@@ -2,11 +2,12 @@ import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { productionWorkerConfigurationErrors } from "./src/lib/backgroundEnvironment.mjs";
+import { checkSchemaReadiness } from "./schema-readiness.mjs";
 
 // Deliberately use only the calling build process's environment. Publishing
 // supplies production values; do not load .env files or substitute dev secrets.
-// This is configuration validation only: no app imports, database calls, or
-// runtime initialization (servers, seeds, workers, or messaging).
+// No runtime imports/initialization. After configuration validation, the bounded
+// schema gate makes only metadata GET and zero-row column HEAD requests.
 export function validateProductionEnvironment(env) {
   const errors = [];
   if (typeof env.OPERATOR_PASSWORD !== "string" || env.OPERATOR_PASSWORD.length < 16) {
@@ -39,19 +40,34 @@ export function validateProductionEnvironment(env) {
   return errors;
 }
 
-export function runProductionBuild({
+export async function runProductionBuild({
   env = process.env,
   spawn = spawnSync,
   cwd = process.cwd(),
   info = message => console.info(message),
   error = message => console.error(message),
+  schemaCheck = checkSchemaReadiness,
 } = {}) {
   const errors = validateProductionEnvironment(env);
   if (errors.length) {
     error(`Production configuration preflight failed:\n${errors.map(message => `- ${message}`).join("\n")}`);
     return 1;
   }
-  info("Production configuration preflight passed for this build process. Database connectivity and schema were not checked.");
+  info("Production configuration preflight passed for this build process.");
+  let readiness;
+  try {
+    readiness = await schemaCheck({ env });
+  } catch {
+    error("Production database preflight failed; readiness could not be established.");
+    return 1;
+  }
+  info(`Production database preflight: configuration=${readiness.configuration}; connectivity=${readiness.connectivity}; schema=${readiness.schema}.`);
+  info(`Target: ${readiness.target}. Coverage: ${readiness.coverage}.`);
+  info(readiness.limitations);
+  if (readiness.configuration !== "passed" || readiness.connectivity !== "passed" || readiness.schema !== "passed") {
+    error(`Production database preflight failed:\n${readiness.errors.map(message => `- ${message}`).join("\n")}`);
+    return 1;
+  }
 
   const buildEnv = { ...env, PORT: "23183", BASE_PATH: "/dashboard/", NODE_ENV: "production" };
   for (const args of [
@@ -71,5 +87,5 @@ export function runProductionBuild({
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
-  process.exitCode = runProductionBuild();
+  process.exitCode = await runProductionBuild();
 }

@@ -22,10 +22,48 @@ and published `PUBLIC_API_URL`. It also requires `ALERT_OPERATOR_TO` when
 `RUN_BACKGROUND_JOBS` is exactly `true`, using the same worker configuration
 policy as production startup. The build targets production even if the calling
 shell has a different `NODE_ENV`. Disabled workers do not require an alert
-destination. This checks configuration only: it does not initialize the app,
-start workers, check database connectivity/schema, or send an alert. Run the
+destination. A second publishing gate validates `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY` from the actual calling build environment, then
+checks the external Supabase public REST schema. It never loads development
+credentials or uses Replit's managed `DATABASE_URL`. It does not initialize the
+app, start workers, seed/migrate data, change settings/approvals, or send an alert.
+Run the
 synthetic offline checks with
 `pnpm --filter @workspace/api-server run test:production-preflight`.
+
+### Read-only publishing schema gate
+
+The gate runs before either compiler and blocks publishing on failure. It reports
+configuration, connectivity, and schema coverage separately; a successful API
+connection is not a schema pass. All requests use the supplied service-role key,
+the public schema, and HTTPS hosted Supabase project origin. Redirects are
+rejected. Metadata is capped at 2 MiB; requests have a 3-second deadline and the
+entire check a 20-second budget. No retries, row data reads, or RPC executions.
+Output never includes credentials, project URLs, raw database errors, or rows.
+
+Scope is intentionally limited to club resolution/schedule/kill-switch columns,
+startup template columns (including `message_templates.club_id`), worker lease
+table/RPC signatures, runtime telemetry, and job state/heartbeat/log columns.
+These are checked even if the build shell has workers disabled, because the
+production run configuration enables them. See `schema-readiness.mjs` for the
+explicit column/method manifest. Other feature tables, foreign keys, types,
+constraints, seed presence, provider readiness, and successful worker execution
+are not certified by this gate.
+
+Zero-row `HEAD select=<columns>&limit=0` probes establish column availability and
+read permission, including on empty tables. A bounded `GET /rest/v1/` OpenAPI
+document checks API-advertised INSERT/UPDATE access and lease function argument
+names without executing any mutation. This assumes PostgREST's normal
+privilege-following OpenAPI mode; advertised permissions are **not** proof that
+writes, RLS policies, triggers, or RPC bodies will succeed. An unavailable or
+incomplete metadata document fails closed. Fix the external database schema or
+grants manually; this build never repairs them. Runtime `/api/healthz` is unchanged
+and remains a separate, narrower health check.
+
+The production settings lookup during preparation showed the service-role
+secret present but did not expose `SUPABASE_URL`. No live schema pass is claimed.
+Ensure the intended external project's URL/key are supplied to publishing, not
+only the workspace; the gate checks precisely those process values when run.
 
 API start command:
 

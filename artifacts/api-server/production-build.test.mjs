@@ -11,6 +11,8 @@ const valid = () => ({
   OPERATOR_PASSWORD: "offline-production-password",
   PUBLIC_API_URL: "https://production.example.com",
 });
+const ready = async () => ({ configuration: "passed", connectivity: "passed", schema: "passed",
+  errors: [], target: "offline fixture", coverage: "offline fixture", limitations: "Offline only." });
 
 test("password is required and must meet the production runtime's 16-character minimum", () => {
   for (const password of [undefined, "", "123456789012345", 123]) {
@@ -99,10 +101,10 @@ test("invalid, development, non-origin, and credential-bearing URLs fail safely"
   }
 });
 
-test("all configuration errors appear before any compilation, with no secret values", () => {
+test("all configuration errors appear before any compilation, with no secret values", async () => {
   const output = [];
   let calls = 0;
-  const status = runProductionBuild({
+  const status = await runProductionBuild({
     env: { OPERATOR_PASSWORD: "private-short", PUBLIC_API_URL: "https://private:token@bad-url", RUN_BACKGROUND_JOBS: "true" },
     spawn: () => { calls++; throw new Error("Must not compile"); },
     info: message => output.push(message),
@@ -116,14 +118,15 @@ test("all configuration errors appear before any compilation, with no secret val
   assert.doesNotMatch(output.join("\n"), /private-short|private:token|bad-url/);
 });
 
-test("valid configuration passes the supplied publishing values unchanged to both compilers", () => {
+test("valid configuration passes the supplied publishing values unchanged to both compilers", async () => {
   const env = { ...valid(), NODE_ENV: "development", SUPABASE_SERVICE_ROLE_KEY: "offline-database-secret",
     RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123" };
   const original = { ...env };
   const calls = [];
   const output = [];
-  assert.equal(runProductionBuild({
+  assert.equal(await runProductionBuild({
     env, cwd: "/offline-workspace",
+    schemaCheck: async ({ env: supplied }) => { assert.equal(supplied, env); return ready(); },
     spawn: (...args) => { calls.push(args); return { status: 0 }; },
     info: message => output.push(message), error: message => output.push(message),
   }), 0);
@@ -144,24 +147,26 @@ test("valid configuration passes the supplied publishing values unchanged to bot
     assert.equal(options.cwd, "/offline-workspace");
   }
   assert.deepEqual(env, original);
-  assert.match(output.join("\n"), /Database connectivity and schema were not checked/);
+  assert.match(output.join("\n"), /configuration=passed; connectivity=passed; schema=passed/);
   for (const secret of [env.OPERATOR_PASSWORD, env.SUPABASE_SERVICE_ROLE_KEY, env.ALERT_OPERATOR_TO]) {
     assert.ok(!output.join("\n").includes(secret));
   }
 });
 
-test("compilation failure stops the chain, including failure to spawn", () => {
+test("compilation failure stops the chain, including failure to spawn", async () => {
   for (const status of [7, null]) {
     let calls = 0;
-    assert.equal(runProductionBuild({
+    assert.equal(await runProductionBuild({
       env: valid(), info: () => {}, error: () => {},
+      schemaCheck: ready,
       spawn: () => { calls++; return { status }; },
     }), status ?? 1);
     assert.equal(calls, 1);
   }
   const output = [];
-  assert.equal(runProductionBuild({
+  assert.equal(await runProductionBuild({
     env: valid(), info: () => {}, error: message => output.push(message),
+    schemaCheck: ready,
     spawn: () => { throw new Error("private-compiler-detail"); },
   }), 1);
   assert.doesNotMatch(output.join("\n"), /private-compiler-detail/);
@@ -178,6 +183,17 @@ test("actual CLI rejects missing publishing settings before pnpm can run", () =>
   assert.doesNotMatch(result.stderr, /ENOENT|pnpm|SUPABASE/);
 });
 
+test("actual publishing CLI fails closed when external database settings are absent", () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./production-build.mjs", import.meta.url))], {
+    env: valid(), encoding: "utf8",
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /configuration=failed; connectivity=not checked; schema=not checked/);
+  assert.match(result.stderr, /SUPABASE_URL/);
+  assert.match(result.stderr, /SUPABASE_SERVICE_ROLE_KEY/);
+  assert.doesNotMatch(result.stderr, /ENOENT|offline-production-password/);
+});
+
 test("actual CLI rejects missing worker alerts even from a development build shell", () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL("./production-build.mjs", import.meta.url))], {
     env: { ...valid(), NODE_ENV: "development", RUN_BACKGROUND_JOBS: "true" }, encoding: "utf8",
@@ -188,11 +204,11 @@ test("actual CLI rejects missing worker alerts even from a development build she
     "Production configuration preflight failed:\n- Production background jobs require ALERT_OPERATOR_TO");
 });
 
-test("missing worker alert alone blocks both compilers without mutating the supplied environment", () => {
+test("missing worker alert alone blocks both compilers without mutating the supplied environment", async () => {
   const env = { ...valid(), RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "" };
   const original = { ...env };
   const output = [];
-  assert.equal(runProductionBuild({
+  assert.equal(await runProductionBuild({
     env, info: message => output.push(message), error: message => output.push(message),
     spawn: () => { assert.fail("Compilation must not start"); },
   }), 1);
@@ -200,4 +216,16 @@ test("missing worker alert alone blocks both compilers without mutating the supp
   assert.deepEqual(output, [
     "Production configuration preflight failed:\n- Production background jobs require ALERT_OPERATOR_TO",
   ]);
+});
+
+test("database failure or exception prevents compilation without leaking exception text", async () => {
+  for (const schemaCheck of [
+    async () => ({ ...await ready(), schema: "failed", errors: ["Schema: message_templates columns inaccessible."] }),
+    async () => { throw new Error("private-credential"); },
+  ]) {
+    const output = [];
+    assert.equal(await runProductionBuild({ env: valid(), schemaCheck,
+      spawn: () => assert.fail("No compilation"), info: text => output.push(text), error: text => output.push(text) }), 1);
+    assert.doesNotMatch(output.join("\n"), /private-credential/);
+  }
 });

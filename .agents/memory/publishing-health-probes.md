@@ -20,3 +20,9 @@ Evaluate conditional publishing requirements against the production target, not 
 **Why:** A publishing build may run in a development shell but launches a production service; using the shell's mode would omit production-only requirements.
 
 **How to apply:** Reuse side-effect-free runtime policy with an explicit production-mode environment when evaluating the publishing gate. Keep test-only worker overrides out of publishing decisions.
+
+Keep database publishing probes genuinely read-only; do not use no-op writes or invoke worker lease functions to demonstrate permissions.
+
+**Why:** This app shares an external Supabase database with live operations. Even supposedly harmless mutation probes can run triggers or acquire leases. Read-only API metadata can establish advertised permissions, but cannot certify RLS, trigger behavior, or successful writes.
+
+**How to apply:** State those limits clearly rather than claiming full readiness from read probes. Never substitute Replit's managed production SQL or workspace credentials for the external target supplied by publishing.
