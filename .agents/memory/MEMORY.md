@@ -27,3 +27,4 @@
 - [Test environment isolation](test-environment-isolation.md) — isolate inherited SMS overrides in child test runners; fixtures must explicitly select recipient mode.
 - [Publishing health probes](publishing-health-probes.md) — probe public health through the gateway; do not weaken operator authentication to satisfy startup checks.
 - [Production sync schedule](production-sync-schedule.md) — user-selected nightly time is 3:00 a.m. Eastern in America/New_York.
+- [Template ownership](template-ownership-policy.md) — legacy global message templates belong to PB Club; preserve their content and other clubs' existing ownership.

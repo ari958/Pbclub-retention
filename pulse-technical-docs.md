@@ -1210,4 +1210,12 @@ The replacement receives a new candidate ID and message ID. The archived message
 
 If the migration is absent, generation fails closed with an explicit migration instruction. The UI calls matched attendees “Recent LTP players matched,” reports duplicate blocks, and displays the first generation error rather than merely reporting a count.
 
+### Legacy template ownership and publishing
+
+The production database preflight also requires `message_templates.club_id`, which startup template seeding already uses. For a legacy global template table, apply `artifacts/api-server/migrations/019_message_template_club_ownership.sql` manually in the existing Supabase SQL Editor before retrying publishing. This is separate from the LTP reset replacement migration.
+
+The operator selected PB Club as owner of the original global templates. Migration 019 adds the nullable UUID club reference, assigns only unowned templates to the unique `pb-club` record, preserves already-owned templates, and adds a lookup index. It verifies that IDs and all fields other than the newly assigned ownership remain unchanged, rolling back if a trigger changes another field. It can be rerun safely and neither seeds replacement templates nor edits message, candidate, approval, audit, or sending-setting records.
+
+Verify with `pnpm --filter @workspace/api-server exec tsx --test src/lib/__tests__/messageTemplateClubMigration.test.ts`. This uses an isolated synthetic PostgreSQL fixture, including rerun, other-club preservation, unexpected-trigger rollback, and missing-owner refusal cases. Publishing does not apply this external Supabase migration automatically.
+
 Verification: `pnpm --filter @workspace/api-server exec tsx --test src/lib/__tests__/prelaunchResetSql.test.ts src/lib/__tests__/retentionPrelaunchReset.test.ts`. The SQL test creates and removes a UTF-8 PostgreSQL fixture with synthetic records, exercises the real sequence writer, installs the migration twice, and verifies refusal cases, history preservation, rollback, and subsequent sequence transitions. It never connects to the application database.
