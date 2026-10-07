@@ -19,6 +19,7 @@ import programmingRouter from "./programming";
 import consentRouter from "./consent";
 import experimentsRouter from "./experiments";
 import retentionRouter from "./retention";
+import operatorTestRouter from "./operatorTest";
 
 const router: IRouter = Router();
 
@@ -42,5 +43,6 @@ router.use(programmingRouter);
 router.use(consentRouter);
 router.use(experimentsRouter);
 router.use(retentionRouter);
+router.use(operatorTestRouter);
 
 export default router;

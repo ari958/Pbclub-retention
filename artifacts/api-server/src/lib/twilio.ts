@@ -58,6 +58,7 @@ export function setLtpSequenceBatchOptionsFactoryForTests(
 }
 
 const currentTime = () => testClock ? testClock() : new Date();
+export const getSmsTransportTime = () => currentTime();
 
 const ltpBatchOptionsForDispatch = (): LtpBookingBatchOptions =>
   testLtpBatchOptionsFactory ? testLtpBatchOptionsFactory() : {};
@@ -233,6 +234,22 @@ async function assertFinalTransportAllowed(clubId: string, audit: DispatchAudit)
   audit.end("pass");
 }
 
+/** Shared production transport for approved member sends and explicit operator tests. */
+export async function submitProductionSms(
+  clubId: string, to: string, body: string, audit: DispatchAudit,
+  client = testClientFactory ? testClientFactory() : getTwilioClient(),
+  operatorTestId?: string,
+) {
+  await assertFinalTransportAllowed(clubId, audit);
+  const callback = process.env.PUBLIC_API_URL?.replace(/\/$/, "");
+  const service = process.env.TWILIO_MESSAGING_SERVICE_SID;
+  return client.messages.create({
+    to, body,
+    ...(service ? { messagingServiceSid: service, shortenUrls: true } : { from: process.env.TWILIO_PHONE_NUMBER! }),
+    ...(callback ? { statusCallback: `${callback}/api/messages/webhook/status${operatorTestId ? `?operator_test_id=${encodeURIComponent(operatorTestId)}` : ""}` } : {}),
+  });
+}
+
 async function sendApprovedMessage(
   to: string, body: string, context: SendContext | undefined, audit: DispatchAudit,
 ): Promise<{ sid: string; simulated: boolean; isTest?: boolean }> {
@@ -310,6 +327,7 @@ async function sendApprovedMessage(
     playerId,
     player.club_id,
     message.approved_at,
+    currentTime(),
   );
   const ltpCandidate = retentionCandidate?.playbook_key === "ltp_followup"
     ? retentionCandidate as any
@@ -317,7 +335,7 @@ async function sendApprovedMessage(
   const promoCode = (retentionCandidate?.context as any)?.promo?.code;
   const bookingOptions = { ...(context.bookingOptions ?? ltpBatchOptionsForDispatch()), messageId: context.messageId };
   audit.begin("stale_flag");
-  audit.end("pass", { stale: !!(retentionCandidate?.context as any)?.stale, policy: "operator-reviewed provenance; not a dispatch blocker" });
+  audit.end("pass", { stale: false, policy: "stale drafts blocked before claim" });
 
   audit.begin("send_window_preclaim");
   if (!isInsideSendWindow(currentTime())) {
@@ -554,25 +572,7 @@ async function sendApprovedMessage(
       }
     }
 
-    let msg;
-    if (messagingServiceSid) {
-      await assertFinalTransportAllowed(player.club_id, audit);
-      msg = await client!.messages.create({
-        body,
-        to: effectiveTo,
-        messagingServiceSid,
-        shortenUrls: true,
-        ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
-      });
-    } else {
-      await assertFinalTransportAllowed(player.club_id, audit);
-      msg = await client!.messages.create({
-        body,
-        to: effectiveTo,
-        from: from!,
-        ...(statusCallbackUrl ? { statusCallback: statusCallbackUrl } : {}),
-      });
-    }
+    const msg = await submitProductionSms(player.club_id, effectiveTo, body, audit, client!);
     const sentAt = currentTime().toISOString();
     const ledgerRow = {
       club_id: player.club_id,

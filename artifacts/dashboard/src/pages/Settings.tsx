@@ -7,6 +7,7 @@ import type { MessageTemplate } from "@/lib/types";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
 import { RETENTION } from "@/lib/navMode";
 import { COMMON_TIMEZONES } from "@/lib/timezones";
+import { OperatorTestMessage } from "@/components/OperatorTestMessage";
 
 const D = {
   bg: "#161b22",
@@ -691,6 +692,7 @@ export default function Settings() {
           }}
         >
           <div style={{ display: "flex", flexDirection: "column", gap: 16, maxWidth: 560 }}>
+            <OperatorTestMessage />
             {clubLoading ? (
               <div style={{ color: D.faint, fontSize: 13 }}>Loading…</div>
             ) : (

@@ -13,6 +13,7 @@ import {
 import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
 import { isStaleReviewedBodyError } from "../lib/retentionApproval";
+import { assertRetentionDraftFresh } from "../lib/retentionFreshness";
 import { validateRetentionTextBody } from "../lib/retentionText";
 import type { RetentionCandidate, RetentionContext, RetentionMessage, RetentionPlaybook } from "../lib/retentionTypes";
 import {
@@ -146,6 +147,7 @@ async function approveCandidate(
   expectedBody: string,
   requestedSchedule?: Date,
 ) {
+  assertRetentionDraftFresh(candidate);
   if (candidate.status !== "drafted") {
     throw Object.assign(new Error("Only drafted candidates can be approved"), { status: 409 });
   }

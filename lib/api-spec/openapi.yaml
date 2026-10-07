@@ -13,6 +13,29 @@ tags:
   - name: retention
     description: Draft-only retention generation and explicit message approvals
 paths:
+  /operator-test-message:
+    get:
+      operationId: getOperatorTestMessages
+      responses:
+        "200":
+          description: Operator test availability and persisted delivery results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorTestState"
+    post:
+      operationId: sendOperatorTestMessage
+      responses:
+        "200":
+          description: One fixed message accepted by Twilio
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OperatorTestResult"
+        "403":
+          description: Test override not configured
+        "409":
+          description: Live sending, kill switch, or send window blocked transport
   /retention/test-tools/candidates/{id}:
     post:
       operationId: ltpTestAction
@@ -545,6 +568,24 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    OperatorTestResult:
+      type: object
+      required: [message_id, status, twilio_sid, delivery_status]
+      properties:
+        message_id: { type: string }
+        status: { type: string }
+        twilio_sid: { type: ["string", "null"] }
+        delivery_status: { type: ["string", "null"] }
+        error_message: { type: ["string", "null"] }
+    OperatorTestState:
+      type: object
+      required: [available, messages]
+      properties:
+        available: { type: boolean }
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/OperatorTestResult"
     HealthStatus:
       type: object
       properties:

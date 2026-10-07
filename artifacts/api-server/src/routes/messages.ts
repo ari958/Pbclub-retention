@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { OPERATOR_TEST_TEXT } from "../lib/operatorTestMessage";
 import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
@@ -508,9 +509,22 @@ router.post("/messages/webhook/status", async (req, res) => {
       .from("messages")
       .update(update)
       .eq("twilio_message_sid", messageSid)
-      .select("id,player_id,conversation_id");
+      .select("id,player_id,conversation_id,retention_delivery_kind");
     affected = result.data;
     statusError = result.error;
+    const operatorId = req.query.operator_test_id;
+    if (!statusError && !affected?.length && typeof operatorId === "string"
+      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operatorId)) {
+      // Signed callback may beat persistence of the SID. Match only this fixed, claimed operator test.
+      const early = await supabase.from("messages")
+        .update({ ...update, twilio_message_sid: messageSid })
+        .eq("id", operatorId).eq("retention_delivery_kind", "test").eq("body", OPERATOR_TEST_TEXT)
+        .is("player_id", null).is("conversation_id", null).is("twilio_message_sid", null)
+        .not("dispatch_token", "is", null)
+        .select("id,player_id,conversation_id,retention_delivery_kind");
+      affected = early.data;
+      statusError = early.error;
+    }
   } catch (error) {
     statusError = { message: error instanceof Error ? error.message : String(error) };
   }
@@ -518,7 +532,9 @@ router.post("/messages/webhook/status", async (req, res) => {
     req.log.error({ err: statusError.message, MessageSid }, "Could not persist Twilio delivery status");
   }
 
-  if (isTwilio21610(ErrorCode)) {
+  const operatorTestReceipt = Array.isArray(affected) && affected.length > 0
+    && affected.every(message => message.retention_delivery_kind === "test" && !message.player_id && !message.conversation_id);
+  if (isTwilio21610(ErrorCode) && !operatorTestReceipt) {
     let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
     if (!messages.length) {
       const { data: linked, error: lookupError } = await supabase
@@ -577,6 +593,10 @@ router.post("/messages/webhook/status", async (req, res) => {
     }
   }
 
+  if (statusError) {
+    res.status(503).send("Could not persist delivery status; retry required");
+    return;
+  }
   if (deliveredAt && affected) {
     for (const message of (Array.isArray(affected) ? affected : [affected])) {
       if (!message?.id) continue;

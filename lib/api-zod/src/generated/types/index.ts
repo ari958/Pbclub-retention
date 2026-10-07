@@ -26,6 +26,8 @@ export * from "./ltpTestActionBodyAction";
 export * from "./ltpTestActionParams";
 export * from "./operatorLoginBody";
 export * from "./operatorSession200";
+export * from "./operatorTestResult";
+export * from "./operatorTestState";
 export * from "./regenerateRetentionDraft409";
 export * from "./regenerateRetentionDraftParams";
 export * from "./regenerateRetentionLtpBatch400";

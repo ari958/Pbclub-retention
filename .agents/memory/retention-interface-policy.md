@@ -50,3 +50,11 @@ Preserve the original batch's lookback provenance when reprocessing legacy draft
 **Why:** Legacy drafts predated lookback metadata. Defaulting those rows to three days during regeneration incorrectly removed their known longer-window test flags.
 
 **How to apply:** Use the documented batch response or explicit operator input for the source window, rather than inventing it from the current default. Keep provenance-only corrections separate from message, approval, and send fields.
+
+## Production freshness
+
+The user requires a three-day production lookback, five-day draft expiry, and a hard stale block before approval and dispatch. Operator review alone does not make historical test provenance production eligible.
+
+**Why:** The final production-preparation requirements explicitly replaced the earlier warning-only treatment of stale drafts.
+
+**How to apply:** Preserve the original lookback provenance through rebuilds. Renew expiry only when generating/rebuilding verified context, never from a text edit or status change. Do not remove stale provenance merely to let a historical test draft pass approval.

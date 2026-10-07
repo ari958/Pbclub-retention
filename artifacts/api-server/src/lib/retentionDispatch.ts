@@ -2,6 +2,7 @@ import { logger } from "./logger";
 import { isRetentionOnlyMode } from "./retentionPolicy";
 import { supabase } from "./supabaseClient";
 import { verifyLtpSequenceSchemaReady } from "./ltpSequenceLifecycle";
+import { assertRetentionDraftFresh } from "./retentionFreshness";
 
 export class RetentionDispatchAuthorizationError extends Error {
   constructor(message: string, readonly statusCode: 403 | 500) {
@@ -21,6 +22,7 @@ interface RetentionCandidateDispatchRow {
   sequence_id?: string | null;
   sequence_status?: string | null;
   context?: unknown;
+  created_at?: string;
 }
 
 export async function verifyRetentionCandidateDispatch(
@@ -28,6 +30,7 @@ export async function verifyRetentionCandidateDispatch(
   playerId: string,
   clubId: string | null | undefined,
   messageApprovedAt: string | null | undefined,
+  now = new Date(),
 ): Promise<RetentionCandidateDispatchRow | null> {
   const { data: candidate, error } = await supabase
     .from("retention_candidates")
@@ -56,6 +59,8 @@ export async function verifyRetentionCandidateDispatch(
   }
 
   const linked = candidate as RetentionCandidateDispatchRow;
+  try { assertRetentionDraftFresh(linked, now); }
+  catch (error: any) { blocked(error.message); }
 
   if (linked.playbook_key === "ltp_followup") {
     try {

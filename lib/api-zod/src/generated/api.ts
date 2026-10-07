@@ -7,6 +7,27 @@
  */
 import * as zod from "zod";
 
+export const GetOperatorTestMessagesResponse = zod.object({
+  available: zod.boolean(),
+  messages: zod.array(
+    zod.object({
+      message_id: zod.string(),
+      status: zod.string(),
+      twilio_sid: zod.string().nullable(),
+      delivery_status: zod.string().nullable(),
+      error_message: zod.string().nullish(),
+    }),
+  ),
+});
+
+export const SendOperatorTestMessageResponse = zod.object({
+  message_id: zod.string(),
+  status: zod.string(),
+  twilio_sid: zod.string().nullable(),
+  delivery_status: zod.string().nullable(),
+  error_message: zod.string().nullish(),
+});
+
 /**
  * @summary Audited test-only LTP action; never approves or sends
  */

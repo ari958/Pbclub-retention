@@ -229,7 +229,7 @@ async function createCandidate(args: {
     p_player_id: args.playerId,
     p_playbook_key: args.playbookKey,
     p_trigger_event_id: args.triggerEventId,
-    p_context: args.context,
+    p_context: { ...args.context, draft_generated_at: new Date().toISOString() },
     p_status: args.status,
     p_body: args.body,
   });
@@ -1210,7 +1210,9 @@ async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[], 
   }
   const { error } = await supabase.rpc("retention_sequence_save_batch", {
     p_club_id: clubId,
-    p_items: items,
+    p_items: items.map(item => ({
+      ...item, context: { ...item.context, draft_generated_at: new Date().toISOString() },
+    })),
   });
   if (error) {
     const status = /capacity_exhausted|insufficient_capacity/i.test(error.message) ? 409 : 500;
@@ -1703,7 +1705,7 @@ async function rebuildRetentionCandidate(
     p_expected_context: candidate.context,
     p_expected_updated_at: candidate.updated_at,
     p_new_body: body,
-    p_new_context: newContext,
+    p_new_context: { ...newContext, draft_generated_at: new Date().toISOString() },
     p_new_status: newStatus,
     p_error: reason ? `${reason}: ${(newContext.errors ?? []).join("; ")}` : null,
     ...(operation === "retry_context" ? { p_expected_message_id: candidate.message_id } : {}),

@@ -31,6 +31,8 @@ import type {
   LtpTestActionParams,
   OperatorLoginBody,
   OperatorSession200,
+  OperatorTestResult,
+  OperatorTestState,
   RegenerateRetentionDraft409,
   RegenerateRetentionDraftParams,
   RegenerateRetentionLtpBatch400,
@@ -74,6 +76,150 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+export const getGetOperatorTestMessagesUrl = () => {
+  return `/api/operator-test-message`;
+};
+
+export const getOperatorTestMessages = async (
+  options?: RequestInit,
+): Promise<OperatorTestState> => {
+  return customFetch<OperatorTestState>(getGetOperatorTestMessagesUrl(), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetOperatorTestMessagesQueryKey = () => {
+  return [`/api/operator-test-message`] as const;
+};
+
+export const getGetOperatorTestMessagesQueryOptions = <
+  TData = Awaited<ReturnType<typeof getOperatorTestMessages>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorTestMessages>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetOperatorTestMessagesQueryKey();
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getOperatorTestMessages>>
+  > = ({ signal }) => getOperatorTestMessages({ signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorTestMessages>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetOperatorTestMessagesQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getOperatorTestMessages>>
+>;
+export type GetOperatorTestMessagesQueryError = ErrorType<unknown>;
+
+export function useGetOperatorTestMessages<
+  TData = Awaited<ReturnType<typeof getOperatorTestMessages>>,
+  TError = ErrorType<unknown>,
+>(options?: {
+  query?: UseQueryOptions<
+    Awaited<ReturnType<typeof getOperatorTestMessages>>,
+    TError,
+    TData
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetOperatorTestMessagesQueryOptions(options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getSendOperatorTestMessageUrl = () => {
+  return `/api/operator-test-message`;
+};
+
+export const sendOperatorTestMessage = async (
+  options?: RequestInit,
+): Promise<OperatorTestResult> => {
+  return customFetch<OperatorTestResult>(getSendOperatorTestMessageUrl(), {
+    ...options,
+    method: "POST",
+  });
+};
+
+export const getSendOperatorTestMessageMutationOptions = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendOperatorTestMessage>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof sendOperatorTestMessage>>,
+  TError,
+  void,
+  TContext
+> => {
+  const mutationKey = ["sendOperatorTestMessage"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof sendOperatorTestMessage>>,
+    void
+  > = () => {
+    return sendOperatorTestMessage(requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type SendOperatorTestMessageMutationResult = NonNullable<
+  Awaited<ReturnType<typeof sendOperatorTestMessage>>
+>;
+
+export type SendOperatorTestMessageMutationError = ErrorType<void>;
+
+export const useSendOperatorTestMessage = <
+  TError = ErrorType<void>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof sendOperatorTestMessage>>,
+    TError,
+    void,
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof sendOperatorTestMessage>>,
+  TError,
+  void,
+  TContext
+> => {
+  return useMutation(getSendOperatorTestMessageMutationOptions(options));
+};
 
 /**
  * @summary Audited test-only LTP action; never approves or sends

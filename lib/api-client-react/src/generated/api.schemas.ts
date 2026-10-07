@@ -5,6 +5,22 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface OperatorTestResult {
+  message_id: string;
+  status: string;
+  /** @nullable */
+  twilio_sid: string | null;
+  /** @nullable */
+  delivery_status: string | null;
+  /** @nullable */
+  error_message?: string | null;
+}
+
+export interface OperatorTestState {
+  available: boolean;
+  messages: OperatorTestResult[];
+}
+
 export type HealthStatusLastNightlySync = {
   result?: string;
   /** @nullable */

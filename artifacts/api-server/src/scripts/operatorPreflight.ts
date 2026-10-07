@@ -3,6 +3,8 @@
 export {};
 process.env.NODE_ENV = "production";
 process.env.RUN_BACKGROUND_JOBS = "false";
+process.env.SMS_LIVE = "false";
+process.env.SMS_TEST_OVERRIDE_TO = "+15551234567";
 process.env.OPERATOR_PASSWORD = "offline-browser-fixture-password";
 const { supabase } = await import("../lib/supabaseClient");
 const club = { id: "c8976e15-e002-4619-bb4b-b1a70f5cd7ab", slug: "pb-club", name: "PB Club", sms_kill_switch: false, timezone: "America/New_York" };
