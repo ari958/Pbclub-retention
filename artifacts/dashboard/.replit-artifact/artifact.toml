@@ -20,6 +20,9 @@ run = "pnpm --filter @workspace/dashboard run dev"
 [services.production]
 run = ["node", "artifacts/dashboard/production-gateway.mjs"]
 
+[services.production.health.startup]
+path = "/api/healthz"
+
 [services.env]
 PORT = "23183"
 BASE_PATH = "/dashboard/"
