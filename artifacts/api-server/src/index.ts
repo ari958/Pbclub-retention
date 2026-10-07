@@ -5,6 +5,7 @@ import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
 import { getDefaultClubSlug, resolveClubSlug } from "./lib/clubResolver";
 import { backgroundJobsEnabled } from "./lib/backgroundPolicy";
+import { productionWorkerConfigurationErrors } from "./lib/backgroundEnvironment.mjs";
 import { startOperatorWatchdog } from "./lib/operatorMonitoring";
 
 const rawPort = process.env["PORT"];
@@ -20,7 +21,8 @@ if (process.env.NODE_ENV === "production") {
   if (!process.env.OPERATOR_PASSWORD || process.env.OPERATOR_PASSWORD.length < 16) throw new Error("Production requires OPERATOR_PASSWORD with at least 16 characters");
   const publicUrl = process.env.PUBLIC_API_URL;
   if (!publicUrl || !publicUrl.startsWith("https://") || new URL(publicUrl).hostname.endsWith(".replit.dev")) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin, not the workspace URL");
-  if (backgroundJobsEnabled() && !process.env.ALERT_OPERATOR_TO) throw new Error("Production background jobs require ALERT_OPERATOR_TO");
+  const workerErrors = productionWorkerConfigurationErrors(process.env);
+  if (workerErrors.length) throw new Error(workerErrors.join("\n"));
 }
 
 if (Number.isNaN(port) || port <= 0) {

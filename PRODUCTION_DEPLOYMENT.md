@@ -17,6 +17,16 @@ node artifacts/api-server/production-build.mjs
 ```
 
 This builds the dashboard with `/dashboard/` as its base path and then builds the API.
+Before compiling, the read-only preflight checks the supplied `OPERATOR_PASSWORD`
+and published `PUBLIC_API_URL`. It also requires `ALERT_OPERATOR_TO` when
+`RUN_BACKGROUND_JOBS` is exactly `true`, using the same worker configuration
+policy as production startup. The build targets production even if the calling
+shell has a different `NODE_ENV`. Disabled workers do not require an alert
+destination. This checks configuration only: it does not initialize the app,
+start workers, check database connectivity/schema, or send an alert. Run the
+synthetic offline checks with
+`pnpm --filter @workspace/api-server run test:production-preflight`.
+
 API start command:
 
 ```

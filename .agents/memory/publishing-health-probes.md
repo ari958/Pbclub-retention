@@ -14,3 +14,9 @@ Keep publishing configuration checks distinct from offline fixture tests and dat
 **Why:** Offline login fixtures inject synthetic credentials, so their success does not establish that production settings are valid. Checking environment-variable formats also does not establish Supabase connectivity or schema readiness.
 
 **How to apply:** Validate the environment supplied to the actual publishing build process, without substituting development credentials. Describe configuration-only checks as such and explicitly state when database connectivity and schema were not checked.
+
+Evaluate conditional publishing requirements against the production target, not the build shell's runtime mode.
+
+**Why:** A publishing build may run in a development shell but launches a production service; using the shell's mode would omit production-only requirements.
+
+**How to apply:** Reuse side-effect-free runtime policy with an explicit production-mode environment when evaluating the publishing gate. Keep test-only worker overrides out of publishing decisions.

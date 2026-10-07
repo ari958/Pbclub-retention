@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { productionWorkerConfigurationErrors } from "./src/lib/backgroundEnvironment.mjs";
 
 // Deliberately use only the calling build process's environment. Publishing
 // supplies production values; do not load .env files or substitute dev secrets.
@@ -33,6 +34,8 @@ export function validateProductionEnvironment(env) {
   if (!validOrigin) {
     errors.push("PUBLIC_API_URL must be a published HTTPS origin (optional trailing slash), not a workspace or loopback URL, and must not contain credentials, a path, query, or fragment.");
   }
+  // Compilation sets NODE_ENV=production, regardless of the calling shell.
+  errors.push(...productionWorkerConfigurationErrors({ ...env, NODE_ENV: "production" }));
   return errors;
 }
 
