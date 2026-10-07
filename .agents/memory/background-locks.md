@@ -26,3 +26,15 @@ Startup-failure verification must include the application's own rejection handle
 **Why:** Worker election can reject after a scheduler has already created a timer. A fixture-specific exit would hide a missing application fail-stop and falsely prove that partial startup cannot leave work running.
 
 **How to apply:** Keep the real entrypoint and worker/lock policy in the isolated bundle, replace unrelated services, and prove the application fatal path and OS exit before launching replacements. Use a timer that exists before the injected exception.
+
+Heartbeat fail-stop alone does not fence an in-flight callback after process suspension.
+
+**Why:** An isolated SIGSTOP/SIGCONT experiment with natural lease expiry showed a held job callback committing a database mutation after replacement election but before the resumed worker's asynchronous heartbeat detected lease loss and terminated it. Safe idle-worker shutdown is not proof of safe asynchronous continuations.
+
+**How to apply:** Preserve a regression assertion on post-resume mutations, not just exit status. Enforce production lease deadlines synchronously before asynchronous continuations; do not add fixture-only ownership checks to make tests pass. Base local deadlines on a monotonic clock at request start, not response receipt, so delayed acknowledgements cannot extend authority. Production SQL rejects TTLs below 30 seconds; scale the shared lease duration in the isolated bundle, not database ownership rules.
+
+Suspension tests must distinguish an OS group stop from a tracer's transient signal-delivery stop.
+
+**Why:** A completion-check environment consumed SIGSTOP under inherited tracing; workers briefly appeared as lowercase `t` and then continued, unlike normal shells where they stayed uppercase `T`. Accepting either state without sustained-stop evidence would falsely certify suspension safety.
+
+**How to apply:** Keep synthetic suspension workers free of inherited tracing, verify `TracerPid=0`, require group-stop on every takeover poll, and compare persisted heartbeats across the pause. Keep a launcher cleanup path that kills its stopped child if the parent dies. Verify the harness under an explicitly tracing parent as well as ordinary execution.

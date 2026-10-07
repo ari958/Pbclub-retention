@@ -16,8 +16,10 @@ process.on("message", message => {
   if (message === "ping") process.send?.({
     type: "api", enabled: backgroundJobsEnabled(), ...workerIdentity,
   });
+  if (message === "in-flight") suspendNextTick = true;
 });
 process.send?.({ type: "ready", ...workerIdentity });
+let suspendNextTick = false;
 
 async function fakeSms(claim: unknown) {
   const event = claim as { id: string };
@@ -28,6 +30,14 @@ async function fakeSms(claim: unknown) {
 async function protectedTick() {
   if (!backgroundJobsEnabled()) throw new Error("Standby started protected work");
   await withBackgroundLock("fixture-scheduler", async () => {
+    if (suspendNextTick) {
+      suspendNextTick = false;
+      process.send?.({ type: "callback-in-flight", ...workerIdentity });
+      // Keep the real job lock held across an asynchronous callback. On resume,
+      // this continuation competes with overdue production lease heartbeats.
+      await new Promise(resolve => setTimeout(resolve, 1_000));
+      process.send?.({ type: "callback-resumed", ...workerIdentity });
+    }
     await sql(`INSERT INTO fixture_work(owner,pid,release)
       VALUES(${literal(workerIdentity.instance_id)},${process.pid},${literal(process.env.FIXTURE_RELEASE)})`);
     const claim = await supabase.rpc("operator_observe_alert", {
