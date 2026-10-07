@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
-import { useClub } from "@/lib/ClubContext";
+import { useClub, clubApiUrl } from "@/lib/ClubContext";
 import type { MessageStatus } from "@/lib/types";
 
 const D = {
@@ -43,8 +43,13 @@ interface MessageRow {
   link_clicked: boolean | null;
   link_clicked_at: string | null;
   sent_at: string | null;
+  created_at?: string;
+  inbound_from?: string;
+  inbound_kind?: string;
+  match_reason?: string;
   delivered_at: string | null;
-  conversation_id: string;
+  conversation_id: string | null;
+  players?: { id: string; name: string } | null;
   conversations: {
     id: string;
     triggered_by: string | null;
@@ -145,18 +150,35 @@ export default function Messages() {
         const { data, error } = await supabase
           .from("messages")
           .select(
-            "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, delivered_at, conversation_id, players!player_id!inner(club_id), conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
+            "id, body, direction, status, delivery_status, error_code, error_message, twilio_message_sid, link_clicked, link_clicked_at, sent_at, created_at, delivered_at, conversation_id, players!player_id!inner(id,name,club_id), conversations!conversation_id(id, triggered_by, player_id, players!player_id(id, name))"
           )
           .eq("players.club_id", club.id)
-          .order("id", { ascending: false })
+          .order("created_at", { ascending: false })
           .limit(200)
           .abortSignal(controller.signal)
           .returns<MessageRow[]>();
         if (error) throw error;
         if (active) setMessages(data ?? []);
+        const response = await fetch(clubApiUrl(club.slug, "/api/messages/inbound/unmatched"), {
+          credentials: "include", signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Unmatched replies could not be loaded. Install migration 021 before publishing.");
+        const inbox = await response.json() as { messages: {
+          id: string; body: string; from_phone: string; kind: string; match_reason: string;
+          received_at: string; twilio_message_sid: string;
+        }[] };
+        const unmatched: MessageRow[] = inbox.messages.map(row => ({
+          id: row.id, body: row.body, direction: "inbound", status: "sent",
+          sent_at: row.received_at, created_at: row.received_at,
+          inbound_from: row.from_phone, inbound_kind: row.kind, match_reason: row.match_reason,
+          twilio_message_sid: row.twilio_message_sid, delivery_status: null, error_code: null,
+          error_message: null, delivered_at: null, link_clicked: null, link_clicked_at: null,
+          conversation_id: null, conversations: null,
+        }));
+        if (active) setMessages([...(data ?? []), ...unmatched]
+          .sort((a,b) => Date.parse(b.created_at ?? b.sent_at ?? "") - Date.parse(a.created_at ?? a.sent_at ?? "")).slice(0,200));
       } catch (error) {
         if (active && !controller.signal.aborted) {
-          setMessages([]);
           setLoadError(error instanceof Error ? error.message : "Unable to load messages.");
         }
       } finally {
@@ -164,11 +186,13 @@ export default function Messages() {
       }
     };
     fetchData();
+    const refresh = setInterval(() => { if (!controller.signal.aborted) void fetchData(); }, 30_000);
     return () => {
+      clearInterval(refresh);
       active = false;
       controller.abort();
     };
-  }, [club.id]);
+  }, [club.id, club.slug]);
 
   const filtered = messages.filter((m) => {
     if (tab === "outbound") return m.direction === "outbound";
@@ -269,6 +293,9 @@ export default function Messages() {
           </div>
 
           {/* ── Table ── */}
+          {loadError && messages.length > 0 && <div role="alert" style={{ color: D.redText, fontSize: 13, marginBottom: 12 }}>
+            Some messages could not be loaded: {loadError}
+          </div>}
           <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse" }}>
@@ -301,7 +328,7 @@ export default function Messages() {
                         Loading…
                       </td>
                     </tr>
-                  ) : loadError ? (
+                  ) : loadError && messages.length === 0 ? (
                     <tr>
                       <td colSpan={6} role="alert" style={{ padding: "32px 16px", textAlign: "center", color: D.redText, fontSize: 13 }}>
                         Messages could not be loaded: {loadError}
@@ -315,7 +342,7 @@ export default function Messages() {
                     </tr>
                   ) : (
                     filtered.map((m, i) => {
-                      const player = m.conversations?.players;
+                      const player = m.conversations?.players ?? m.players;
                       const playerId = m.conversations?.player_id ?? player?.id ?? null;
                       const isReply = m.direction === "inbound";
                       const dateToShow = m.delivered_at ?? m.sent_at ?? null;
@@ -351,8 +378,13 @@ export default function Messages() {
                               onMouseEnter={(e) => { if (playerId) (e.currentTarget as HTMLElement).style.textDecoration = "underline"; }}
                               onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.textDecoration = "none"; }}
                             >
-                              {player?.name ?? "—"}
+                              {player?.name ?? (isReply ? "Unknown sender" : "—")}
                             </span>
+                            {m.inbound_from && <div style={{ fontSize: 11, color: D.muted, marginTop: 3 }}>
+                              {m.inbound_from}
+                              {m.inbound_kind === "stop" && <strong style={{ color: D.redText }}> · STOP recorded</strong>}
+                              {m.match_reason === "ambiguous" && <span> · Multiple matching players</span>}
+                            </div>}
                           </td>
                           <td
                             style={{

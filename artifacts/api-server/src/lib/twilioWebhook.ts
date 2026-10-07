@@ -14,8 +14,10 @@ export function validateTwilioWebhook(req: Request, res: Response, next: NextFun
     const url = `${base}${req.originalUrl}`;
     const signature = req.get("X-Twilio-Signature") ?? "";
     if (!signature || !twilio.validateRequest(token, signature, url, req.body)) {
+      req.log?.warn({ twilio_sid: req.body?.MessageSid, signature_result: "rejected" }, "Twilio webhook signature rejected");
       return void res.status(403).send("Invalid Twilio signature");
     }
+    req.log?.info({ twilio_sid: req.body?.MessageSid, signature_result: "accepted" }, "Twilio webhook signature accepted");
     next();
   } catch {
     res.status(403).send("Invalid Twilio signature");

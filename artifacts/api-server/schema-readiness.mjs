@@ -11,12 +11,14 @@ export const schemaRequirements = Object.freeze([
   { table: "operator_worker_runs", columns: ["id","job","holder","started_at","finished_at","status"], methods: ["get","post","patch"] },
   { table: "operator_alert_incidents", columns: ["condition_key","incident_id","active","opened_at","closed_at","text"], methods: ["get"] },
   { table: "operator_alert_events", columns: ["id","incident_id","condition_key","phase","text","holder","claimed_at","sent_at","status","provider_sid","error"], methods: ["get","patch"] },
+  { table: "sms_inbound_receipts", columns: ["id","club_id","player_id","message_id","twilio_message_sid","from_phone","to_phone","body","kind","match_reason","received_at","processed_at","processing_error","operator_alert_attempted_at"], methods: ["get","post","patch"] },
 ]);
 export const leaseRequirements = Object.freeze([
   { name: "operator_acquire_job_lock", args: ["p_name", "p_owner", "p_ttl_seconds"] },
   { name: "operator_renew_job_lock", args: ["p_name", "p_owner", "p_ttl_seconds"] },
   { name: "operator_release_job_lock", args: ["p_name", "p_owner"] },
   { name: "operator_observe_alert", args: ["p_key","p_active","p_text","p_holder"] },
+  { name: "capture_sms_inbound", args: ["p_club_slug","p_from","p_to","p_sid","p_body"] },
 ]);
 
 export function databaseConfigurationErrors(env) {

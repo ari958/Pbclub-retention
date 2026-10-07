@@ -29,3 +29,4 @@
 - [Production sync schedule](production-sync-schedule.md) — user-selected nightly time is 3:00 a.m. Eastern in America/New_York.
 - [Template ownership](template-ownership-policy.md) — legacy global message templates belong to PB Club; preserve their content and other clubs' existing ownership.
 - [Operator alert incidents](operator-alert-incidents.md) — one global worker; API/watchdog share incident identities; preclaim alerts and reconcile ambiguous provider outcomes.
+- [Inbound SMS policy](inbound-sms-policy.md) — retain unknown/STOP receipts privately; ambiguous phone matches stay unlinked; tenant comes from the assigned webhook endpoint.

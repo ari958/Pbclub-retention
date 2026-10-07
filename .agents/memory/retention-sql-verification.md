@@ -9,6 +9,12 @@ Compile and exercise transactional retention migrations in an isolated PostgreSQ
 
 **How to apply:** When changing retention RPCs or triggers, use a temporary database with fake existing rows and roles. Exercise stale writes, incomplete approval evidence, whole-cohort capacity rollback, real versus test delivery, and irreversible exits. Also exercise subsequent lifecycle transitions: a source replacement intended for candidate updates can accidentally alter unrelated capacity deletions. Source-pattern tests remain useful but are not sufficient evidence by themselves.
 
+Do not use a zero-row HEAD response alone to establish that an external Supabase table exists.
+
+**Why:** In production diagnosis, HEAD with limit zero returned 204 for uninstalled tables, while a zero-row GET correctly reported that those tables were absent from the schema cache.
+
+**How to apply:** Require advertised schema metadata or a zero-row GET for existence/column checks. Keep probes read-only; no mutation or RPC execution is needed to establish schema presence.
+
 Create the isolated database explicitly with UTF-8 encoding.
 
 **Why:** PostgreSQL initialized with `--no-locale` can default to SQL_ASCII, causing valid Unicode punctuation checks such as `chr(8212)` to fail in fixtures even though the application's UTF-8 database supports them.

@@ -41,8 +41,8 @@ export function operatorConditionKey(key: string) {
   }
   return key;
 }
-export async function observeOperatorCondition(key: string, active: boolean, text: string | null, source = "recovery") {
-  if (!backgroundJobsEnabled()) return;
+export async function observeOperatorCondition(key: string, active: boolean, text: string | null, source = "recovery"): Promise<boolean> {
+  if (!backgroundJobsEnabled()) return false;
   const condition = operatorConditionKey(key);
   let claim: any = null;
   let sid: string | null = null;
@@ -57,7 +57,7 @@ export async function observeOperatorCondition(key: string, active: boolean, tex
     });
     if (observed.error) throw new Error("Incident claim failed; no alert submitted. Install migration 020.");
     claim = observed.data;
-    if (!claim) return;
+    if (!claim) return true;
     if (!claim.id || !["alert", "resolved"].includes(claim.phase) || typeof claim.text !== "string") {
       throw new Error("Invalid incident claim; no alert submitted");
     }
@@ -72,6 +72,7 @@ export async function observeOperatorCondition(key: string, active: boolean, tex
     if (saved.error) throw new Error("Provider acceptance could not be recorded; reconcile the claimed alert");
     logger.info({ event_id: claim.id, incident_id: claim.incident_id, condition, phase: claim.phase,
       provider_sid: sid, holder: workerIdentity }, "Operator alert submitted");
+    return true;
   } catch (error) {
     if (claim?.id) {
       try {
@@ -87,6 +88,7 @@ export async function observeOperatorCondition(key: string, active: boolean, tex
     logger.error({ condition, event_id: claim?.id, provider_sid: sid, holder: workerIdentity,
       reason: error instanceof Error && !claim ? error.message : "Claimed submission requires reconciliation" },
     "Operator alert failed");
+    return false;
   }
 }
 
@@ -157,6 +159,7 @@ export async function runOperatorWatchdog() {
       }
       await observeKillSwitch(await resolveClubSlug(getDefaultClubSlug()), "watchdog");
       await resolveDeliveredDispatchAlerts();
+      await alertUnmatchedInbound();
     }
     // Also detects kill-switch changes made outside this API.
     if (health.paused !== null) {
@@ -164,6 +167,25 @@ export async function runOperatorWatchdog() {
       await recordRuntime("kill-switch", state);
     }
   });
+}
+
+/** Called by the elected watchdog; tests use a fake provider transport. */
+export async function alertUnmatchedInbound() {
+  if (!backgroundJobsEnabled()) return;
+  const { data, error } = await supabase.from("sms_inbound_receipts")
+    .select("id,club_id,match_reason,kind").is("player_id", null)
+    .is("operator_alert_attempted_at", null).order("received_at", { ascending: true }).limit(100);
+  if (error) throw new Error("Cannot inspect unmatched inbound inbox; install migration 021");
+  for (const receipt of data ?? []) {
+    const claimed = await observeOperatorCondition(`unmatched_inbound:${receipt.id}`, true,
+      `Unmatched inbound ${receipt.kind === "stop" ? "STOP" : "SMS"} saved for club ${receipt.club_id}. ${receipt.match_reason === "ambiguous" ? "Multiple players share this number." : "Unknown sender."} Review Messages → Replies.`,
+      "inbound-inbox");
+    if (claimed) {
+      const saved = await supabase.from("sms_inbound_receipts").update({ operator_alert_attempted_at: new Date().toISOString() })
+        .eq("id", receipt.id);
+      if (saved.error) throw new Error("Cannot acknowledge inbound alert attempt");
+    }
+  }
 }
 
 async function resolveDeliveredDispatchAlerts() {

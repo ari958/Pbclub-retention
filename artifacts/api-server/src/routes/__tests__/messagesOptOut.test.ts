@@ -89,6 +89,15 @@ before(async () => {
   process.env.NODE_ENV = "test";
   (supabase as any).from = (table: string) => queryFor(table);
   (supabase as any).rpc = async (name: string, args: any) => {
+    if (name === "capture_sms_inbound") {
+      state.player = { ...state.player, opted_out: true, sms_opt_in: false };
+      state.transitionCalls.push({ p_status: "exited_opt_out" });
+      return { data: {
+        id: MESSAGE_ID, club_id: CLUB_ID, player_id: PLAYER_ID, match_reason: "matched", kind: "stop",
+        processed_at: state.transitionError ? null : new Date().toISOString(),
+        processing_error: state.transitionError?.message ?? null,
+      }, error: null };
+    }
     if (name === "retention_sequence_transition") {
       state.transitionCalls.push(args);
       if (state.transitionError) return { data: null, error: state.transitionError };
@@ -142,7 +151,8 @@ test("STOP reports transition failure after persisting the permanent player opt-
   const response = await fetch(`${baseUrl}/api/messages/webhook/inbound`, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ From: state.player.phone, Body: "STOP" }),
+    body: new URLSearchParams({ From: state.player.phone, To: "+15557654321",
+      MessageSid: "SM00000000000000000000000000000001", Body: "STOP" }),
   });
 
   assert.equal(response.status, 503);

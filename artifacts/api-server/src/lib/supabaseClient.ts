@@ -5,15 +5,13 @@
  * the service_role key will get "permission denied" and the anon key will
  * silently return 0 rows (RLS blocks everything by default).
  *
- * After creating any new table, run in the Supabase SQL editor:
+ * For browser-readable tables only, run in the Supabase SQL editor:
  *
  *   GRANT SELECT ON TABLE <name> TO anon;
  *   GRANT ALL ON TABLE <name> TO service_role;
  *
- * Or run the blanket grant after any migration to cover all tables at once:
- *
- *   GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
- *   GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+ * Private inbox and operator tables must NOT be granted to anon. Use the
+ * table-specific grants and RLS in their migrations, not blanket anon grants.
  *
  * This was the root cause of the "permission denied for table attendances"
  * bug — the service_role key had no INSERT/UPDATE grant on that table.

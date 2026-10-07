@@ -3,6 +3,7 @@ import { OPERATOR_TEST_TEXT } from "../lib/operatorTestMessage";
 import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
+import { captureInboundSms } from "../lib/inboundSms";
 import {
   composeApprovedMessageBody,
   isSmsDispatchClaimError,
@@ -20,20 +21,12 @@ import { RetentionDispatchAuthorizationError, verifyRetentionCandidateDispatch }
 import {
   applyTwilio21610OptOut,
   confirmLtpRecipientDelivery,
-  permanentlyOptOutPlayerAndExitLtpSequence,
   SmsOptOutPersistenceError,
-  transitionLtpSequence,
 } from "../lib/ltpSequenceLifecycle";
 
 const router: IRouter = Router();
 
 // ─── Constants ───────────────────────────────────────────────────────────────
-
-/** TCPA-required opt-out keywords (case-insensitive exact match) */
-const STOP_KEYWORDS = new Set(["stop", "stopall", "unsubscribe", "cancel", "end", "quit"]);
-
-/** Re-subscribe keywords */
-const START_KEYWORDS = new Set(["start", "yes", "unstop"]);
 
 /** 24-hour cooldown between outbound messages to the same player */
 const COOLDOWN_MS = 24 * 60 * 60 * 1000;
@@ -646,106 +639,49 @@ router.post("/messages/webhook/status", async (req, res) => {
 
 // ─── POST /api/messages/webhook/inbound ──────────────────────────────────────
 // Twilio posts here when a member replies or sends STOP.
-// NO requireClub — Twilio posts without club context; player lookup resolves club.
+// Tenant comes from the signature-covered clubSlug URL parameter, or the
+// configured default-club endpoint. Never infer it from an arbitrary player.
+
+router.get("/messages/inbound/unmatched", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  const { data, error } = await supabase.from("sms_inbound_receipts")
+    .select("id,body,from_phone,kind,match_reason,received_at,twilio_message_sid")
+    .eq("club_id", clubId).is("player_id", null).order("received_at", { ascending: false }).limit(200);
+  if (error) return void res.status(503).json({ error: "Unmatched inbox unavailable; install migration 021" });
+  res.json({ messages: data ?? [] });
+});
 
 router.post("/messages/webhook/inbound", async (req, res) => {
   const { From, Body } = req.body as { From?: string; Body?: string };
 
-  if (!From || !Body) {
+  if (!From || typeof Body !== "string") {
     res.status(400).send("Missing From or Body");
     return;
   }
 
-  const bodyNorm = Body.trim().toLowerCase();
-  const isStop = STOP_KEYWORDS.has(bodyNorm);
-  const isStart = START_KEYWORDS.has(bodyNorm);
-
-  req.log.info({ from: From, body: Body, isStop, isStart }, "Inbound SMS received");
-
-  // Look up player by phone — try with and without leading +1
-  const { data: player } = await supabase
-    .from("players")
-    .select("id, name, phone, sms_opt_in, club_id")
-    .or(`phone.eq.${From},phone.eq.${From.replace(/^\+1/, "")}`)
-    .limit(1)
-    .maybeSingle();
-
-  if (!player) {
-    // Unknown number — must still honor STOP for TCPA compliance, but nothing to update
-    req.log.warn({ from: From }, "Inbound SMS from unknown number");
-    res.setHeader("Content-Type", "text/xml");
-    res.status(200).send("<Response></Response>");
-    return;
-  }
-
-  // ── STOP: opt out ──
-  if (isStop) {
-    try {
-      await permanentlyOptOutPlayerAndExitLtpSequence(player.id, player.club_id, "inbound_stop");
-    } catch (error) {
-      req.log.error({ err: error, player_id: player.id }, "Could not mark the player's LTP sequence permanently opted out");
-      res.status(503).json({
-        error: error instanceof SmsOptOutPersistenceError && error.playerOptOutPersisted
-          ? "STOP was saved, but the LTP sequence exit failed; retry required"
-          : "Could not persist STOP; retry required",
-      });
-      return;
-    }
-
-    // Cancel all pending queued messages for this player
-    const { data: convs } = await supabase
-      .from("conversations")
-      .select("id")
-      .eq("player_id", player.id);
-
-    if (convs?.length) {
-      await supabase
-        .from("messages")
-        .update({ status: "skipped", error_message: "Player opted out via STOP" })
-        .in("conversation_id", convs.map((c: any) => c.id))
-        .eq("status", "pending")
-        .is("dispatch_claimed_at", null)
-        .is("dispatch_token", null);
-    }
-    await supabase.from("messages")
-      .update({ status: "skipped", error_message: "Player opted out via STOP" })
-      .eq("player_id", player.id)
-      .eq("status", "pending")
-      .is("dispatch_claimed_at", null)
-      .is("dispatch_token", null);
-
-    req.log.info({ player_id: player.id }, "Player opted out via STOP");
-    res.setHeader("Content-Type", "text/xml");
-    res.status(200).send("<Response></Response>");
-    return;
-  }
-
-  // ── START: re-subscribe ──
-  if (isStart) {
-    await supabase
-      .from("players")
-      .update({ sms_opt_in: true, opted_out: false })
-      .eq("id", player.id);
-
-    req.log.info({ player_id: player.id }, "Player re-subscribed via START");
-    res.setHeader("Content-Type", "text/xml");
-    res.status(200).send("<Response></Response>");
-    return;
-  }
-
-  // A conversational reply pauses all remaining LTP steps, including when
-  // this reply is consumed by the separate session-feedback flow below.
+  let receipt: Awaited<ReturnType<typeof captureInboundSms>>;
   try {
-    await transitionLtpSequence(
-      player.club_id,
-      player.id,
-      "ltp_followup",
-      "paused_reply",
-      "inbound_reply",
-    );
+    receipt = await captureInboundSms(req.body,
+      typeof req.query.clubSlug === "string" ? req.query.clubSlug : undefined);
   } catch (error) {
-    req.log.error({ err: error, player_id: player.id }, "Could not pause the player's LTP sequence after a reply");
+    req.log.error({ twilio_sid: req.body.MessageSid, reason: error instanceof Error ? error.message : "Persistence failed" }, "Inbound SMS not acknowledged");
+    return void res.status(error instanceof Error && error.message === "Invalid inbound SMS payload" ? 400 : 503)
+      .json({ error: "Could not safely capture inbound SMS" });
   }
+  req.log.info({ twilio_sid: req.body.MessageSid, receipt_id: receipt.id, club_id: receipt.club_id,
+    player_id: receipt.player_id, message_id: receipt.message_id, match_reason: receipt.match_reason,
+    kind: receipt.kind, duplicate: receipt.duplicate }, "Inbound SMS stored");
+  if (receipt.processing_error || !receipt.processed_at) {
+    return void res.status(503).json({ error: receipt.kind === "stop"
+      ? "STOP was saved, but sequence processing failed; retry required"
+      : "Reply was saved, but sequence processing failed; retry required" });
+  }
+  if (receipt.duplicate || !receipt.player_id || receipt.kind !== "reply") {
+    return void res.type("text/xml").status(200).send("<Response></Response>");
+  }
+  const { data: player, error: playerError } = await supabase.from("players")
+    .select("id,name,phone,sms_opt_in,club_id").eq("id", receipt.player_id).eq("club_id", receipt.club_id).maybeSingle();
+  if (playerError || !player) return void res.status(503).json({ error: "Stored reply player unavailable" });
 
   // ── Session feedback reply ──
   // Check whether the most recent outbound to this player was a session_feedback request
@@ -770,14 +706,10 @@ router.post("/messages/webhook/inbound", async (req, res) => {
       const conversationId: string | undefined =
         expectation.conversation_id ?? undefined;
 
-      await supabase.from("messages").insert({
-        conversation_id: conversationId,
-        player_id: player.id,
-        body: Body,
-        direction: "inbound",
-        sent_by: "player",
-        status: "sent",
-      });
+      if (conversationId) {
+        const threaded = await supabase.from("messages").update({ conversation_id: conversationId }).eq("id", receipt.message_id);
+        if (threaded.error) return void res.status(503).json({ error: "Reply stored; feedback threading failed" });
+      }
 
       const parsed = parseFeedbackReply(Body);
 
@@ -859,35 +791,7 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   }
 
   // ── Regular reply: thread into most recent conversation ──
-  const { data: recentConv } = await supabase
-    .from("conversations")
-    .select("id")
-    .eq("player_id", player.id)
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  let conversationId = recentConv?.id;
-
-  if (!conversationId) {
-    const { data: newConv } = await supabase
-      .from("conversations")
-      .insert({ player_id: player.id, club_id: player.club_id, triggered_by: "inbound" })
-      .select("id")
-      .single();
-    conversationId = newConv?.id;
-  }
-
-  await supabase.from("messages").insert({
-    conversation_id: conversationId,
-    player_id: player.id,
-    body: Body,
-    direction: "inbound",
-    sent_by: "player",
-    status: "sent",
-  });
-
-  req.log.info({ player_id: player.id, conversation_id: conversationId }, "Inbound reply captured");
+  req.log.info({ player_id: player.id, message_id: receipt.message_id }, "Inbound reply captured and active sequence paused");
 
   // No auto-reply — operator handles manually
   res.setHeader("Content-Type", "text/xml");
