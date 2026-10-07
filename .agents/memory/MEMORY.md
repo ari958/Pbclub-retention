@@ -26,3 +26,4 @@
 - [SMS receipt races](sms-receipt-races.md) — provider acceptance and delivery evidence are separate; correlate early receipts to claims, not dispatch authorization.
 - [Test environment isolation](test-environment-isolation.md) — isolate inherited SMS overrides in child test runners; fixtures must explicitly select recipient mode.
 - [Publishing health probes](publishing-health-probes.md) — probe public health through the gateway; do not weaken operator authentication to satisfy startup checks.
+- [Production sync schedule](production-sync-schedule.md) — user-selected nightly time is 3:00 a.m. Eastern in America/New_York.
