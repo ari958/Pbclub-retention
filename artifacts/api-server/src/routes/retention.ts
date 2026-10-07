@@ -23,7 +23,7 @@ import {
   parseApprovalListStatus,
 } from "../lib/retentionApprovals";
 import ltpSequenceRouter, { requireLtpSequenceSchemaReady } from "./ltpSequence";
-import { alertOperator } from "../lib/operatorMonitoring";
+import { observeKillSwitch } from "../lib/operatorMonitoring";
 
 const router: IRouter = Router();
 router.use(ltpSequenceRouter);
@@ -303,7 +303,7 @@ router.patch("/retention/kill-switch", requireClub, async (req, res) => {
   if (error) return res.status(500).json({ error: `Could not atomically audit and update SMS kill switch. Apply migration 014 if missing: ${error.message}` });
   if (!data) return res.status(404).json({ error: "Club not found; SMS kill switch was not changed" });
   req.log.info({ actor: parsed.data.actor ?? "unidentified operator", ...data }, "SMS kill switch change audited");
-  void alertOperator(`kill-switch:${Date.now()}`, `SMS kill switch changed: ${parsed.data.enabled ? "paused" : "resumed"}.`);
+  void observeKillSwitch(clubId);
   return res.json(data);
 });
 

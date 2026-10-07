@@ -18,7 +18,7 @@ import { isRetentionOnlyMode } from "./retentionPolicy";
 import { generateDueLtpStep2Drafts, generateRetentionDrafts } from "./retentionEngine";
 import { backgroundJobsEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
-import { recordRuntime, alertOperator } from "./operatorMonitoring";
+import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -367,6 +367,8 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     await appendJobLog(JOB_NIGHTLY, "Nightly chain completed successfully");
     logger.info("[scheduler] Nightly chain completed");
     await recordRuntime("nightly", "done");
+    await resolveOperatorAlert("nightly_failure");
+    await resolveOperatorAlert("nightly_start_failure");
   } catch (err: any) {
     const wasCancelled = err.name === "CancelledError";
     await finishJob(JOB_NIGHTLY, wasCancelled ? "cancelled" : "error", undefined, err.message);
@@ -385,12 +387,13 @@ export function startScheduler(): void {
 
   // Feedback poller — retained but parked by RETENTION_ONLY_MODE.
   setInterval(async () => {
-    if (isRetentionOnlyMode()) return;
+    if (!backgroundJobsEnabled() || isRetentionOnlyMode()) return;
     try {
       const fbLog = (msg: string) => logger.info(msg);
-      const result = await sendFeedbackForRecentEvents(undefined, fbLog, 0.5);
+      const { value: result } = await withBackgroundLock("feedback-poller",
+        () => sendFeedbackForRecentEvents(undefined, fbLog, 0.5));
       // windowHours = 0.5 = look back 30 minutes only
-      if (result.eventsFound > 0) {
+      if (result && result.eventsFound > 0) {
         logger.info(result, "[feedback-poller] Feedback texts triggered");
       }
     } catch (err) {
@@ -401,6 +404,7 @@ export function startScheduler(): void {
   logger.info("[scheduler] Feedback poller started — checking every 30 minutes");
 
   setInterval(async () => {
+    if (!backgroundJobsEnabled()) return;
     try {
       const schedule = await getClubSchedule();
       if (!schedule) return;

@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import twilio from "twilio";
 import { operatorRouter, requireOperator, requireSameOrigin } from "../operatorAuth";
 import { validateTwilioWebhook } from "../twilioWebhook";
-import { backgroundJobsEnabled } from "../backgroundPolicy";
+import { backgroundJobsEnabled, setBackgroundWorkerLeader } from "../backgroundPolicy";
 import { withBackgroundLock } from "../backgroundLock";
 
 const old = { password: process.env.OPERATOR_PASSWORD, url: process.env.PUBLIC_API_URL,
@@ -93,10 +93,14 @@ test("RUN_BACKGROUND_JOBS is opt-in and requires exact true", () => {
     assert.equal(backgroundJobsEnabled(), false);
   }
   process.env.RUN_BACKGROUND_JOBS = "true";
+  setBackgroundWorkerLeader(false);
+  assert.equal(backgroundJobsEnabled(), false, "configured standby must not start jobs");
+  setBackgroundWorkerLeader(true);
   assert.equal(backgroundJobsEnabled(), true);
   process.env.NODE_ENV = "development";
   assert.equal(backgroundJobsEnabled(), false);
   process.env.NODE_ENV = nodeEnv;
+  setBackgroundWorkerLeader(false);
   process.env.RUN_BACKGROUND_JOBS = "false";
 });
 test("job lock refuses overlap, releases after errors, and fails closed on unavailable RPC", async () => {

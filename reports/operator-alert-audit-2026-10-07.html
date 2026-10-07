@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Operator alert audit — October 7, 2026</title>
+<style>body{font:16px/1.55 system-ui,sans-serif;color:#17202c;max-width:1000px;margin:40px auto;padding:0 24px}h1,h2{line-height:1.2}h2{margin-top:32px}table{border-collapse:collapse;width:100%;font-size:14px}th,td{padding:12px;border:1px solid #d8dfe8;text-align:left;vertical-align:top}th{background:#eef2f7}code{font-size:13px;overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#eef2f7;padding:16px}.notice{padding:16px;border-left:4px solid #bd7612;background:#fff5df}small{color:#556170}</style>
+<h1>Duplicate operator alerts</h1>
+<p>Read-only audit of the October 7, 2026 incident. Times below are UTC; subtract four hours for Eastern Daylight Time. Evidence: workspace process inspection, published application logs, external Supabase read queries, Twilio read-only message receipts, and the installed application source.</p>
+<h2>Process inventory</h2>
+<table><tr><th>Process</th><th>PID / host</th><th>Start time</th><th>RUN_BACKGROUND_JOBS</th><th>Evidence</th></tr>
+<tr><td>Workspace API, initial audit snapshot</td><td>12437 / repl</td><td>18:47:28 UTC</td><td>false</td><td>Process environment and command inspected directly; NODE_ENV=development. No scheduled workers.</td></tr>
+<tr><td>Workspace API, first verification restart (superseded)</td><td>14941 / repl</td><td>20:04:41 UTC</td><td>false</td><td>Replaced the initial workspace API during verification. Compiled application started successfully with no scheduled workers.</td></tr>
+<tr><td>Workspace API, final verification restart</td><td>15388 / repl</td><td>20:10:50 UTC</td><td>false</td><td>Final code compiled and started successfully. OS start time inspected directly; startup log confirms no scheduler, queue, retention triggers or watchdog started.</td></tr>
+<tr><td>Current published API</td><td>18 / nixos</td><td>19:06:06.925 UTC</td><td>true</td><td>Successful current VM deployment and production startup log. Subsequent queue/watchdog telemetry is consistent with this process.</td></tr>
+<tr><td>Older releases / other external instances</td><td>Not established</td><td>Not established</td><td>Not established</td><td>Build history identifies older releases, not currently running processes. The old schema has no process registry. No second active worker was identified, but unregistered external processes cannot be excluded.</td></tr></table>
+<p>The job-lock table was empty at the read-only snapshot. Existing job leases are released after each job, and their random owner UUIDs have no historical PID mapping. The legacy runtime table stores only the latest value per name. Neither is evidence that no other holder ever existed.</p>
+<h2>Delivered duplicate pairs</h2>
+<table><tr><th>Time UTC</th><th>Message</th><th>Sender attribution and cause</th></tr>
+<tr><td>19:24:44</td><td>SMS kill switch changed: resumed.</td><td>Correlates with PID 18 / nixos's API audit at 19:24:43.375. The route emits an immediate alert with a unique millisecond-based key.</td></tr>
+<tr><td>19:25:08</td><td>Identical resumed text.</td><td>Correlates with the watchdog and its separate dedupe record. It detects the same state change on its next minute check, using a different key. Likely the same production process; historical sender identity/SID correlation was not recorded, so this is not a proven per-process attribution.</td></tr>
+<tr><td>19:41:21</td><td>SMS kill switch changed: paused.</td><td>Correlates with PID 18 / nixos's API audit at 19:41:20.895. Immediate route-side submission.</td></tr>
+<tr><td>19:42:09</td><td>Identical paused text.</td><td>Watchdog-side submission inferred from its next-minute timing, separate runtime dedupe entry, and source path. Same historical attribution limitation.</td></tr></table>
+<p>All four Twilio receipts report <strong>delivered</strong>. Separations are 24 and 48 seconds. The duplicate path does not require two worker processes: the API and watchdog can send the same alert from one worker. Nightly failure producers also used date-based versus timestamp-based keys, another duplicate path corrected by the implementation.</p>
+<h2>Nightly chain, retention and queue review</h2>
+<ul>
+<li>Available nightly logs contain one manual catch-up start at <strong>17:35:27.924 UTC</strong> and one successful completion at <strong>17:46:53.291 UTC</strong>.</li>
+<li>One first-touch retention generation log at <strong>17:45:43.897 UTC</strong>: <strong>0 created, 3 skipped, 0 errors</strong>. Step-2 generation runs within that same protected chain; the report does not assert a separate historical execution count where sender/run provenance is absent.</li>
+<li>The chain's recorded effects were 4 players created, 2,840 updated; 363 attendance upserts; confidence recomputed for 142 players; churn scores computed for 1,597 players. These are recorded job results, not independently proven unique historical effects across every external instance.</li>
+<li>Observed queue logs at 19:21:08, 19:26:08, 19:31:08, 19:36:08 and 19:41:08 follow one five-minute cadence. They explicitly report live sending off and approvals held untouched. No player SMS was submitted by those ticks.</li>
+<li>No duplicate job execution was found in the available evidence. Old mutable telemetry and unregistered external workers prevent an absolute historical guarantee. There is no justified data cleanup, candidate reset, or message resend arising from this audit.</li>
+</ul>
+<h2>Implemented controls</h2>
+<ul>
+<li>One renewable <code>background-worker</code> lease owns all schedulers. A contender remains API-only standby. Every job lease must belong to that global owner, fencing old anonymous-owner worker binaries.</li>
+<li>Worker registry: unique instance UUID, PID, host, process start time, environment, configured job flag, role, and heartbeat. Lease ownership—not a stale registry role—determines the active holder.</li>
+<li>Durable execution journal: job, run UUID, sender identity, start/finish times and result. Existing per-job leases remain in place.</li>
+<li>One shared incident state per stable condition, with atomic claims and a unique incident/phase constraint. The API and watchdog observe the same kill-switch condition; the database rechecks the actual club state.</li>
+<li>One alert submission on incident opening, no periodic re-alerts, and one RESOLVED submission on clear. Recurrence opens a new incident. Existing observed pause state is carried forward without replaying its notification.</li>
+<li>Every alert event records its sender and producer source, condition, phase, claim time, provider SID and submission state. Claims are committed before Twilio. Failed or ambiguous submissions are reserved for reconciliation, not automatically retried.</li>
+</ul>
+<p class="notice"><strong>Activation required:</strong> the fix is prepared and tested, not yet installed on the external production database. Keep PB Club sending paused. Apply <code>artifacts/api-server/migrations/020_operator_alert_incidents.sql</code> in Supabase SQL Editor, then publish promptly. Applying the migration fences old worker binaries and temporarily pauses job/SMS processing until the upgraded worker acquires the global lease. It does not change player messages, approvals, the club kill switch, live-send settings, or existing audit history.</p>
+<h2>Verification and operational limits</h2>
+<p>Isolated PostgreSQL tests exercise six concurrent claims, a single recovery, recurrence, singleton contention/takeover, legacy-owner fencing, stale kill-switch snapshots, legacy notification carry-forward and denied anonymous access. Offline tests cover incident send suppression, ambiguous provider submission, worker leadership gating, approval protections and publishing schema checks. Tests use synthetic records and fake alert transport, not live player sends.</p>
+<p>At-most-one provider submission is enforced per incident phase. Exactly-once external SMS delivery cannot be atomically guaranteed with a separate database and Twilio: a crash after claim but before submission can leave an unsent claim, and ambiguous provider acceptance must be reconciled before any manual retry.</p>
+<h2>Read-only checks after activation</h2>
+<pre>SELECT w.instance_id,w.pid,w.host,w.started_at,w.run_background_jobs,
+       w.state,w.last_seen_at,l.expires_at,
+       (l.owner=w.instance_id AND l.expires_at&gt;now()) AS active_worker
+FROM operator_worker_instances w
+LEFT JOIN operator_job_locks l ON l.name='background-worker'
+ORDER BY w.last_seen_at DESC;
+
+SELECT condition_key,incident_id,phase,claimed_at,status,provider_sid,holder
+FROM operator_alert_events ORDER BY claimed_at DESC;
+
+SELECT job,id,started_at,finished_at,status,holder
+FROM operator_worker_runs ORDER BY started_at DESC;</pre>
+<p>If another independent deployment is found, disable RUN_BACKGROUND_JOBS in that extra deployment and republish it, or stop its extra workspace API workflow. Do not stop the designated production worker. Upgraded standby instances cannot acquire job leases. Migration 020 fences legacy users of the lock RPCs; an unrelated old copy performing work without those locks still must be stopped separately.</p>
+</html>

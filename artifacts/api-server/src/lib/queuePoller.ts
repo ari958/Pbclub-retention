@@ -16,7 +16,7 @@ import { DispatchAudit } from "./dispatchAudit";
 import type { LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
 import { backgroundJobsEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
-import { recordRuntime, alertOperator } from "./operatorMonitoring";
+import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
 
 const POLL_INTERVAL_MS =
   parseInt(process.env.POLL_INTERVAL_MS ?? "", 10) || 5 * 60 * 1000;
@@ -47,6 +47,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     const value = await runQueueTickUnlocked();
     await recordRuntime("queue", value.failed ? "error" : "ok");
     if (value.failed) await alertOperator(`queue-failure:${new Date().toISOString().slice(0, 13)}`, "A queue dispatch failed. Check dispatch logs before retrying.");
+    else if (process.env.SMS_LIVE === "true" && value.sent > 0) await resolveOperatorAlert("queue_failure");
     return value;
   });
   return result.value ?? empty;

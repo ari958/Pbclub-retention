@@ -75,7 +75,7 @@ test("missing template club_id fails even on empty tables; connectivity is not s
   assert.equal(result.connectivity, "passed");
   assert.equal(result.schema, "failed");
   assert.match(result.errors.join("\n"), /message_templates.*club_id/);
-  assert.equal(fixture.calls.length, 7); // Keep reporting other checks after failure.
+  assert.equal(fixture.calls.length, 1 + schemaRequirements.length); // Keep reporting other checks after failure.
   assert.equal(await runProductionBuild({ env: env(), schemaCheck: () => Promise.resolve(result),
     info: () => {}, error: () => {}, spawn: () => assert.fail("No compilation after missing column") }), 1);
 });

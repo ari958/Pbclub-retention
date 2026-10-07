@@ -1218,4 +1218,12 @@ The operator selected PB Club as owner of the original global templates. Migrati
 
 Verify with `pnpm --filter @workspace/api-server exec tsx --test src/lib/__tests__/messageTemplateClubMigration.test.ts`. This uses an isolated synthetic PostgreSQL fixture, including rerun, other-club preservation, unexpected-trigger rollback, and missing-owner refusal cases. Publishing does not apply this external Supabase migration automatically.
 
+### Single background worker and operator alert incidents
+
+Apply `artifacts/api-server/migrations/020_operator_alert_incidents.sql` manually in external Supabase, then publish the matching code promptly. Keep player sending paused. Migration 020 fences older anonymous per-job lease owners; old workers stop acquiring jobs, and renewing foreign leases fails. An upgraded process must own the global `background-worker` lease before starting schedulers or submitting operator alerts. Other configured processes register as standby and retry election without starting workers. Lease/registry renewal failure terminates the worker.
+
+`operator_worker_instances` records identity/heartbeat; join to the unexpired global lease to determine actual leadership. `operator_worker_runs` journals acquired job executions and completion. Retention triggers remain inside the protected nightly chain. `operator_alert_incidents` tracks stable condition transitions, and `operator_alert_events` reserves each incident/phase atomically before provider submission, with sender identity, producer source, SID and status. A claimed/unknown provider attempt is not automatically retried: reconcile it with Twilio. Recovery emits one resolved event; recurrence creates a new incident. The kill-switch RPC rechecks persisted club state to avoid stale API/watchdog observations.
+
+The initial audit is in `reports/operator-alert-audit-2026-10-07.html`. Existing mutable runtime rows and old alert keys cannot prove historical sender identity or enumerate unregistered external instances. No historical records are deleted, rewritten, or inferred.
+
 Verification: `pnpm --filter @workspace/api-server exec tsx --test src/lib/__tests__/prelaunchResetSql.test.ts src/lib/__tests__/retentionPrelaunchReset.test.ts`. The SQL test creates and removes a UTF-8 PostgreSQL fixture with synthetic records, exercises the real sequence writer, installs the migration twice, and verifies refusal cases, history preservation, rollback, and subsequent sequence transitions. It never connects to the application database.

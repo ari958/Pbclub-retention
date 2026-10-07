@@ -4,7 +4,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { runProductionBuild, validateProductionEnvironment } from "./production-build.mjs";
 import { backgroundJobsEnabledForEnvironment, productionWorkerConfigurationErrors } from "./src/lib/backgroundEnvironment.mjs";
-import { backgroundJobsEnabled, setBackgroundJobsEnabledForTests } from "./src/lib/backgroundPolicy.ts";
+import { backgroundJobsEnabled, backgroundJobsConfigured, setBackgroundWorkerLeader, setBackgroundJobsEnabledForTests } from "./src/lib/backgroundPolicy.ts";
 
 // Explicit fixtures only: never inherit real development/production credentials.
 const valid = () => ({
@@ -66,6 +66,10 @@ test("runtime worker policy preserves environment gating and explicit test-only 
           const env = { ...alertTransport(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag };
           const enabled = flag === "true" && (nodeEnv === "production" || (nodeEnv === "test" && testOverride));
           assert.equal(backgroundJobsEnabledForEnvironment(env, testOverride), enabled);
+          assert.equal(backgroundJobsConfigured(), enabled);
+          setBackgroundWorkerLeader(false);
+          assert.equal(backgroundJobsEnabled(), nodeEnv === "test" && enabled);
+          setBackgroundWorkerLeader(true);
           assert.equal(backgroundJobsEnabled(), enabled);
           assert.deepEqual(productionWorkerConfigurationErrors(env),
             nodeEnv === "production" && flag === "true"
@@ -76,6 +80,7 @@ test("runtime worker policy preserves environment gating and explicit test-only 
     process.env.NODE_ENV = "development";
     assert.throws(() => setBackgroundJobsEnabledForTests(true), /test-only/);
   } finally {
+    setBackgroundWorkerLeader(false);
     process.env.NODE_ENV = "test";
     setBackgroundJobsEnabledForTests(false);
     for (const key of ["NODE_ENV", "RUN_BACKGROUND_JOBS"]) {

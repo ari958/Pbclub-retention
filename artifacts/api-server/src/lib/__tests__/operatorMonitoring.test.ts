@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test, after } from "node:test";
 import { supabase } from "../supabaseClient";
-import { operatorAlertReasons, alertOperator, runtimeHealth, setOperatorAlertTransportForTests } from "../operatorMonitoring";
+import { operatorAlertReasons, alertOperator, resolveOperatorAlert, operatorConditionKey, runtimeHealth, setOperatorAlertTransportForTests } from "../operatorMonitoring";
 import { setBackgroundJobsEnabledForTests } from "../backgroundPolicy";
 const original = { from: supabase.from, rpc: supabase.rpc, env: { ...process.env } };
 process.env.NODE_ENV = "test";
@@ -13,7 +13,7 @@ let failDb = false;
 (supabase as any).from = (table: string) => {
   const q: any = {
     select: () => q, eq: () => q, in: () => q,
-    upsert: () => { writes++; return q; },
+    upsert: () => { writes++; return q; }, update: () => { writes++; return q; },
     maybeSingle: () => Promise.resolve(resolve()),
     then: (yes: any, no: any) => Promise.resolve(resolve()).then(yes, no),
   };
@@ -25,7 +25,15 @@ let failDb = false;
   }
   return q;
 };
-(supabase as any).rpc = async () => ({ data: true, error: null });
+const incidents = new Map<string, boolean>();
+(supabase as any).rpc = async (name: string, args: any) => {
+  if (name !== "operator_observe_alert") return { data: true, error: null };
+  if (failDb) return { data: null, error: { message: "fixture offline" } };
+  if ((incidents.get(args.p_key) ?? false) === args.p_active) return { data: null, error: null };
+  incidents.set(args.p_key, args.p_active);
+  return { data: { id: "fixture-event", incident_id: "fixture-incident",
+    phase: args.p_active ? "alert" : "resolved", text: args.p_text ?? "Condition cleared" }, error: null };
+};
 setOperatorAlertTransportForTests(async () => { submits++; });
 
 test("public health returns only aggregate state and degrades on DB failure", async () => {
@@ -48,7 +56,7 @@ test("watchdog detects stale queue and missed/failed nightly sync without alerti
   assert.deepEqual(operatorAlertReasons(health, now, now), []);
   assert.ok(operatorAlertReasons({ ...health, last_queue_tick_at: new Date(now - 16 * 60 * 1000).toISOString() }, now).some((r) => r.key === "queue_stale"));
   assert.ok(operatorAlertReasons({ ...health, schedule: { ...health.schedule!, last_started_at: null }, last_nightly_sync: { result: "never", at: null } }, now, now).some((r) => r.key.startsWith("nightly_missing")));
-  assert.ok(operatorAlertReasons({ ...health, last_nightly_sync: { result: "error", at: "2026-10-06T09:00:00Z" } }, now, now).some((r) => r.key.startsWith("nightly:")));
+  assert.ok(operatorAlertReasons({ ...health, last_nightly_sync: { result: "error", at: "2026-10-06T09:00:00Z" } }, now, now).some((r) => r.key === "nightly_failure"));
   const afterMidnight = Date.parse("2026-10-07T05:30:00Z");
   assert.ok(operatorAlertReasons({ ...health, schedule: { time: "23:50", timezone: "America/New_York", last_started_at: null },
     last_nightly_sync: { result: "never", at: null } }, afterMidnight, afterMidnight).some((r) => r.key.startsWith("nightly_missing")));
@@ -64,7 +72,27 @@ test("alerts are off in dev, operator-only when enabled, and deduplicated; no li
   assert.equal(submits, 1);
   await alertOperator("offline-fixture-alert", "Offline test");
   assert.equal(submits, 1);
+  await resolveOperatorAlert("offline-fixture-alert");
+  await resolveOperatorAlert("offline-fixture-alert");
+  assert.equal(submits, 2, "single recovery notification");
+  await alertOperator("offline-fixture-alert", "New incident");
+  assert.equal(submits, 3, "recurrence opens a new incident");
+  failDb = true;
+  await alertOperator("unclaimed-fixture", "Database offline");
+  assert.equal(submits, 3, "database failure cannot bypass the claim");
+  failDb = false;
+  setOperatorAlertTransportForTests(async () => { submits++; throw new Error("Fixture ambiguous acceptance"); });
+  await alertOperator("ambiguous-fixture", "Ambiguous submission");
+  await alertOperator("ambiguous-fixture", "Ambiguous submission");
+  assert.equal(submits, 4, "claimed provider failure is not retried");
+  setOperatorAlertTransportForTests(async () => { submits++; });
   process.env.RUN_BACKGROUND_JOBS = "false";
+});
+test("scheduler and watchdog identifiers share one stable condition", () => {
+  assert.equal(operatorConditionKey("nightly:2026-10-06"), "nightly_failure");
+  assert.equal(operatorConditionKey("nightly:2026-10-06T09:00:00Z"), "nightly_failure");
+  assert.equal(operatorConditionKey("nightly_missing:2026-10-06"), "nightly_missing");
+  assert.equal(operatorConditionKey("send-failed:fixture"), operatorConditionKey("dispatch-failed:fixture"));
 });
 after(() => {
   setBackgroundJobsEnabledForTests(false);

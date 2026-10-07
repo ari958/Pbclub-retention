@@ -119,3 +119,17 @@ mtime_ms = 1791322337563
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/0845b486-a9ec-4235-beec-2c8e05031ad4/25fed2aa-ff66-4660-9ac1-6e08a30658ce"
 storage_version_token = "1791322338149761"
 content_type = "text/html"
+
+[[outputs]]
+id = "7dvT8CYCF-Y-uqPUXpNuI"
+uri = "file://reports/operator-alert-audit-2026-10-07.html"
+type = "html"
+title = "Operator alert audit — October 7, 2026"
+description = "Process inventory, duplicate-alert attribution, job/data effects, evidence limits, migration activation order, and read-only verification queries."
+logical_id = "986752b7-30c4-495b-a6cb-145976ab635b"
+content_hash = "sha256:1c8e05921909511bae3631ce07ee4bf776cc75d652a5ee49bfcf86c0d5c145d5"
+size = 9312
+mtime_ms = 1791404013690
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/986752b7-30c4-495b-a6cb-145976ab635b/f137b957-a1ae-4e03-bf06-11a4eaa6a169"
+storage_version_token = "1791404033850116"
+content_type = "text/html"

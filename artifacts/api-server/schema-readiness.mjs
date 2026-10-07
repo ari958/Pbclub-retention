@@ -7,11 +7,16 @@ export const schemaRequirements = Object.freeze([
   { table: "operator_runtime", columns: ["name", "updated_at", "result"], methods: ["get", "post", "patch"] },
   { table: "jobs", columns: ["id", "status", "started_at", "finished_at", "stats", "error", "last_heartbeat", "updated_at"], methods: ["get", "patch"] },
   { table: "job_logs", columns: ["job_id", "logged_at", "level", "message"], methods: ["get", "post"] },
+  { table: "operator_worker_instances", columns: ["instance_id","pid","host","started_at","environment","run_background_jobs","state","last_seen_at"], methods: ["get","post","patch"] },
+  { table: "operator_worker_runs", columns: ["id","job","holder","started_at","finished_at","status"], methods: ["get","post","patch"] },
+  { table: "operator_alert_incidents", columns: ["condition_key","incident_id","active","opened_at","closed_at","text"], methods: ["get"] },
+  { table: "operator_alert_events", columns: ["id","incident_id","condition_key","phase","text","holder","claimed_at","sent_at","status","provider_sid","error"], methods: ["get","patch"] },
 ]);
 export const leaseRequirements = Object.freeze([
   { name: "operator_acquire_job_lock", args: ["p_name", "p_owner", "p_ttl_seconds"] },
   { name: "operator_renew_job_lock", args: ["p_name", "p_owner", "p_ttl_seconds"] },
   { name: "operator_release_job_lock", args: ["p_name", "p_owner"] },
+  { name: "operator_observe_alert", args: ["p_key","p_active","p_text","p_holder"] },
 ]);
 
 export function databaseConfigurationErrors(env) {
@@ -69,7 +74,7 @@ export async function checkSchemaReadiness({
   const errors = databaseConfigurationErrors(env);
   const report = { configuration: errors.length ? "failed" : "passed", connectivity: "not checked",
     schema: "not checked", errors, target: "external Supabase from publishing environment",
-    coverage: "startup templates, club resolution, worker leases, telemetry, job state/logs",
+    coverage: "startup templates, club resolution, worker leases/registry, execution journals, alert incidents, telemetry, job state/logs",
     limitations: "Read access and API-advertised write/execute permissions only; no writes or RPC execution. Not a full application schema, RLS, constraints, seeds, or worker/provider readiness check." };
   if (errors.length) return report;
 

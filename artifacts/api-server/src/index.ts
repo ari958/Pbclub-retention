@@ -4,7 +4,10 @@ import { startScheduler } from "./lib/scheduler";
 import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
 import { getDefaultClubSlug, resolveClubSlug } from "./lib/clubResolver";
-import { backgroundJobsEnabled } from "./lib/backgroundPolicy";
+import { backgroundJobsEnabled, backgroundJobsConfigured } from "./lib/backgroundPolicy";
+import { startBackgroundWorker } from "./lib/backgroundWorker";
+import { workerIdentity } from "./lib/workerIdentity";
+import { checkSchemaReadiness } from "../schema-readiness.mjs";
 import { productionWorkerConfigurationErrors } from "./lib/backgroundEnvironment.mjs";
 import { startOperatorWatchdog } from "./lib/operatorMonitoring";
 
@@ -133,16 +136,21 @@ app.listen(port, async (err) => {
     process.exit(1);
   }
 
-  if (backgroundJobsEnabled()) {
-    const { error: lockError } = await supabase.from("operator_job_locks").select("name").limit(1);
-    const { error: runtimeError } = await supabase.from("operator_runtime").select("name").limit(1);
-    if (lockError || runtimeError) {
-      logger.fatal({ lock_error: lockError?.message, runtime_error: runtimeError?.message }, "Install migration 017 before enabling background jobs");
+  if (backgroundJobsConfigured()) {
+    const readiness = await checkSchemaReadiness({ env: process.env });
+    if (readiness.schema !== "passed") {
+      logger.fatal({ errors: readiness.errors }, "Worker infrastructure unavailable; install migrations through 020 before enabling jobs");
       process.exit(1);
     }
-    await seedAllClubTemplates();
-    startScheduler();
-    startQueuePoller();
-    startOperatorWatchdog();
+    logger.info({ holder: workerIdentity }, "Background worker election starting");
+    void startBackgroundWorker(async () => {
+      await seedAllClubTemplates();
+      startScheduler();
+      startQueuePoller();
+      startOperatorWatchdog();
+    }).catch(err => {
+      logger.fatal({ err, holder: workerIdentity }, "Background worker startup failed; terminating");
+      process.exit(1);
+    });
   } else logger.info("Background jobs disabled; no scheduler, queue, retention triggers, or watchdog started");
 });
