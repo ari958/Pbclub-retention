@@ -8,3 +8,15 @@ Use owner-bound renewable database leases for long asynchronous jobs invoked thr
 **Why:** REST calls do not retain a dedicated PostgreSQL session throughout a multi-hour job. A session advisory lock would not reliably cover the work. Expiry alone is insufficient: an old process must stop when renewal fails, or it can continue alongside a replacement.
 
 **How to apply:** Acquire atomically, renew before expiry with a bounded request timeout, release only as the owner, and fail closed if the lock schema is unavailable. On lease loss, terminate the worker rather than continuing provider submissions or data mutations.
+
+Lifecycle verification must exercise production policy in isolated child processes, with external clients replaced and an allowlisted environment.
+
+**Why:** Test-mode shortcuts can bypass leadership gating and process termination, so an in-process test can pass without proving crash safety. Running the production policy is safe only when the fixture cannot inherit shared database credentials or live delivery transports.
+
+**How to apply:** Use a disposable socket-only PostgreSQL cluster and fake delivery records. Accelerate waits, not ownership rules. When simulating passage of a dead worker's lease TTL, account for its orphaned per-job leases as well as its global lease; a replacement can be elected yet temporarily unable to acquire a still-live per-job lock.
+
+Do not compress database abort deadlines as aggressively as election polling in real-database lifecycle tests.
+
+**Why:** Local PostgreSQL requests launched through separate client processes can exceed subsecond deadlines under routine concurrent load, producing false worker deaths even when a quiet run passes.
+
+**How to apply:** Keep ordinary database requests enough execution headroom, use deliberately blocked requests to test bounded timeouts, and preserve the underlying database error in fixture diagnostics.

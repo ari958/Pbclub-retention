@@ -9,6 +9,7 @@
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:publishing-health": "tsx --test src/lib/__tests__/productionGateway.test.ts src/lib/__tests__/operatorRuntime.test.ts",
+    "test:worker-lifecycle": "tsx --test src/lib/__tests__/operatorIncidentsSql.test.ts src/lib/__tests__/backgroundWorkerLifecycle.test.ts",
     "test:production-preflight": "node --test production-build.test.mjs schema-readiness.test.mjs",
     "eval": "tsx src/scripts/compareAgentModels.ts"
   },
