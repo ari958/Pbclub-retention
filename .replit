@@ -37,7 +37,7 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-SMS_LIVE = "true"
+SMS_LIVE = "false"
 PUBLIC_API_URL = "https://83f9f448-559b-4e96-84c2-91a058e1c635-00-1yfm7kro132e6.janeway.replit.dev"
 REQUIRE_MARKETING_CONSENT = "false"
 RETENTION_ONLY_MODE = "true"
