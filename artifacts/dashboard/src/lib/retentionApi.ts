@@ -70,7 +70,7 @@ export interface ApprovalsResponse {
 }
 export interface GenerateResult {
   created?: number; skipped?: number; needs_context?: number; manual_edit?: number; errors?: string[]; lookback_days?: number;
-  stats?: { found?: number; new_ltp_players?: number; created?: number; skipped?: number; needs_context?: number; manual_edit?: number; errors?: string[]; skipped_by_reason?: Record<string, number> };
+  stats?: { found?: number; new_ltp_players?: number; created?: number; drafted?: number; skipped?: number; needs_context?: number; manual_edit?: number; errors?: string[]; skipped_by_reason?: Record<string, number> };
 }
 export interface RegenerateResult {
   candidate_id: string;

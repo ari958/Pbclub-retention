@@ -233,7 +233,7 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     if (sequenceSchemaReady) {
       for (let offset = 0; offset < step2PlayerIds.length; offset += 500) {
         const { data, error } = await supabase.from("retention_candidates").select("*")
-          .eq("club_id", clubId).eq("playbook_key", "ltp_followup").eq("step", 1)
+          .eq("club_id", clubId).eq("playbook_key", "ltp_followup").eq("step", 1).eq("status", "sent")
           .in("player_id", step2PlayerIds.slice(offset, offset + 500));
         if (error) throw new Error(error.message);
         step1Candidates.push(...(data ?? []) as RetentionCandidate[]);

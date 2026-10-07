@@ -15,4 +15,10 @@ The go-live clean slate is archival, not destructive: archive old unsent message
 
 **Why:** The user explicitly required these boundaries for the pre-launch reset.
 
-**How to apply:** Verify the protected records before and after refresh operations. Attendance refresh must not rewrite sent-message conversion attribution during this reset. Skipping an old candidate is not permission to erase or bypass its duplicate-prevention history.
+**How to apply:** Verify the protected records before and after refresh operations. Attendance refresh must not rewrite sent-message conversion attribution during this reset. Skipping an old candidate is not permission to erase or broadly bypass its duplicate-prevention history.
+
+The user authorized a narrow replacement exception for reset-skipped candidates whose messages were archived and never approved, dispatched, or sent. Preserve the original records and re-run current eligibility and live context checks; do not treat other skipped candidates or previously sent sequences as restartable.
+
+**Why:** The archival reset otherwise prevented the three recent Learn to Play attendees from receiving fresh unapproved drafts.
+
+**How to apply:** Keep the exception explicit and reset-specific. Link retained history to the replacement instead of deleting records, reactivating old messages, or erasing delivery evidence.

@@ -1199,3 +1199,15 @@ Source requirements: `attached_assets/Pasted-GOAL-Rebuild-ltp-followup-as-a-two-
 - New club-scoped routes: `POST /api/retention/regenerate-batch` with `{candidate_ids}`, `POST /api/retention/candidates/:id/reshuffle` with `{}`, and `PATCH /api/retention/playbooks/ltp_followup/config` with `{ltp_sequence_config}`. The approvals response exposes `sequence_schema_ready` and Step 1 text/send history for Step 2 cards. The UI displays step/variant/sequence badges and preserves test-lookback stale flags. Reshuffle is available only for active, rebuilt drafted candidates of either step.
 
 The implementation and schema alone do not establish live acceptance. The requested initial operation is rebuilding the existing eight Step 1 drafts only, preserving candidate/message identity and confirming all approval, schedule, send and claim fields remain empty and sending settings remain unchanged.
+
+### Archived pre-launch first-touch replacements
+
+Apply `artifacts/api-server/migrations/018_prelaunch_reset_replacements.sql` manually in the existing external Supabase project, then publish the application change. Publish does not apply external Supabase migrations. Installation creates no drafts and changes no approvals, delivery evidence, opt-outs, audit tables, or sending settings.
+
+The normal Generate Drafts path may replace a step-1 candidate only when it is `skipped / pre_launch_reset`, its linked outbound message is `archived / pre_launch_reset` with no approval, schedule, dispatch, simulation, or delivery evidence, and its same-trigger sequence is active and never sent. Normal eligibility, live trigger verification, context rebuilding, coupon verification, and capacity checks still run. The transactional writer repeats the checks under locks and refuses any contact-ledger evidence.
+
+The replacement receives a new candidate ID and message ID. The archived message is untouched; all original candidate fields are retained, with only the new `prelaunch_superseded_by` history link added. Partial unique indexes keep one canonical player/playbook/step and sequence/step. A second Generate Drafts run cannot create a duplicate replacement. Later sequence transitions do not rewrite superseded candidate history; step-2 dispatch resolves its first touch using the root's actual step-1 message ID.
+
+If the migration is absent, generation fails closed with an explicit migration instruction. The UI calls matched attendees “Recent LTP players matched,” reports duplicate blocks, and displays the first generation error rather than merely reporting a count.
+
+Verification: `pnpm --filter @workspace/api-server exec tsx --test src/lib/__tests__/prelaunchResetSql.test.ts src/lib/__tests__/retentionPrelaunchReset.test.ts`. The SQL test creates and removes a UTF-8 PostgreSQL fixture with synthetic records, exercises the real sequence writer, installs the migration twice, and verifies refusal cases, history preservation, rollback, and subsequent sequence transitions. It never connects to the application database.

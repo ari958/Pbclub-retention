@@ -36,7 +36,8 @@ router.post("/retention/test-tools/candidates/:id", requireClub, async (req, res
         if (error || !selected) throw Object.assign(new Error("Candidate not found"), { status: 404 });
         if (selected.step === 2) {
           const { data: source, error: sourceError } = await supabase.from("retention_candidates")
-            .select("id").eq("club_id", clubId).eq("sequence_id", selected.sequence_id).eq("step", 1).maybeSingle();
+            .select("id").eq("club_id", clubId).eq("sequence_id", selected.sequence_id)
+            .eq("step", 1).eq("status", "sent").maybeSingle();
           if (sourceError || !source) throw new Error("Source test step 1 is missing");
           sourceId = source.id;
         }

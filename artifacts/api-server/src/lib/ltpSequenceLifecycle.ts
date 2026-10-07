@@ -543,7 +543,7 @@ export async function stepOneRealSentAt(
 ): Promise<string> {
   if (!candidate.sequence_id) failClosed("candidate has no shared sequence identity");
   const { data: sequence, error: sequenceError } = await supabase.from("retention_sequences")
-    .select("sequence_status,step1_sent_at,step1_delivery_kind")
+    .select("sequence_status,step1_sent_at,step1_delivery_kind,step1_message_id")
     .eq("id", candidate.sequence_id).eq("club_id", candidate.club_id).maybeSingle();
   if (sequenceError || !sequence) {
     failClosed(`shared LTP sequence lookup failed: ${sequenceError?.message ?? "sequence is missing"}`);
@@ -556,7 +556,8 @@ export async function stepOneRealSentAt(
   }
   const { data: stepOne, error } = await supabase.from("retention_candidates")
     .select("id,message_id,step,sequence_id").eq("club_id", candidate.club_id)
-    .eq("sequence_id", candidate.sequence_id).eq("step", 1).maybeSingle();
+    .eq("sequence_id", candidate.sequence_id).eq("step", 1)
+    .eq("message_id", sequence.step1_message_id).maybeSingle();
   if (error || !stepOne?.message_id) failClosed(`step 1 message lookup failed: ${error?.message ?? "message is missing"}`);
   const { data: message, error: messageError } = await supabase.from("messages")
     .select("status,sent_at,simulated,retention_delivery_kind")

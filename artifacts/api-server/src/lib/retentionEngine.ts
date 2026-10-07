@@ -22,6 +22,7 @@ import {
 } from "./retentionDates";
 import type { RetentionCandidate, RetentionContext, RetentionPlaybook, RetentionSequenceStep } from "./retentionTypes";
 import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./retentionPodplayBatch";
+import { canReplacePrelaunchCandidate } from "./retentionPrelaunchReset";
 
 export type RetentionSkipReason =
   | "no_phone"
@@ -398,15 +399,39 @@ export async function generateRetentionDrafts(
 
   const candidatePlayerIds = [...new Set(candidates.map((candidate) => candidate.playerId))];
   const { data: existingCandidates, error: duplicateQueryError } = await supabase.from("retention_candidates")
-    .select("player_id").eq("playbook_key", playbook.key).in("player_id", candidatePlayerIds);
+    .select(`player_id,status,step,trigger_event_id,context,
+      messages(status,error_message,direction,simulated,approved_at,approved_by,approved_body,
+        scheduled_send_at,sent_at,dispatch_claimed_at,dispatch_token,twilio_message_sid,
+        delivery_status,delivered_at,retention_delivery_kind),
+      retention_sequences(sequence_status,trigger_event_id,step1_sent_at,step1_message_id,
+        step1_delivery_kind,step2_sent_at,step2_message_id,exited_at,exit_reason)`)
+    .eq("club_id", clubId).eq("playbook_key", playbook.key).in("player_id", candidatePlayerIds);
   if (duplicateQueryError) throw new Error(duplicateQueryError.message);
-  const duplicatePlayerIds = new Set((existingCandidates ?? []).map((candidate: any) => candidate.player_id));
+  const byExistingPlayer = new Map<string, any[]>();
+  for (const existing of existingCandidates ?? []) {
+    const rows = byExistingPlayer.get(existing.player_id) ?? [];
+    rows.push(existing);
+    byExistingPlayer.set(existing.player_id, rows);
+  }
+  let hasResetReplacement = false;
   const freshCandidates = candidates.filter((candidate) => {
-    if (!duplicatePlayerIds.has(candidate.playerId)) return true;
+    const existing = byExistingPlayer.get(candidate.playerId) ?? [];
+    if (!existing.length) return true;
+    if (existing.every(row => canReplacePrelaunchCandidate(row, String(candidate.trigger.event_id)))) {
+      hasResetReplacement = true;
+      return true;
+    }
     skip("duplicate");
     return false;
   });
   if (!freshCandidates.length) return result;
+  if (hasResetReplacement) {
+    const ready = await supabase.rpc("retention_prelaunch_reset_ready");
+    if (ready.error || ready.data !== true) {
+      recordError("Reset-skipped drafts require Supabase migration 018_prelaunch_reset_replacements.sql before generation.");
+      return result;
+    }
+  }
 
   const playerIds = [...new Set(freshCandidates.map((candidate) => candidate.playerId))];
   const players = await pageAll<any>((from, to) => supabase.from("players")

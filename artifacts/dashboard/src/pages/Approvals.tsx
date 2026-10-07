@@ -116,7 +116,8 @@ export default function Approvals() {
       };
       const errs = st.errors?.length ?? 0;
       const found = r.stats?.new_ltp_players ?? r.stats?.found;
-      const msg = `${found === undefined ? "" : `New LTP players found: ${found}. `}Drafts created: ${st.created ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}. Nothing was sent.`;
+      const duplicates = r.stats?.skipped_by_reason?.duplicate ?? 0;
+      const msg = `${found === undefined ? "" : `Recent LTP players matched: ${found}. `}Drafts created: ${r.created ?? r.stats?.drafted ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}.${duplicates ? ` Duplicate blocks: ${duplicates}.` : ""}${errs ? ` ${st.errors?.[0] ?? ""}` : ""} Nothing was sent.`;
       if (errs) toast.info(msg); else toast.success(msg);
       await load();
     } catch (e) { toast.error(e instanceof Error ? e.message : "Generate failed"); }
