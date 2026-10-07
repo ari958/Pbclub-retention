@@ -11,6 +11,11 @@ const valid = () => ({
   OPERATOR_PASSWORD: "offline-production-password",
   PUBLIC_API_URL: "https://production.example.com",
 });
+const alertTransport = () => ({
+  TWILIO_PHONE_NUMBER: "+12025550124",
+  TWILIO_ACCOUNT_SID: "offline-account-sid",
+  TWILIO_AUTH_TOKEN: "offline-auth-token",
+});
 const ready = async () => ({ configuration: "passed", connectivity: "passed", schema: "passed",
   errors: [], target: "offline fixture", coverage: "offline fixture", limitations: "Offline only." });
 
@@ -36,7 +41,7 @@ test("publishing requires an alert destination only for exact true worker opt-in
   for (const flag of [undefined, "", "false", "TRUE", "True", "1", " true", "true ", "true"]) {
     for (const destination of [undefined, "", "+12025550123"]) {
       for (const nodeEnv of [undefined, "development", "test", "production"]) {
-        const env = { ...valid(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag, ALERT_OPERATOR_TO: destination };
+        const env = { ...valid(), ...alertTransport(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag, ALERT_OPERATOR_TO: destination };
         const expected = flag === "true" && !destination
           ? ["Production background jobs require ALERT_OPERATOR_TO"] : [];
         assert.deepEqual(validateProductionEnvironment(env), expected);
@@ -58,7 +63,7 @@ test("runtime worker policy preserves environment gating and explicit test-only 
           else process.env.NODE_ENV = nodeEnv;
           if (flag === undefined) delete process.env.RUN_BACKGROUND_JOBS;
           else process.env.RUN_BACKGROUND_JOBS = flag;
-          const env = { NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag };
+          const env = { ...alertTransport(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag };
           const enabled = flag === "true" && (nodeEnv === "production" || (nodeEnv === "test" && testOverride));
           assert.equal(backgroundJobsEnabledForEnvironment(env, testOverride), enabled);
           assert.equal(backgroundJobsEnabled(), enabled);
@@ -77,6 +82,99 @@ test("runtime worker policy preserves environment gating and explicit test-only 
       if (original[key] === undefined) delete process.env[key];
       else process.env[key] = original[key];
     }
+  }
+});
+
+test("worker alert configuration is identical for runtime and publishing with synthetic fixtures", () => {
+  const worker = { ...valid(), ...alertTransport(), NODE_ENV: "production",
+    RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123" };
+  const check = (env, expected) => {
+    const original = { ...env };
+    assert.deepEqual(productionWorkerConfigurationErrors(env), expected);
+    assert.deepEqual(validateProductionEnvironment(env), expected);
+    assert.deepEqual(env, original);
+  };
+  for (const destination of ["+12345678", "+123456789012345", worker.ALERT_OPERATOR_TO]) {
+    check({ ...worker, ALERT_OPERATOR_TO: destination }, []);
+  }
+  for (const destination of [undefined, "", " ", "\n\t", null, 123, {}]) {
+    check({ ...worker, ALERT_OPERATOR_TO: destination }, ["Production background jobs require ALERT_OPERATOR_TO"]);
+  }
+  for (const destination of [
+    "12025550123", "+012345678", "+1234567", "+1234567890123456",
+    "+1 (202) 555-0123", "+1202555abcd", " +12025550123", "+12025550123 ",
+    "+12025550123\n", "+12025550123\r\n", "+１２０２５５５０１２３", "private-destination",
+  ]) {
+    const env = { ...worker, ALERT_OPERATOR_TO: destination };
+    check(env, ["Production background jobs require ALERT_OPERATOR_TO in E.164 format (+ followed by 8 to 15 digits)"]);
+    assert.ok(!productionWorkerConfigurationErrors(env).join("\n").includes(destination));
+  }
+  for (const key of Object.keys(alertTransport())) {
+    for (const missing of [undefined, "", " ", "\n\t", null, 123, {}]) {
+      check({ ...worker, [key]: missing }, [`Production background jobs require ${key} for operator alerts`]);
+    }
+  }
+  // Operator infrastructure alerts are not gated by player delivery controls.
+  for (const SMS_LIVE of [undefined, "false", "true"]) {
+    check({ ...worker, SMS_LIVE, SMS_TEST_OVERRIDE_TO: "+12025550125",
+      TWILIO_AUTH_TOKEN: "" }, ["Production background jobs require TWILIO_AUTH_TOKEN for operator alerts"]);
+  }
+  const incomplete = { ...valid(), NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true" };
+  check(incomplete, [
+    "Production background jobs require ALERT_OPERATOR_TO",
+    ...Object.keys(alertTransport()).map(key => `Production background jobs require ${key} for operator alerts`),
+  ]);
+});
+
+test("disabled production workers and non-production runtime need no alert settings", () => {
+  for (const flag of [undefined, "", "false", "TRUE", "1", " true", "true "]) {
+    const env = { ...valid(), NODE_ENV: "production", RUN_BACKGROUND_JOBS: flag,
+      ALERT_OPERATOR_TO: "private-invalid-destination" };
+    assert.deepEqual(productionWorkerConfigurationErrors(env), []);
+    assert.deepEqual(validateProductionEnvironment(env), []);
+  }
+  for (const NODE_ENV of [undefined, "development", "test"]) {
+    const env = { NODE_ENV, RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "private-invalid-destination" };
+    assert.deepEqual(productionWorkerConfigurationErrors(env), []);
+  }
+});
+
+test("invalid alerts stop publishing before database checks or compilation and sanitize all output", async () => {
+  for (const changes of [
+    { ALERT_OPERATOR_TO: "private-destination" },
+    ...Object.keys(alertTransport()).map(key => ({ [key]: "" })),
+    { ALERT_OPERATOR_TO: "", ...Object.fromEntries(Object.keys(alertTransport()).map(key => [key, ""])) },
+  ]) {
+    const env = { ...valid(), ...alertTransport(), NODE_ENV: "development",
+      RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123", ...changes };
+    const output = [];
+    assert.equal(await runProductionBuild({
+      env, schemaCheck: () => assert.fail("Must not access the database"),
+      spawn: () => assert.fail("Must not compile"),
+      info: text => output.push(text), error: text => output.push(text),
+    }), 1);
+    const expected = productionWorkerConfigurationErrors({ ...env, NODE_ENV: "production" });
+    assert.deepEqual(output, [`Production configuration preflight failed:\n${expected.map(text => `- ${text}`).join("\n")}`]);
+    for (const value of [env.OPERATOR_PASSWORD, env.ALERT_OPERATOR_TO, ...Object.values(alertTransport())]) {
+      if (value) assert.ok(!output.join("\n").includes(value));
+    }
+  }
+});
+
+test("actual CLI rejects malformed destinations and absent transport before any external checks", () => {
+  for (const changes of [
+    { ALERT_OPERATOR_TO: "private-destination" },
+    ...Object.keys(alertTransport()).map(key => ({ [key]: "" })),
+  ]) {
+    const env = { ...valid(), ...alertTransport(), NODE_ENV: "test",
+      RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123", ...changes };
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("./production-build.mjs", import.meta.url))], {
+      env, encoding: "utf8",
+    });
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.equal(result.stderr.trim(), `Production configuration preflight failed:\n${productionWorkerConfigurationErrors({ ...env, NODE_ENV: "production" }).map(text => `- ${text}`).join("\n")}`);
+    assert.doesNotMatch(result.stderr, /private-destination|offline-auth-token|offline-account-sid|SUPABASE|pnpm/);
   }
 });
 
@@ -120,7 +218,7 @@ test("all configuration errors appear before any compilation, with no secret val
 
 test("valid configuration passes the supplied publishing values unchanged to both compilers", async () => {
   const env = { ...valid(), NODE_ENV: "development", SUPABASE_SERVICE_ROLE_KEY: "offline-database-secret",
-    RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123" };
+    ...alertTransport(), RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "+12025550123" };
   const original = { ...env };
   const calls = [];
   const output = [];
@@ -141,6 +239,7 @@ test("valid configuration passes the supplied publishing values unchanged to bot
     assert.equal(options.env.SUPABASE_SERVICE_ROLE_KEY, env.SUPABASE_SERVICE_ROLE_KEY);
     assert.equal(options.env.RUN_BACKGROUND_JOBS, env.RUN_BACKGROUND_JOBS);
     assert.equal(options.env.ALERT_OPERATOR_TO, env.ALERT_OPERATOR_TO);
+    for (const key of Object.keys(alertTransport())) assert.equal(options.env[key], env[key]);
     assert.equal(options.env.NODE_ENV, "production");
     assert.equal(options.env.BASE_PATH, "/dashboard/");
     assert.equal(options.env.PORT, "23183");
@@ -148,7 +247,7 @@ test("valid configuration passes the supplied publishing values unchanged to bot
   }
   assert.deepEqual(env, original);
   assert.match(output.join("\n"), /configuration=passed; connectivity=passed; schema=passed/);
-  for (const secret of [env.OPERATOR_PASSWORD, env.SUPABASE_SERVICE_ROLE_KEY, env.ALERT_OPERATOR_TO]) {
+  for (const secret of [env.OPERATOR_PASSWORD, env.SUPABASE_SERVICE_ROLE_KEY, env.ALERT_OPERATOR_TO, ...Object.values(alertTransport())]) {
     assert.ok(!output.join("\n").includes(secret));
   }
 });
@@ -196,7 +295,7 @@ test("actual publishing CLI fails closed when external database settings are abs
 
 test("actual CLI rejects missing worker alerts even from a development build shell", () => {
   const result = spawnSync(process.execPath, [fileURLToPath(new URL("./production-build.mjs", import.meta.url))], {
-    env: { ...valid(), NODE_ENV: "development", RUN_BACKGROUND_JOBS: "true" }, encoding: "utf8",
+    env: { ...valid(), ...alertTransport(), NODE_ENV: "development", RUN_BACKGROUND_JOBS: "true" }, encoding: "utf8",
   });
   assert.equal(result.status, 1);
   assert.equal(result.stdout, "");
@@ -205,11 +304,12 @@ test("actual CLI rejects missing worker alerts even from a development build she
 });
 
 test("missing worker alert alone blocks both compilers without mutating the supplied environment", async () => {
-  const env = { ...valid(), RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "" };
+  const env = { ...valid(), ...alertTransport(), RUN_BACKGROUND_JOBS: "true", ALERT_OPERATOR_TO: "" };
   const original = { ...env };
   const output = [];
   assert.equal(await runProductionBuild({
     env, info: message => output.push(message), error: message => output.push(message),
+    schemaCheck: () => assert.fail("Database checks must not start"),
     spawn: () => { assert.fail("Compilation must not start"); },
   }), 1);
   assert.deepEqual(env, original);
