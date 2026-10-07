@@ -58,7 +58,6 @@ channel = "stable-25_05"
 [userenv]
 
 [userenv.shared]
-SMS_LIVE = "false"
 PUBLIC_API_URL = "https://retention-agent-ari205.replit.app"
 REQUIRE_MARKETING_CONSENT = "false"
 RETENTION_ONLY_MODE = "true"
@@ -67,3 +66,7 @@ DEFAULT_CLUB_SLUG = "pb-club"
 
 [userenv.development]
 RUN_BACKGROUND_JOBS = "false"
+SMS_LIVE = "false"
+
+[userenv.production]
+SMS_LIVE = "true"
