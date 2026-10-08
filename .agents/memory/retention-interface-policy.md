@@ -21,6 +21,12 @@ Retention conversion reporting is about genuine member exposure, not testing or 
 
 **How to apply:** Preserve the distinction between operational pipeline counts and conversion cohorts. Keep test records available for audit rather than deleting them. Historical test classification must use send-time evidence, not the currently configured override.
 
+Test-only delivery to an override number does not fulfill the intended player's live LTP follow-up.
+
+**Why:** The user requested fresh live drafts for stranded players who have not booked, while retaining their original test sequences and messages for audit.
+
+**How to apply:** An authorized recovery should create a distinct live sequence through the normal draft pipeline, not relabel or delete the original test history. Check stored attendance and live upcoming signup evidence before deciding whether the player needs recovery.
+
 For the Learn to Play rollout, present each actual draft's full text alongside its context to the user before approving any messages or starting live delivery testing.
 
 **Why:** The user reserved review of voice, factual accuracy, the offer, and the next-program suggestion before the live test. A request to generate drafts is not permission to enable sending or approve them.

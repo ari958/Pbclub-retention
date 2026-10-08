@@ -1,0 +1,30 @@
+Goal: fix the audit view’s unsent label, recover players stranded by test sends, guard the test clock control, and keep the coupon lookup cheap. Drafts only. No sends, no approvals, no sending-setting or playbook changes. Migration 023 is applied; don’t rerun 022 or 023.
+
+1. Audit view label. In a new migration, 024:
+
+Add a not_started branch to the outcome CASE in playbook_outcomes_audit, placed before no_booking, for sequences with no step1_sent_at.
+Keep the column order, security_invoker=true, and the service-role-only grants.
+Confirm playbook_outcomes is unchanged at 3 rows.
+
+Report outcome counts in the audit view before and after (expected: the 6 unsent rows move to not_started).
+
+2. Stranded players. Ethan Forde, Meaghan Wright, Ke Shi, and Joe Stephenson are marked texted, but every send went to the override number. For each, report their LTP date and any booking since then (attendances and live PodPlay upcoming signups). Then:
+
+Booked: leave the sequence as is, with exit_reason = booked.
+Not booked:
+Keep the test sequence in playbook_outcomes_audit with is_test. Don’t delete any message rows.
+Start a fresh live sequence that drafts step 1 through the normal pipeline (matching, capacity, coupon validation, validator) into Approvals.
+Report how the uniqueness rule on (player_id, playbook_key, step) is satisfied without losing the test record.
+Confirm the new sequence appears in playbook_outcomes as not_started in the audit view until it’s sent.
+
+3. Test clock guard. Find the control that backdated Joe’s step 1 clock, and report its file, line, and how it’s invoked. Make it refuse to run unless SMS_TEST_OVERRIDE_TO is set and every message in the sequence went to the override number. Log every use.
+
+4. Coupon lookup cost.
+
+Cache coupon id → code in memory for the duration of a sync run.
+Only fetch /orders/{id} for signups being inserted for the first time that have an order.id.
+Report the added PodPlay calls per sync before and after, using last night’s run as the baseline.
+
+5. Verify. Run tsc --noEmit and the focused tests. Paste the audit view outcome counts and the four players’ results. Report a STATUS line per step.
+
+If a schema change is needed beyond step 1, write it into migration 024, stop, and report before applying.
