@@ -1,6 +1,21 @@
-import { DEFAULT_RETENTION_LOOKBACK_DAYS } from "./retentionDates";
+import {
+  DEFAULT_RETENTION_LOOKBACK_DAYS,
+  MAX_RETENTION_LOOKBACK_DAYS,
+  normalizeRetentionLookbackDays,
+} from "./retentionDates";
 
 export const RETENTION_DRAFT_EXPIRY_DAYS = 5;
+
+/** Rebuild live drafts under live eligibility, not a saved historical test window. */
+export function retentionRebuildLookbackDays(
+  context: { lookback_days?: number; stale?: boolean },
+  testRecipientOverride = process.env.SMS_TEST_OVERRIDE_TO,
+): number {
+  if (!testRecipientOverride?.trim()) return DEFAULT_RETENTION_LOOKBACK_DAYS;
+  return normalizeRetentionLookbackDays(Number(
+    context.lookback_days ?? (context.stale ? MAX_RETENTION_LOOKBACK_DAYS : DEFAULT_RETENTION_LOOKBACK_DAYS),
+  ));
+}
 
 /** Fail before approval/claim: stale historical drafts must never reach live transport. */
 export function assertRetentionDraftFresh(candidate: { created_at?: string; context?: unknown }, now = new Date()) {

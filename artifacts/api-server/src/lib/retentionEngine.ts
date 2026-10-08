@@ -23,6 +23,7 @@ import {
 import type { RetentionCandidate, RetentionContext, RetentionPlaybook, RetentionSequenceStep } from "./retentionTypes";
 import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./retentionPodplayBatch";
 import { canReplacePrelaunchCandidate } from "./retentionPrelaunchReset";
+import { retentionRebuildLookbackDays } from "./retentionFreshness";
 
 export type RetentionSkipReason =
   | "no_phone"
@@ -918,9 +919,11 @@ async function buildLtpBatchWriteItems(
   for (const candidate of sorted) {
     const previousContext = candidate.context ?? {} as RetentionContext;
     const step = candidate.step ?? previousContext.ltp_text?.step ?? 1;
-    const lookbackDays = normalizeRetentionLookbackDays(Number(
-      previousContext.lookback_days ?? (previousContext.stale ? MAX_RETENTION_LOOKBACK_DAYS : DEFAULT_RETENTION_LOOKBACK_DAYS),
-    ));
+    const lookbackDays = operation === "create"
+      ? normalizeRetentionLookbackDays(Number(
+        previousContext.lookback_days ?? (previousContext.stale ? MAX_RETENTION_LOOKBACK_DAYS : DEFAULT_RETENTION_LOOKBACK_DAYS),
+      ))
+      : retentionRebuildLookbackDays(previousContext);
     const [{
       data: player,
       error: playerError,
@@ -980,6 +983,13 @@ async function buildLtpBatchWriteItems(
       if (!isLearnToPlayName(trigger.name)
         || (previousContext.trigger?.date && trigger.date !== previousContext.trigger.date)) {
         throw Object.assign(new Error("The live trigger no longer matches the saved Learn to Play event date"), { status: 409 });
+      }
+      // Step 2 has its own delivery-based due window; the original clinic may
+      // legitimately be older than three days by then. Step 1 must qualify now.
+      if (step === 1 && !isRetentionTriggerDate(trigger.date, toEtDate(sendAt), lookbackDays)) {
+        throw Object.assign(new Error(
+          `The live Learn to Play attendance is outside the current ${lookbackDays}-day eligibility window`,
+        ), { status: 409 });
       }
       const attendanceCutoff = candidate.attendance_cutoff ?? trigger.start_time;
       const { data: attendance, error: attendanceError } = await supabase.from("attendances")

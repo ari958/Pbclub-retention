@@ -26,3 +26,9 @@ Fix creation-time sent_at defaults in draft writers with explicit NULL, not by g
 **Why:** The user authorized a draft-source correction; a global default change would unnecessarily affect other message writers.
 
 **How to apply:** Correct both installed draft writers and migration sources, preserving the default for non-draft writers.
+
+When moving from redirected tests to live operation, rebuild recent eligible drafts under the production window rather than treating their historical test-window label as permanent. Keep genuinely historical outreach blocked.
+
+**Why:** The user reported that recently regenerated drafts for recent attendance were still blocked as “stale” after disabling the test override. Retaining a test lookback is not evidence that the underlying attendance is old.
+
+**How to apply:** Require a fresh live event/context check and renewed text review, not manual flag clearing or reused approval. Preserve historical windows for explicitly redirected testing. Do not apply the step-1 attendance window to step-2 follow-ups, which have a separate delivery-based due window.
