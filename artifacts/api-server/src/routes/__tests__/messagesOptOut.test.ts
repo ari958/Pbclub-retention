@@ -28,6 +28,7 @@ function queryFor(table: string) {
   const query: any = {
     select() { return query; },
     update(next: any) { operation = "update"; values = next; return query; },
+    upsert(next: any) { operation = "upsert"; values = next; return query; },
     eq() { return query; },
     is() { return query; },
     in() { return query; },
@@ -49,6 +50,7 @@ function queryFor(table: string) {
       return { data: [state.message], error: null };
     }
     if (table === "conversations") return { data: [], error: null };
+    if (table === "sms_optout_events") return { data: { id: MESSAGE_ID, alerted_at: null, is_backfill: false }, error: null };
     return { data: null, error: null };
   }
 

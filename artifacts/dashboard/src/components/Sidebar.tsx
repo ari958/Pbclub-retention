@@ -228,6 +228,7 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
     ? [
         { label: "Dashboard", path: `/c/${slug}/dashboard`, icon: <IconDashboard /> },
         { label: "Approvals", path: `/c/${slug}/approvals`, icon: <IconApprovals /> },
+        { label: "Reports", path: `/c/${slug}/reports`, icon: <IconDashboard /> },
         { label: "Players", path: `/c/${slug}/players`, icon: <IconPlayers /> },
         {
           label: "Messages",

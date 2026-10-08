@@ -12,6 +12,7 @@ import Programming from "./pages/Programming";
 import Programs from "./pages/Programs";
 import Rules from "./pages/Rules";
 import Approvals from "./pages/Approvals";
+import Reports from "./pages/Reports";
 import { RETENTION } from "./lib/navMode";
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -293,6 +294,7 @@ export default function App() {
             {/* Club-scoped routes — all gated by ClubLayout */}
             <Route path="/c/:slug" element={<ClubLayout />}>
               <Route index element={<Navigate to="dashboard" replace />} />
+              <Route path="reports" element={<ErrorBoundary pageName="Reports"><Reports /></ErrorBoundary>} />
               <Route
                 path="approvals"
                 element={

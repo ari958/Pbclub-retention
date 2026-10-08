@@ -17,7 +17,7 @@
 - [Phase 4.1 send path](phase41-send-path.md) — TWILIO_PHONE_NUMBER=+12015281834 (A2P approved, confirmed delivered); SMS_LIVE env var gates dispatch; experiment dispatch at POST /experiments/:id/send; migration 007 required for full flow
 - [DUPR refresh policy](dupr-refresh-policy.md) — track last check separately from rating source age, including unrated players; keep long imports heartbeat-alive and resume from saved batches.
 - [Programs history policy](programs-history-policy.md) — active screens default to upcoming programs; past records belong in Archive, not deletion or rewritten experiment statuses.
-- [Retention interface policy](retention-interface-policy.md) — approval-only workflow is intentional; preserve legacy features without restoring hidden requests or send bypasses.
+- [Retention interface policy](retention-interface-policy.md) — approval-only outreach is intentional; Reports remain read-only; preserve parked legacy features.
 - [PodPlay context rate limits](podplay-context-rate-limits.md) — sequential candidate rebuilds can still hit signup-read limits; pace/share batch reads and fail closed on 429.
 - [Retention SQL verification](retention-sql-verification.md) — compile and exercise migrations in isolated PostgreSQL fixtures; source-contract tests do not prove SQL validity or safe backfills.
 - [CLI runtime parity](frontend-test-runtime.md) — CLI scripts and tests can resolve mixed JS/TS and JSX differently from production; align the harness, not working imports.

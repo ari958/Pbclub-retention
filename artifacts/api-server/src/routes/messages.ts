@@ -4,6 +4,7 @@ import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
 import { captureInboundSms } from "../lib/inboundSms";
+import { alertOptOutEvent, recordCarrierOptOutEvent } from "../lib/smsOptouts";
 import {
   composeApprovedMessageBody,
   isSmsDispatchClaimError,
@@ -462,9 +463,7 @@ router.post("/messages/webhook/status", async (req, res) => {
   }
 
   req.log.info({ MessageSid, MessageStatus, event }, "Twilio status webhook received");
-  if (MessageStatus === "failed" || MessageStatus === "undelivered") {
-    void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
-  }
+  const callbackAt = new Date().toISOString();
 
   // Link click event
   const isClick =
@@ -560,6 +559,12 @@ router.post("/messages/webhook/status", async (req, res) => {
 
   const operatorTestReceipt = Array.isArray(affected) && affected.length > 0
     && affected.every(message => message.retention_delivery_kind === "test" && !message.player_id && !message.conversation_id);
+  // Real 21610 failures receive one context-rich opt-out alert below instead
+  // of an additional generic delivery failure alert.
+  if ((MessageStatus === "failed" || MessageStatus === "undelivered")
+    && (!isTwilio21610(ErrorCode) || operatorTestReceipt)) {
+    void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
+  }
   if (isTwilio21610(ErrorCode) && !operatorTestReceipt) {
     let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
     if (!messages.length) {
@@ -576,9 +581,11 @@ router.post("/messages/webhook/status", async (req, res) => {
       if (linked) messages = [linked];
     }
     const playerIds = new Set<string>();
+    const optOutMessages: Array<{ messageId: string; playerId: string }> = [];
     for (const message of messages) {
       if (message?.player_id) {
         playerIds.add(String(message.player_id));
+        optOutMessages.push({ messageId: String(message.id), playerId: String(message.player_id) });
         continue;
       }
       if (message?.conversation_id) {
@@ -592,7 +599,10 @@ router.post("/messages/webhook/status", async (req, res) => {
           res.status(500).send("Could not resolve the player for Twilio opt-out");
           return;
         }
-        if (conversation?.player_id) playerIds.add(String(conversation.player_id));
+        if (conversation?.player_id) {
+          playerIds.add(String(conversation.player_id));
+          optOutMessages.push({ messageId: String(message.id), playerId: String(conversation.player_id) });
+        }
       }
     }
     if (!playerIds.size) {
@@ -603,6 +613,10 @@ router.post("/messages/webhook/status", async (req, res) => {
     try {
       for (const playerId of playerIds) {
         await applyTwilio21610OptOut(playerId, "twilio_error_21610");
+      }
+      for (const message of optOutMessages) {
+        const eventId = await recordCarrierOptOutEvent(message.playerId, message.messageId, callbackAt);
+        await alertOptOutEvent(eventId);
       }
     } catch (error) {
       req.log.error({ err: error, MessageSid }, "Could not persist the Twilio 21610 opt-out");
@@ -671,6 +685,19 @@ router.post("/messages/webhook/inbound", async (req, res) => {
   req.log.info({ twilio_sid: req.body.MessageSid, receipt_id: receipt.id, club_id: receipt.club_id,
     player_id: receipt.player_id, message_id: receipt.message_id, match_reason: receipt.match_reason,
     kind: receipt.kind, duplicate: receipt.duplicate }, "Inbound SMS stored");
+  if (receipt.optout_type_mismatch && receipt.optout_event_created) {
+    req.log.warn({ receipt_id: receipt.id, twilio_optout_type: receipt.twilio_optout_type },
+      "Twilio OptOutType indicated STOP but the body classifier did not; provider classification enforced");
+  }
+  if (receipt.optout_event_id) {
+    try {
+      await alertOptOutEvent(receipt.optout_event_id);
+    } catch (error) {
+      req.log.error({ event_id: receipt.optout_event_id, reason: error instanceof Error ? error.message : "Alert failed" },
+        "Opt-out saved but operator alert incomplete");
+      return void res.status(503).json({ error: "Opt-out was saved, but operator alert requires retry or reconciliation" });
+    }
+  }
   if (receipt.processing_error || !receipt.processed_at) {
     return void res.status(503).json({ error: receipt.kind === "stop"
       ? "STOP was saved, but sequence processing failed; retry required"

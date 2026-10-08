@@ -22,7 +22,7 @@ export async function alertOperator(key: string, text: string) {
   const source = key.startsWith("nightly:") || key.startsWith("nightly-start:") ? "nightly-chain"
     : key.startsWith("queue-failure:") ? "sms-queue"
     : key.startsWith("send-failed:") || key.startsWith("dispatch-failed:") ? "sms-dispatch" : "watchdog";
-  await observeOperatorCondition(key, true, text, source);
+  return observeOperatorCondition(key, true, text, source);
 }
 export async function resolveOperatorAlert(key: string, text: string | null = null) {
   await observeOperatorCondition(key, false, text);
@@ -160,6 +160,8 @@ export async function runOperatorWatchdog() {
       await observeKillSwitch(await resolveClubSlug(getDefaultClubSlug()), "watchdog");
       await resolveDeliveredDispatchAlerts();
       await alertUnmatchedInbound();
+      // Lazy import avoids a module-init cycle with the per-event alert helper.
+      await (await import("./smsOptouts")).alertPendingOptOutEvents();
     }
     // Also detects kill-switch changes made outside this API.
     if (health.paused !== null) {
@@ -174,6 +176,7 @@ export async function alertUnmatchedInbound() {
   if (!backgroundJobsEnabled()) return;
   const { data, error } = await supabase.from("sms_inbound_receipts")
     .select("id,club_id,match_reason,kind").is("player_id", null)
+    .neq("kind", "stop")
     .is("operator_alert_attempted_at", null).order("received_at", { ascending: true }).limit(100);
   if (error) throw new Error("Cannot inspect unmatched inbound inbox; install migration 021");
   for (const receipt of data ?? []) {

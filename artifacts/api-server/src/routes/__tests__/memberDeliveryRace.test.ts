@@ -39,6 +39,7 @@ function queryFor(table: string) {
   const q: any = {
     select() { return q; },
     insert(value: any) { action = "insert"; payload = value; return q; },
+    upsert(value: any) { action = "upsert"; payload = value; return q; },
     update(value: any) { action = "update"; payload = value; return q; },
     eq(key: string, value: any) { filters.push(row => row[key] === value); return q; },
     is(key: string, value: any) { filters.push(row => value === null ? row[key] == null : row[key] === value); return q; },
@@ -57,8 +58,11 @@ function queryFor(table: string) {
       || (table === "contact_ledger" && action === "insert" && failLedger)) {
       return { data: null, error: { message: "fixture database unavailable" } };
     }
-    const data = rows[table] ?? [];
+    const data = rows[table] ?? (rows[table] = []);
     if (action === "insert") data.push({ ...payload });
+    if (action === "upsert" && !data.some(row => row.message_id === payload.message_id)) {
+      data.push({ id: "optout-event", alerted_at: null, is_backfill: false, ...payload });
+    }
     const affected = data.filter(row => filters.every(filter => filter(row)));
     if (action === "update") affected.forEach(row => Object.assign(row, payload));
     return { data: single ? affected[0] ?? null : affected, error: null };
@@ -97,6 +101,7 @@ function useSequence() {
   rows.messages.push({ id: "step-one-message", status: "sent", sent_at: "2026-10-05T16:00:00Z",
     simulated: false, retention_delivery_kind: "real" });
   rows.retention_sequences = [{ id: "sequence", club_id: clubId, sequence_status: "active",
+    step1_message_id: "step-one-message",
     step1_sent_at: "2026-10-05T16:00:00Z", step1_delivery_kind: "real" }];
 }
 

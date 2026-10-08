@@ -158,6 +158,13 @@ UPDATE clubs SET onboarded = true, platform = 'podplay' WHERE onboarded = false;
 Full technical reference is maintained at `pulse-technical-docs.md` in the project root.
 Update it whenever you make significant changes: new tables, new API routes, new engines, schema changes, or ops procedure changes.
 
+### Retention Reports
+
+- `/c/:slug/reports` is a read-only reporting page. Its authenticated, club-scoped API performs SELECTs only and keeps private reporting data out of browser Supabase queries.
+- Apply `artifacts/api-server/migrations/022_retention_reports_and_optouts.sql` manually in the existing external Supabase SQL Editor before publishing this feature. Never apply it to local `DATABASE_URL` as a substitute.
+- This migration adds private opt-out capture and the three reporting views, with idempotent, non-alerting historical backfills. Missing views produce a clear 503, not fabricated metrics.
+- See `artifacts/api-server/reports/retention-reports-verification.md` for the production verification handoff and the GET-only verification command.
+
 ## Notes
 - Never use `console.log` in server code — use `req.log` (routes) or `logger` (lib)
 - All player queries on buddy_pairs must select `player_a` (no `id` column)
