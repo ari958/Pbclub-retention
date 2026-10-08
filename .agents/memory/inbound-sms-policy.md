@@ -20,3 +20,9 @@ Keep raw unlinked receipts private rather than relying on a player relationship 
 **Why:** An unknown sender has no player relationship through which to establish ownership.
 
 **How to apply:** Operator-authenticated, club-scoped reads only. Do not apply blanket anonymous grants to private inbox tables.
+
+The user confirmed the fresh inbound reply worked after guidance to publish and configure the Messaging Service to “Defer to sender’s webhook,” using the phone number’s production inbound endpoint.
+
+**Why:** A correct phone-number webhook alone does not establish that its Messaging Service routes inbound messages to it.
+
+**How to apply:** When investigating missing inbound messages, inspect both service-level routing and the number-level webhook. Preserve this confirmed routing approach unless the user requests a change; do not infer that operator alerts or all STOP/sequence behaviors were verified by this confirmation.
