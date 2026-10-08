@@ -1,0 +1,64 @@
+Goal: build a read-only Reports page that measures each retention flow, starting with ltp_followup, including opt-out tracking. Read-only against production data. No sends, no approvals, no changes to sending settings or playbook config. The only writes allowed are the schema additions and backfill in steps 2 and 3.
+
+0. Read back first, then STOP and report before building.
+
+The columns on retention_candidates, messages, contact_ledger, and attendances that record: send time per step, Twilio delivery status, inbound replies, opt-outs, sequence_status / exit_reason, the booked event on exited_booked, and booked_at.
+Whether the coupon code from PodPlay signups is stored anywhere in Supabase. If it isn’t, say so; don’t add it yet.
+Whether Twilio delivery status callbacks update messages.status. If they don’t, the funnel shows “sent” only.
+How STOP is captured today: does the Twilio webhook receive the inbound STOP (Twilio forwards it with an OptOutType parameter), and is a timestamp stored? Also report whether sends to opted-out numbers fail with Twilio error 21610, and where that error is logged.
+The exact function or query that decides “this event is a Learn to Play,” with file and line.
+The existing operator alert mechanism, with file and line.
+
+1. Outcome view. Create a SQL view playbook_outcomes with one row per (player, playbook_key) sequence. Columns:
+
+player_id, name, playbook_key
+step1_sent_at, step2_sent_at, last_sent_at
+sequence_status, exit_reason, replied (bool)
+booked (bool), booked_event_id, booked_program_name, booking_created_at, credited_step (1 or 2), coupon_code_used, days_to_book
+opted_out (bool), opted_out_at, optout_after_step (1 or 2), optout_message_id (the last outbound text before the STOP), hours_to_optout
+
+Rules:
+
+Booked means an attendance/signup whose booked_at is after step1_sent_at and on or before last_sent_at + 14 days. Make the 14 a single constant at the top of the view.
+credited_step is 2 if the booking came after step2_sent_at, otherwise 1.
+Exclude Learn to Play events themselves from counting as a booking.
+
+2. Coupon tracking. If step 0 found that coupon codes aren’t stored:
+
+Add coupon_code text to attendances.
+Populate it from the PodPlay signup couponCode in the event sync going forward.
+Backfill only events since 2026-10-01, and report the count of rows backfilled.
+
+3. Opt-out capture. If step 0 found that STOP replies or 21610 errors aren’t recorded with a timestamp, record them going forward: player, timestamp, and source (stop_reply, carrier_21610, or manual). Don’t change how opt-outs are enforced; only record them.
+
+4. Opt-outs view. Create sms_optouts covering all opt-outs regardless of flow. Columns: player, opted_out_at, source, plus the playbook, step, and body of the last text we sent before the opt-out. An opt-out with no preceding text from us shows source unattributed.
+
+5. Baseline view. Create ltp_baseline: players whose first Learn to Play falls in the 6 months before 2026-10-07, using the same LTP definition from step 0. Count them, and count those with any non-LTP booking within 21 days of their LTP date. Return n_players, n_booked, rate.
+
+6. Reports page at /c/:slug/reports, linked in the nav. The dashboard reads the views directly (SELECT only; no writes from the dashboard).
+
+Club-wide opt-out total at the top across all flows, independent of the playbook selector.
+A playbook selector, defaulting to ltp_followup. It lists any playbook_key present in playbook_outcomes, so new flows appear automatically.
+A date range filter on step1_sent_at: Last 30 days, Last 90 days, All time.
+Scorecard:
+Texted
+Booked (n and %)
+Baseline rate (n of N)
+Code redemptions
+Replies
+Opt-out rate, split by Step 1 and Step 2
+Always show the count beside every percentage. If a playbook has no baseline yet, show “No baseline defined.”
+Funnel: Drafted → Approved → Sent → Delivered (if available) → Booked, with Step 1 and Step 2 as separate rows.
+Player table: name, texts sent, sequence status, booked program, days to book, credited step, code used, opted out. Sortable, with the newest sends first.
+Opt-outs panel: each opt-out with the full text that preceded it, its step, and its source, newest first.
+
+7. Opt-out alert. Each new opt-out sends the existing operator alert with the player name, flow, step, and the text body. Fire once per opt-out; never repeat for the same one.
+
+8. Verify. Run tsc --noEmit. Then paste:
+
+the row counts of playbook_outcomes and sms_optouts
+the full ltp_baseline output
+the scorecard numbers as rendered
+any unattributed opt-outs
+
+Report a STATUS line per step: CLOSED / PARTIAL / DEFERRED / REVERTED.
