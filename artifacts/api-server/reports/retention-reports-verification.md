@@ -8,9 +8,14 @@ SQL tests use disposable PostgreSQL fixtures. Provider tests use in-memory
 transports. The development API has background jobs and live SMS disabled;
 neither setting was changed.
 
-## Required external Supabase action
+## External Supabase migration
 
-Run the complete file
+The user confirmed migration 022 was applied in the existing external Supabase
+SQL Editor on 2026-10-08. Subsequent agent GET/SELECT verification confirmed the
+views and backfill totals below. The updated application has not been published
+as part of this work.
+
+For another environment, run the complete file
 `artifacts/api-server/migrations/022_retention_reports_and_optouts.sql`
 in the **existing external Supabase SQL Editor**, before publishing these changes.
 Do not use Replit's local `DATABASE_URL`.
@@ -51,11 +56,43 @@ For the configured PB Club:
 The SQL classifier was executed in an isolated PostgreSQL fixture against the
 367 names read from production; no production SQL function was installed or run.
 
-`playbook_outcomes`, `sms_optouts`, `ltp_baseline`, and `sms_optout_events`
-currently return `PGRST205` (absent from the Supabase schema cache).
-Production row counts, full baseline output, rendered real-data scorecard,
-unattributed opt-outs, and actual inserted backfill totals are therefore
-**unverified**, not zero.
+### Confirmed after migration application
+
+| Check | Confirmed result |
+| --- | ---: |
+| playbook_outcomes rows | 13 |
+| sms_optouts rows | 0 |
+| stop_reply backfill events | 0 |
+| carrier_21610 backfill events | 0 |
+| manual backfill events | 0 |
+| Unattributed opt-outs | `[]` |
+
+Full `ltp_baseline` output:
+
+```json
+[{"club_id":"c8976e15-e002-4619-bb4b-b1a70f5cd7ab","n_players":140,"n_booked":44,"rate":0.3142857142857143}]
+```
+
+The exact Reports router was also exercised against these production views with
+SELECTs through an ephemeral, localhost-only GET harness, then closed. Both
+30-day and all-time responses passed the generated response validator.
+
+| Metric | Last 30 days | All time |
+| --- | --- | --- |
+| Sequences | 7 | 13 |
+| Texted | 7 | 7 |
+| Texts | 8 | 8 |
+| Booked | 0 of 7, 0.0% | 0 of 7, 0.0% |
+| Baseline | 44 of 140, 31.4% | 44 of 140, 31.4% |
+| Code redemptions | 0 of 7, 0.0% | 0 of 7, 0.0% |
+| Replies | 0 of 7, 0.0% | 0 of 7, 0.0% |
+| Step 1 opt-outs | 0 of 7, 0.0% | 0 of 7, 0.0% |
+| Step 2 opt-outs | 0 of 1, 0.0% | 0 of 1, 0.0% |
+| Club-wide opt-outs | 0 | 0 |
+
+30-day funnels: Step 1 drafted/approved/sent/delivered 7 each, booked 0;
+Step 2 drafted 2, approved/sent/delivered 1 each, booked 0.
+All-time Step 1 drafted 11, with the other counts unchanged.
 
 ## Repeat after applying the migration
 
@@ -112,4 +149,10 @@ independent of the selected flow.
 Step 1 funnel: drafted 3, approved 2, sent 2, delivered 1, booked 0.
 Step 2 funnel: 1 at each stage.
 
-Production integration remains pending migration application.
+The production-read 30-day and all-time snapshots were rendered and verified
+with the actual built app through browser-only interception. The scorecards
+matched the table above; all-time showed 13 participants and the expected
+11/7/7/7/0 and 2/1/1/1/0 funnels.
+This does not prove an authenticated request to the running or published Reports
+endpoint. Operator authentication remains intact; no credentials or session
+mutations were used during verification.
