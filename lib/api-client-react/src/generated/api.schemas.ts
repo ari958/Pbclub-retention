@@ -5,6 +5,123 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type RetentionReportsResponsePeriod =
+  (typeof RetentionReportsResponsePeriod)[keyof typeof RetentionReportsResponsePeriod];
+
+export const RetentionReportsResponsePeriod = {
+  "30d": "30d",
+  "90d": "90d",
+  all: "all",
+} as const;
+
+export interface RetentionPlaybookOutcome {
+  sequence_id: string;
+  player_id: string;
+  name: string;
+  playbook_key: string;
+  /** @nullable */
+  step1_sent_at: string | null;
+  /** @nullable */
+  step2_sent_at: string | null;
+  /** @nullable */
+  last_sent_at: string | null;
+  sequence_status: string;
+  /** @nullable */
+  exit_reason: string | null;
+  replied: boolean;
+  booked: boolean;
+  /** @nullable */
+  booked_event_id: string | null;
+  /** @nullable */
+  booked_program_name: string | null;
+  /** @nullable */
+  booking_created_at: string | null;
+  /** @nullable */
+  credited_step: number | null;
+  /** @nullable */
+  coupon_code_used: string | null;
+  /** @nullable */
+  days_to_book: number | null;
+  opted_out: boolean;
+  /** @nullable */
+  opted_out_at: string | null;
+  /** @nullable */
+  optout_after_step: number | null;
+  /** @nullable */
+  optout_message_id: string | null;
+  /** @nullable */
+  hours_to_optout: number | null;
+  step1_drafted: boolean;
+  step1_approved: boolean;
+  step1_sent: boolean;
+  step1_delivered: boolean;
+  step1_booked: boolean;
+  step2_drafted: boolean;
+  step2_approved: boolean;
+  step2_sent: boolean;
+  step2_delivered: boolean;
+  step2_booked: boolean;
+}
+
+export type RetentionSmsOptoutSource =
+  (typeof RetentionSmsOptoutSource)[keyof typeof RetentionSmsOptoutSource];
+
+export const RetentionSmsOptoutSource = {
+  stop_reply: "stop_reply",
+  carrier_21610: "carrier_21610",
+  manual: "manual",
+  unattributed: "unattributed",
+} as const;
+
+export type RetentionSmsOptoutEventSource =
+  (typeof RetentionSmsOptoutEventSource)[keyof typeof RetentionSmsOptoutEventSource];
+
+export const RetentionSmsOptoutEventSource = {
+  stop_reply: "stop_reply",
+  carrier_21610: "carrier_21610",
+  manual: "manual",
+} as const;
+
+export interface RetentionSmsOptout {
+  id: string;
+  /** @nullable */
+  player_id: string | null;
+  name: string;
+  /** @nullable */
+  opted_out_at: string | null;
+  source: RetentionSmsOptoutSource;
+  event_source: RetentionSmsOptoutEventSource;
+  /** @nullable */
+  twilio_optout_type: string | null;
+  /** @nullable */
+  playbook_key: string | null;
+  /** @nullable */
+  step: number | null;
+  /** @nullable */
+  body: string | null;
+  /** @nullable */
+  optout_message_id: string | null;
+}
+
+export interface RetentionBaseline {
+  /** @minimum 0 */
+  n_players: number;
+  /** @minimum 0 */
+  n_booked: number;
+  /** @nullable */
+  rate: number | null;
+}
+
+export interface RetentionReportsResponse {
+  playbook_keys: string[];
+  outcomes: RetentionPlaybookOutcome[];
+  optouts: RetentionSmsOptout[];
+  baseline: RetentionBaseline | null;
+  /** @minimum 0 */
+  club_opt_out_total: number;
+  period: RetentionReportsResponsePeriod;
+}
+
 export interface OperatorTestResult {
   message_id: string;
   status: string;
@@ -659,6 +776,28 @@ export const RetentionApprovalStatusParameter = {
   sent: "sent",
   needs_context: "needs_context",
   manual_edit: "manual_edit",
+} as const;
+
+export type GetRetentionReportsParams = {
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+  /**
+   * @minLength 1
+   * @maxLength 120
+   */
+  playbook_key?: string;
+  period?: GetRetentionReportsPeriod;
+};
+
+export type GetRetentionReportsPeriod =
+  (typeof GetRetentionReportsPeriod)[keyof typeof GetRetentionReportsPeriod];
+
+export const GetRetentionReportsPeriod = {
+  "30d": "30d",
+  "90d": "90d",
+  all: "all",
 } as const;
 
 export type LtpTestActionParams = {

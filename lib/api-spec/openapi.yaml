@@ -13,6 +13,33 @@ tags:
   - name: retention
     description: Draft-only retention generation and explicit message approvals
 paths:
+  /retention/reports:
+    get:
+      operationId: getRetentionReports
+      tags: [retention]
+      summary: Read club-scoped retention outcomes and opt-outs
+      parameters:
+        - $ref: "#/components/parameters/RetentionSlug"
+        - name: playbook_key
+          in: query
+          required: false
+          schema: { type: string, minLength: 1, maxLength: 120 }
+        - name: period
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [30d, 90d, all]
+            default: 30d
+      responses:
+        "200":
+          description: Read-only retention report data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RetentionReportsResponse"
+        "400": { description: Invalid report filters }
+        "503": { description: Reporting migration is not installed }
   /operator-test-message:
     get:
       operationId: getOperatorTestMessages
@@ -568,6 +595,130 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    RetentionReportsResponse:
+      type: object
+      additionalProperties: false
+      required: [playbook_keys, outcomes, optouts, baseline, club_opt_out_total, period]
+      properties:
+        playbook_keys:
+          type: array
+          items: { type: string }
+        outcomes:
+          type: array
+          items: { $ref: "#/components/schemas/RetentionPlaybookOutcome" }
+        optouts:
+          type: array
+          items: { $ref: "#/components/schemas/RetentionSmsOptout" }
+        baseline:
+          oneOf:
+            - $ref: "#/components/schemas/RetentionBaseline"
+            - type: "null"
+        club_opt_out_total: { type: integer, minimum: 0 }
+        period: { type: string, enum: [30d, 90d, all] }
+    RetentionPlaybookOutcome:
+      type: object
+      additionalProperties: false
+      required:
+        - sequence_id
+        - player_id
+        - name
+        - playbook_key
+        - step1_sent_at
+        - step2_sent_at
+        - last_sent_at
+        - sequence_status
+        - exit_reason
+        - replied
+        - booked
+        - booked_event_id
+        - booked_program_name
+        - booking_created_at
+        - credited_step
+        - coupon_code_used
+        - days_to_book
+        - opted_out
+        - opted_out_at
+        - optout_after_step
+        - optout_message_id
+        - hours_to_optout
+        - step1_drafted
+        - step1_approved
+        - step1_sent
+        - step1_delivered
+        - step1_booked
+        - step2_drafted
+        - step2_approved
+        - step2_sent
+        - step2_delivered
+        - step2_booked
+      properties:
+        sequence_id: { type: string, format: uuid }
+        player_id: { type: string, format: uuid }
+        name: { type: string }
+        playbook_key: { type: string }
+        step1_sent_at: { type: ["string", "null"], format: date-time }
+        step2_sent_at: { type: ["string", "null"], format: date-time }
+        last_sent_at: { type: ["string", "null"], format: date-time }
+        sequence_status: { type: string }
+        exit_reason: { type: ["string", "null"] }
+        replied: { type: boolean }
+        booked: { type: boolean }
+        booked_event_id: { type: ["string", "null"] }
+        booked_program_name: { type: ["string", "null"] }
+        booking_created_at: { type: ["string", "null"], format: date-time }
+        credited_step: { type: ["integer", "null"] }
+        coupon_code_used: { type: ["string", "null"] }
+        days_to_book: { type: ["number", "null"] }
+        opted_out: { type: boolean }
+        opted_out_at: { type: ["string", "null"], format: date-time }
+        optout_after_step: { type: ["integer", "null"] }
+        optout_message_id: { type: ["string", "null"], format: uuid }
+        hours_to_optout: { type: ["number", "null"] }
+        step1_drafted: { type: boolean }
+        step1_approved: { type: boolean }
+        step1_sent: { type: boolean }
+        step1_delivered: { type: boolean }
+        step1_booked: { type: boolean }
+        step2_drafted: { type: boolean }
+        step2_approved: { type: boolean }
+        step2_sent: { type: boolean }
+        step2_delivered: { type: boolean }
+        step2_booked: { type: boolean }
+    RetentionSmsOptout:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - player_id
+        - name
+        - opted_out_at
+        - source
+        - event_source
+        - twilio_optout_type
+        - playbook_key
+        - step
+        - body
+        - optout_message_id
+      properties:
+        id: { type: string, format: uuid }
+        player_id: { type: ["string", "null"], format: uuid }
+        name: { type: string }
+        opted_out_at: { type: ["string", "null"], format: date-time }
+        source: { type: string, enum: [stop_reply, carrier_21610, manual, unattributed] }
+        event_source: { type: string, enum: [stop_reply, carrier_21610, manual] }
+        twilio_optout_type: { type: ["string", "null"] }
+        playbook_key: { type: ["string", "null"] }
+        step: { type: ["integer", "null"] }
+        body: { type: ["string", "null"] }
+        optout_message_id: { type: ["string", "null"], format: uuid }
+    RetentionBaseline:
+      type: object
+      additionalProperties: false
+      required: [n_players, n_booked, rate]
+      properties:
+        n_players: { type: integer, minimum: 0 }
+        n_booked: { type: integer, minimum: 0 }
+        rate: { type: ["number", "null"] }
     OperatorTestResult:
       type: object
       required: [message_id, status, twilio_sid, delivery_status]

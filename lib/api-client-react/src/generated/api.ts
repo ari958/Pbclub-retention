@@ -24,6 +24,7 @@ import type {
   DraftLtpTestStep2Params,
   EditRetentionDraftParams,
   GenerateRetentionDraftsParams,
+  GetRetentionReportsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
   LtpTestAction200,
@@ -51,6 +52,7 @@ import type {
   RetentionRegenerateBatchInput,
   RetentionRegenerateBatchResult,
   RetentionRegenerateResult,
+  RetentionReportsResponse,
   RetentionReshuffleInput,
   RetentionRetryContextBatchInput,
   RetentionRetryContextEnvelope,
@@ -76,6 +78,109 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Read club-scoped retention outcomes and opt-outs
+ */
+export const getGetRetentionReportsUrl = (
+  params?: GetRetentionReportsParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/reports?${stringifiedParams}`
+    : `/api/retention/reports`;
+};
+
+export const getRetentionReports = async (
+  params?: GetRetentionReportsParams,
+  options?: RequestInit,
+): Promise<RetentionReportsResponse> => {
+  return customFetch<RetentionReportsResponse>(
+    getGetRetentionReportsUrl(params),
+    {
+      ...options,
+      method: "GET",
+    },
+  );
+};
+
+export const getGetRetentionReportsQueryKey = (
+  params?: GetRetentionReportsParams,
+) => {
+  return [`/api/retention/reports`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetRetentionReportsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getRetentionReports>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetRetentionReportsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRetentionReports>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetRetentionReportsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getRetentionReports>>
+  > = ({ signal }) =>
+    getRetentionReports(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getRetentionReports>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetRetentionReportsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getRetentionReports>>
+>;
+export type GetRetentionReportsQueryError = ErrorType<void>;
+
+/**
+ * @summary Read club-scoped retention outcomes and opt-outs
+ */
+
+export function useGetRetentionReports<
+  TData = Awaited<ReturnType<typeof getRetentionReports>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetRetentionReportsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getRetentionReports>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetRetentionReportsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 export const getGetOperatorTestMessagesUrl = () => {
   return `/api/operator-test-message`;

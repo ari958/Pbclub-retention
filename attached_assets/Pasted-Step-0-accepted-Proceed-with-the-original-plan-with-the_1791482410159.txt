@@ -1,0 +1,24 @@
+Step 0 accepted. Proceed with the original plan, with these changes. Same rules: read-only against production except the schema additions below. No sends, no approvals, no changes to sending settings or playbook config.
+
+Step 1 (outcome view): Build playbook_outcomes from retention_sequences (one row per sequence), joined to retention_candidates, messages, and attendances. Take send times from step1_sent_at / step2_sent_at. Take opt-out fields from the new sms_optout_events table in step 3. Use isLearnToPlayName logic (or an equivalent SQL expression that matches it exactly) to exclude LTP events from counting as bookings. Report any divergence between the SQL version and the TS function.
+
+Step 2 (coupons): DEFERRED, already exists. Instead, report two counts of attendances rows with booked_at >= 2026-10-07: total, and with non-null coupon_code. Also list any distinct coupon codes found.
+
+Step 3 (opt-out capture), replaced with:
+
+Create sms_optout_events: id, player_id, occurred_at, source (stop_reply | carrier_21610 | manual), twilio_optout_type (nullable), inbound_receipt_id (nullable), message_id (nullable), and alerted_at (nullable). Use the standard RLS pattern and run the grants afterward.
+Write one row from each path:
+the inbound STOP handler, with inbound_receipt_id set
+the 21610 branch of the status callback, with message_id set
+any manual opt-out route, if one exists (report whether it does)
+Make it idempotent so the same opt-out can’t produce two rows.
+In the inbound webhook, read Twilio’s OptOutType parameter and save it on sms_inbound_receipts and on the event row. If OptOutType indicates an opt-out but the body classifier didn’t, treat it as an opt-out, and log the mismatch.
+Backfill: insert events for existing STOP receipts and for messages with error_code = 21610, using the receipt time or the message’s callback time. For players currently flagged opted-out with no event, insert source manual with occurred_at set to the player’s opt-out timestamp if one exists, otherwise null. Report counts per source.
+
+Step 4 (sms_optouts view): Build it on sms_optout_events. The “last text before opt-out” is the most recent outbound message to that player with sent_at <= occurred_at.
+
+Step 6 (funnel): “Delivered” uses delivered_at / delivery_status, not messages.status.
+
+Step 7 (alert): After each sms_optout_events insert, call alertOperator, using the event id as the incident claim so it fires once. Include the player name, source, flow, step, and the preceding text body. Set alerted_at on success. Don’t alert on backfilled rows.
+
+Steps 5, 6, and 8 are unchanged. In step 8, also paste the step 2 coupon counts and the step 3 backfill counts by source.

@@ -7,6 +7,110 @@
  */
 import * as zod from "zod";
 
+/**
+ * @summary Read club-scoped retention outcomes and opt-outs
+ */
+export const getRetentionReportsQueryPlaybookKeyMax = 120;
+
+export const getRetentionReportsQueryPeriodDefault = `30d`;
+
+export const GetRetentionReportsQueryParams = zod.object({
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+  playbook_key: zod.coerce
+    .string()
+    .min(1)
+    .max(getRetentionReportsQueryPlaybookKeyMax)
+    .optional(),
+  period: zod
+    .enum(["30d", "90d", "all"])
+    .default(getRetentionReportsQueryPeriodDefault),
+});
+
+export const getRetentionReportsResponseBaselineOneNPlayersMin = 0;
+
+export const getRetentionReportsResponseBaselineOneNBookedMin = 0;
+
+export const getRetentionReportsResponseClubOptOutTotalMin = 0;
+
+export const GetRetentionReportsResponse = zod.object({
+  playbook_keys: zod.array(zod.string()),
+  outcomes: zod.array(
+    zod.object({
+      sequence_id: zod.string().uuid(),
+      player_id: zod.string().uuid(),
+      name: zod.string(),
+      playbook_key: zod.string(),
+      step1_sent_at: zod.coerce.date().nullable(),
+      step2_sent_at: zod.coerce.date().nullable(),
+      last_sent_at: zod.coerce.date().nullable(),
+      sequence_status: zod.string(),
+      exit_reason: zod.string().nullable(),
+      replied: zod.boolean(),
+      booked: zod.boolean(),
+      booked_event_id: zod.string().nullable(),
+      booked_program_name: zod.string().nullable(),
+      booking_created_at: zod.coerce.date().nullable(),
+      credited_step: zod.number().nullable(),
+      coupon_code_used: zod.string().nullable(),
+      days_to_book: zod.number().nullable(),
+      opted_out: zod.boolean(),
+      opted_out_at: zod.coerce.date().nullable(),
+      optout_after_step: zod.number().nullable(),
+      optout_message_id: zod.string().uuid().nullable(),
+      hours_to_optout: zod.number().nullable(),
+      step1_drafted: zod.boolean(),
+      step1_approved: zod.boolean(),
+      step1_sent: zod.boolean(),
+      step1_delivered: zod.boolean(),
+      step1_booked: zod.boolean(),
+      step2_drafted: zod.boolean(),
+      step2_approved: zod.boolean(),
+      step2_sent: zod.boolean(),
+      step2_delivered: zod.boolean(),
+      step2_booked: zod.boolean(),
+    }),
+  ),
+  optouts: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      player_id: zod.string().uuid().nullable(),
+      name: zod.string(),
+      opted_out_at: zod.coerce.date().nullable(),
+      source: zod.enum([
+        "stop_reply",
+        "carrier_21610",
+        "manual",
+        "unattributed",
+      ]),
+      event_source: zod.enum(["stop_reply", "carrier_21610", "manual"]),
+      twilio_optout_type: zod.string().nullable(),
+      playbook_key: zod.string().nullable(),
+      step: zod.number().nullable(),
+      body: zod.string().nullable(),
+      optout_message_id: zod.string().uuid().nullable(),
+    }),
+  ),
+  baseline: zod.union([
+    zod.object({
+      n_players: zod
+        .number()
+        .min(getRetentionReportsResponseBaselineOneNPlayersMin),
+      n_booked: zod
+        .number()
+        .min(getRetentionReportsResponseBaselineOneNBookedMin),
+      rate: zod.number().nullable(),
+    }),
+    zod.null(),
+  ]),
+  club_opt_out_total: zod
+    .number()
+    .min(getRetentionReportsResponseClubOptOutTotalMin),
+  period: zod.enum(["30d", "90d", "all"]),
+});
+
 export const GetOperatorTestMessagesResponse = zod.object({
   available: zod.boolean(),
   messages: zod.array(
