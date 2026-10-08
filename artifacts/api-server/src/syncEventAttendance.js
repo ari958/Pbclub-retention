@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { computePlayerTiming } from "./lib/playerTiming.js";
 import { ATTENDANCE_SIGNUP_STATUSES } from "./lib/signupStatus.js";
+import { createAttendanceCouponResolver } from "./lib/attendanceCoupons.js";
 
 let _supabase = null;
 function getSupabase() {
@@ -201,6 +202,7 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
 
   const podplayBase = `https://${clubRow.platform_subdomain}.podplay.app`;
   const apiKey = clubRow.platform_api_key ?? process.env.PODPLAY_API_KEY;
+  const resolveCouponCode = createAttendanceCouponResolver(podplayBase, apiKey);
   const clubTimezone = clubRow.timezone ?? DEFAULT_TIMEZONE;
   log(`[sync/events] Using timezone: ${clubTimezone}`);
 
@@ -409,7 +411,7 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
           level:        levelTag,
           session_type,
           booked_at:    bookedAt,
-          coupon_code:  signup.couponCode ?? null,
+          coupon_code:  await resolveCouponCode(signup),
         };
 
         // Keep higher-priority status; CONFIRMED/CHECKED_IN beats INVALID

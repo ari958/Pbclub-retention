@@ -70,6 +70,7 @@ export * from "./retentionPauseInput";
 export * from "./retentionPlaybook";
 export * from "./retentionPlaybookConfigInput";
 export * from "./retentionPlaybookOutcome";
+export * from "./retentionPlaybookOutcomeOutcome";
 export * from "./retentionPodplayRetry";
 export * from "./retentionPodplayTelemetry";
 export * from "./retentionProgram";

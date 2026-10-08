@@ -7,7 +7,7 @@ import { useClub } from "@/lib/ClubContext";
 import "./Reports.css";
 
 type Period = "30d" | "90d" | "all";
-type SortKey = "name" | "lastSent" | "texts" | "status" | "program" | "days" | "step" | "code" | "opted";
+type SortKey = "name" | "lastSent" | "texts" | "status" | "outcome" | "program" | "days" | "step" | "code" | "opted";
 type SortDirection = "asc" | "desc";
 
 const periodLabels: Record<Period, string> = { "30d": "Last 30 days", "90d": "Last 90 days", all: "All time" };
@@ -54,7 +54,9 @@ export default function Reports() {
   const params = useMemo(() => ({ slug: club.slug, playbook_key: playbook, period }), [club.slug, playbook, period]);
   const query = useGetRetentionReports(params, { query: { queryKey: getGetRetentionReportsQueryKey(params), staleTime: 30_000, refetchInterval: 60_000 } });
   const data = query.data;
-  const outcomes = data?.outcomes ?? [];
+  const outcomes = useMemo(() => (data?.outcomes ?? []).filter(item => !item.is_test), [data?.outcomes]);
+  const closedCount = outcomes.filter(item => item.outcome === "booked" || item.outcome === "no_booking").length;
+  const inWindow = outcomes.filter(item => item.outcome === "in_window").length;
   const sentCount = outcomes.filter(item => item.step1_sent || item.step2_sent).length;
   const textCount = outcomes.reduce((sum, item) => sum + stepCount(item, 1) + stepCount(item, 2), 0);
   const bookedCount = outcomes.filter((item) => item.booked).length;
@@ -73,6 +75,7 @@ export default function Reports() {
         case "lastSent": return row.last_sent_at ? new Date(row.last_sent_at).getTime() : 0;
         case "texts": return Number(row.step1_sent) + Number(row.step2_sent);
         case "status": return row.sequence_status;
+        case "outcome": return row.outcome;
         case "program": return row.booked_program_name ?? "";
         case "days": return row.days_to_book ?? -1;
         case "step": return row.credited_step ?? 0;
@@ -128,9 +131,9 @@ export default function Reports() {
 
           <section className="report-stat-grid" aria-label="Retention summary">
             <StatCard label="Texted" value={sentCount} detail={`${textCount} texts · ${outcomes.length} sequences`} icon={<MessageSquareText size={16} />} tone="gold" />
-            <StatCard label="Booked" value={bookedCount} detail={countRate(bookedCount, sentCount)} icon={<CalendarDays size={16} />} tone="mint" />
+            <StatCard label="Booked" value={bookedCount} detail={`${countRate(bookedCount, closedCount)} closed · In window: ${inWindow}`} icon={<CalendarDays size={16} />} tone="mint" />
             <StatCard label="Baseline rate" value={data.baseline ? percent(data.baseline.rate ?? 0) : "—"} detail={data.baseline ? `${data.baseline.n_booked} of ${data.baseline.n_players}` : "No baseline defined."} icon={<Users size={16} />} />
-            <StatCard label="Code redemptions" value={codes} detail={countRate(codes, sentCount)} icon={<span className="code-glyph">%</span>} tone="violet" />
+            <StatCard label="Code redemptions" value={codes} detail={`${countRate(codes, closedCount)} closed · In window: ${inWindow}`} icon={<span className="code-glyph">%</span>} tone="violet" />
             <StatCard label="Replies" value={replies} detail={countRate(replies, sentCount)} icon={<MessageSquareText size={16} />} />
           </section>
 
@@ -147,7 +150,7 @@ export default function Reports() {
           <section className="report-panel player-panel">
             <header className="panel-heading player-panel-heading"><div><span className="report-eyebrow">PLAYER OUTCOMES</span><h3>Flow participants <span>{outcomes.length}</span></h3></div><span className="sort-hint">Select a column to sort</span></header>
             {outcomes.length === 0 ? <div className="inline-empty"><span className="empty-dot" /><div><strong>No outcomes in this window</strong><p>When this playbook has sent messages, player-level results will appear here.</p></div></div> : <div className="report-table-wrap"><table className="report-table">
-              <thead><tr>{([["name", "Player"], ["lastSent", "Last sent"], ["texts", "Texts sent"], ["status", "Sequence status"], ["program", "Booked program"], ["days", "Days to book"], ["step", "Credited step"], ["code", "Code used"], ["opted", "Opted out"]] as [SortKey, string][]).map(([key, label]) => <th key={key}><button type="button" onClick={() => changeSort(key)} data-testid={`sort-${key}`}>{label}{sortMark(key)}</button></th>)}</tr></thead>
+              <thead><tr>{([["name", "Player"], ["lastSent", "Last sent"], ["texts", "Texts sent"], ["status", "Sequence status"], ["outcome", "Outcome"], ["program", "Booked program"], ["days", "Days to book"], ["step", "Credited step"], ["code", "Code used"], ["opted", "Opted out"]] as [SortKey, string][]).map(([key, label]) => <th key={key}><button type="button" onClick={() => changeSort(key)} data-testid={`sort-${key}`}>{label}{sortMark(key)}</button></th>)}</tr></thead>
               <tbody>{sortedOutcomes.map((row) => {
                 const sent = Number(row.step1_sent) + Number(row.step2_sent);
                 return <tr key={row.sequence_id} data-testid={`row-player-${row.sequence_id}`}>
@@ -155,6 +158,7 @@ export default function Reports() {
                   <td>{formatDate(row.last_sent_at)}</td>
                   <td><span className="table-count">{sent}</span><span className="table-subtext">{row.step1_sent_at ? "S1" : ""}{row.step1_sent_at && row.step2_sent_at ? " · " : ""}{row.step2_sent_at ? "S2" : ""}</span></td>
                   <td><span className={`status-pill status-${row.sequence_status}`}>{displayStatus(row.sequence_status)}</span></td>
+                  <td><span className={`status-pill status-${row.outcome}`}>{displayStatus(row.outcome)}</span></td>
                   <td>{row.booked_program_name || "—"}</td>
                   <td>{row.days_to_book == null ? "—" : `${row.days_to_book} days`}</td>
                   <td>{row.credited_step == null ? "—" : `Step ${row.credited_step}`}</td>

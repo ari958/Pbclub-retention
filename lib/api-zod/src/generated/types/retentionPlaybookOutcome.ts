@@ -5,6 +5,7 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RetentionPlaybookOutcomeOutcome } from "./retentionPlaybookOutcomeOutcome";
 
 export interface RetentionPlaybookOutcome {
   sequence_id: string;
@@ -53,4 +54,8 @@ export interface RetentionPlaybookOutcome {
   step2_sent: boolean;
   step2_delivered: boolean;
   step2_booked: boolean;
+  outcome: RetentionPlaybookOutcomeOutcome;
+  /** @nullable */
+  window_closes_at: Date | null;
+  is_test: boolean;
 }

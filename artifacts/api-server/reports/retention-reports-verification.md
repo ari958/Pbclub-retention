@@ -3,7 +3,10 @@
 ## Safety
 
 The Reports API and page are read-only. No production writes, sends, approvals,
-sending-setting changes, or playbook changes were performed during implementation.
+sending-setting changes, or playbook changes were performed during initial implementation.
+The subsequent accuracy correction updated only seven existing attendance
+coupon_code values, explicitly authorized by the user's conditional backfill request.
+No other production records or outreach settings were changed.
 SQL tests use disposable PostgreSQL fixtures. Provider tests use in-memory
 transports. The development API has background jobs and live SMS disabled;
 neither setting was changed.
@@ -156,3 +159,89 @@ matched the table above; all-time showed 13 participants and the expected
 This does not prove an authenticated request to the running or published Reports
 endpoint. Operator authentication remains intact; no credentials or session
 mutations were used during verification.
+
+## Accuracy corrections (supersedes the initial scorecard above)
+
+The schema handoff is `023_retention_report_accuracy_views.sql`, to run in the
+existing external Supabase SQL Editor. It changes only views; it has not been
+applied by the agent. Do not rerun migration 022 for this correction.
+
+- `playbook_outcomes_audit` retains all rows with explicit `is_test` classification
+  from persisted delivery kinds, contact ledger evidence, and test controls.
+- `playbook_outcomes` excludes test sequences and unstarted drafts. All records
+  remain in their source tables and the private audit view.
+- Outcome is `booked`, `in_window`, or `no_booking`. The observation window ends
+  at greatest(step1_sent_at + 7 days, step2_sent_at) + 14 days, inclusively.
+- A booked sequence counts as closed immediately. Booking and coupon denominators
+  exclude `in_window` sequences. With zero closed sequences, rate is unavailable,
+  not 0%. The page shows the in-window count and a sortable Outcome column.
+
+### Send audit
+
+Eight provider message GETs verified the actual destination of every send.
+Five messages (four sequences) were test deliveries; three messages (three
+sequences) went to their respective player's own number.
+Every provider destination classification matched the contact ledger's persisted
+`is_test` value and message delivery kind. This is send-time evidence, not a
+reading of today's override environment.
+
+The only step-2 send was a test. Its test audit records a `backdate` operation at
+2026-10-06T12:38:40.228454Z: the original step-1 send was
+2026-10-06T12:03:57.006Z, while the effective eligibility clock was set to
+2026-09-29T12:03:57.006Z. Original send timestamps were not rewritten.
+The step-2 candidate explicitly carries `ltp_test_mode:true`.
+
+Corrected Texted is **3**, not 7. At the verification read, the genuine cohort
+has 3 in-window sequences and no closed sequences, bookings, or code redemptions.
+These are a projection from verified production reads until migration 023 is
+applied, not a claim that the updated production view/page has been verified.
+
+### Coupon evidence and backfill
+
+The signup-only search checked 448 events / 2,598 signup payloads without finding
+a coupon code. That was not proof of no coupon use: order inspection found a
+confirmed EVENT_SIGNUP order created 2026-10-08T02:07:09.740Z.
+Its actual order subtotal is 36, discount is 18, and total is 18, confirming
+coupon use rather than merely an unused coupon reference.
+
+Raw GET evidence:
+
+1. `/events/01a11942-6b23-7334-80fb-df7e32dc96ab/signups`:
+   `$.items[0].order.id` (locate signup `01a11943-b38f-7334-80fd-209b7ee30e40`;
+   array position can vary) points to order
+   `6588a9aa-f0ae-5f61-acf0-115b35cb0933`.
+2. `/orders/6588a9aa-f0ae-5f61-acf0-115b35cb0933`:
+   `$.coupon.id = d96708c3-213b-4bd2-8ba2-8c9b3eefe54b`.
+3. `/coupons/d96708c3-213b-4bd2-8ba2-8c9b3eefe54b`:
+   `$.code = "AJF50%OP"`.
+
+The signup itself has `coupon:null`, no `couponCode`, and
+`summary.couponDiscount:0`. The old mapping at the requested lines read
+`booked_at: bookedAt` and `coupon_code: signup.couponCode ?? null`;
+bookedAt comes from `signup.summary.invitation.createdDate`.
+Only the coupon mapping was changed, not booking timestamp attribution.
+
+The resolver follows the order/coupon references, caches repeated resources,
+paces reads, retries a 429 once, and fails explicitly on lookup errors.
+It does not infer codes from a discount amount.
+
+The backfill checked all 148 existing club attendance rows with
+`booked_at >= 2026-10-01T00:00:00Z`, matched all 148, and changed only seven
+`coupon_code` values: three `AJF50%OP` and four `ROBGUYS35%`.
+No sync job, player updates, winback updates, or outreach actions were executed.
+Each patch used club/player/event identity and compare-and-set conditions.
+
+### Verification of accuracy corrections
+
+- API and Dashboard TypeScript checks and both production builds passed.
+- Five focused tests passed: coupon reference resolution/caching/fail-closed
+  behavior, real SQL window boundaries/closed denominators/test exclusion,
+  view migration reapplication/private grants, original reporting SQL behavior,
+  and club-scoped SELECT-only route validation.
+- A production SELECT after the backfill confirmed 148 bookings and exactly seven
+  non-null codes (three AJF50%OP, four ROBGUYS35%).
+- Both development services restarted cleanly; existing background jobs and live
+  SMS remain disabled, without changing either setting.
+- Running Reports URL still requires operator login. This pass did not authenticate
+  or verify the updated page against the live corrected view.
+- Migration 023 remains unapplied externally; updated code remains unpublished.

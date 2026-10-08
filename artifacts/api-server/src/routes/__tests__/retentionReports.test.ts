@@ -17,6 +17,7 @@ const outcome = {
   optout_after_step: null, optout_message_id: null, hours_to_optout: null,
   step1_drafted: true, step1_approved: true, step1_sent: true, step1_delivered: true, step1_booked: false,
   step2_drafted: false, step2_approved: false, step2_sent: false, step2_delivered: false, step2_booked: false,
+  outcome: "in_window", window_closes_at: new Date(Date.now() + 21 * 86400_000).toISOString(), is_test: false,
 };
 function query(table: string) {
   tables.push(table);
@@ -25,6 +26,7 @@ function query(table: string) {
   const resolve = (single = false) => {
     if (table === "clubs") return { data: { id: clubId, slug: "reports-fixture", name: "Fixture", timezone: "America/New_York" }, error: null };
     assert.equal(filters.club_id, clubId, "every private view read is club-scoped");
+    if (table === "playbook_outcomes") assert.equal(filters.is_test, false, "test sequences excluded from all cohort reads");
     if (schemaMissing) return { data: null, error: { code: "PGRST205", message: "fixture missing reporting view" } };
     const rows = table === "playbook_outcomes"
       ? (!filters.playbook_key || filters.playbook_key === outcome.playbook_key ? [outcome] : [])

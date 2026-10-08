@@ -651,6 +651,9 @@ components:
         - step2_sent
         - step2_delivered
         - step2_booked
+        - outcome
+        - window_closes_at
+        - is_test
       properties:
         sequence_id: { type: string, format: uuid }
         player_id: { type: string, format: uuid }
@@ -684,6 +687,9 @@ components:
         step2_sent: { type: boolean }
         step2_delivered: { type: boolean }
         step2_booked: { type: boolean }
+        outcome: { type: string, enum: [booked, in_window, no_booking] }
+        window_closes_at: { type: ["string", "null"], format: date-time }
+        is_test: { type: boolean }
     RetentionSmsOptout:
       type: object
       additionalProperties: false

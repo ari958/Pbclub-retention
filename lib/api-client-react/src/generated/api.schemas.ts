@@ -14,6 +14,15 @@ export const RetentionReportsResponsePeriod = {
   all: "all",
 } as const;
 
+export type RetentionPlaybookOutcomeOutcome =
+  (typeof RetentionPlaybookOutcomeOutcome)[keyof typeof RetentionPlaybookOutcomeOutcome];
+
+export const RetentionPlaybookOutcomeOutcome = {
+  booked: "booked",
+  in_window: "in_window",
+  no_booking: "no_booking",
+} as const;
+
 export interface RetentionPlaybookOutcome {
   sequence_id: string;
   player_id: string;
@@ -61,6 +70,10 @@ export interface RetentionPlaybookOutcome {
   step2_sent: boolean;
   step2_delivered: boolean;
   step2_booked: boolean;
+  outcome: RetentionPlaybookOutcomeOutcome;
+  /** @nullable */
+  window_closes_at: string | null;
+  is_test: boolean;
 }
 
 export type RetentionSmsOptoutSource =

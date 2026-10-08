@@ -15,6 +15,12 @@ Reports are a read-only retention surface: no sends, approvals, sending-setting 
 
 **How to apply:** Preserve that boundary when adding report flows, metrics, and filters; do not add action buttons that mutate outreach.
 
+Retention conversion reporting is about genuine member exposure, not testing or drafting activity. Keep unstarted drafts out of conversion outcome cohorts, and do not treat an unfinished observation window as a failed conversion.
+
+**Why:** The user requested closed-window booking/redemption denominators and explicit open-window counts after test sends and immature sequences inflated the reported cohort. An unsent draft has no observation window; a test destination is not exposure of the intended member.
+
+**How to apply:** Preserve the distinction between operational pipeline counts and conversion cohorts. Keep test records available for audit rather than deleting them. Historical test classification must use send-time evidence, not the currently configured override.
+
 For the Learn to Play rollout, present each actual draft's full text alongside its context to the user before approving any messages or starting live delivery testing.
 
 **Why:** The user reserved review of voice, factual accuracy, the offer, and the next-program suggestion before the live test. A request to generate drafts is not permission to enable sending or approve them.

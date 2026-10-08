@@ -11,6 +11,7 @@ const outcomeColumns = [
   "optout_after_step", "optout_message_id", "hours_to_optout",
   "step1_drafted", "step1_approved", "step1_sent", "step1_delivered", "step1_booked",
   "step2_drafted", "step2_approved", "step2_sent", "step2_delivered", "step2_booked",
+  "outcome", "window_closes_at", "is_test",
 ].join(",");
 const optoutColumns = "id,player_id,name,opted_out_at,source,event_source,twilio_optout_type,playbook_key,step,body,optout_message_id";
 
@@ -37,10 +38,10 @@ router.get("/retention/reports", requireClub, async (req, res) => {
   try {
     const [keys, outcomes, optouts, baseline] = await Promise.all([
       readAll(() => supabase.from("playbook_outcomes").select("playbook_key,sequence_id")
-        .eq("club_id", clubId).order("sequence_id")),
+        .eq("club_id", clubId).eq("is_test", false).order("sequence_id")),
       readAll(() => {
         let query = supabase.from("playbook_outcomes").select(outcomeColumns)
-          .eq("club_id", clubId).eq("playbook_key", playbookKey);
+          .eq("club_id", clubId).eq("playbook_key", playbookKey).eq("is_test", false);
         if (cutoff) query = query.gte("step1_sent_at", cutoff);
         return query.order("step1_sent_at", { ascending: false, nullsFirst: false }).order("sequence_id");
       }),
@@ -59,7 +60,7 @@ router.get("/retention/reports", requireClub, async (req, res) => {
     req.log.error({ code: error?.code, reason: error?.message }, "Retention reports read failed");
     const missing = ["PGRST205", "42P01", "42703"].includes(error?.code);
     res.status(missing ? 503 : 500).json({
-      error: missing ? "Reports are unavailable until migration 022 is applied in Supabase SQL Editor."
+      error: missing ? "Reports are unavailable until migrations 022 and 023 are applied in Supabase SQL Editor."
         : "Could not read retention reports",
     });
   }

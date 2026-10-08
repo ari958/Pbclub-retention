@@ -71,6 +71,9 @@ export const GetRetentionReportsResponse = zod.object({
       step2_sent: zod.boolean(),
       step2_delivered: zod.boolean(),
       step2_booked: zod.boolean(),
+      outcome: zod.enum(["booked", "in_window", "no_booking"]),
+      window_closes_at: zod.coerce.date().nullable(),
+      is_test: zod.boolean(),
     }),
   ),
   optouts: zod.array(
