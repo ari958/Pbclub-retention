@@ -8,6 +8,7 @@ import {
   findRetentionFlow,
   getRetentionFlow,
   getSequenceFlow,
+  assertPlaybookMatchesFlow,
   type RetentionFlowDefinition,
   type RetentionSequenceFlowKey,
 } from "./retentionFlows";
@@ -363,6 +364,7 @@ async function generateRetentionDraftsInternal(
   if (!playbook) return result;
   if (flow.sequence) {
     await requireRetentionSequenceReady();
+    assertPlaybookMatchesFlow(playbook, flow as SequenceFlow);
     playbook.ltp_sequence_config = flow.sequence.readConfig(playbook);
   }
   const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
@@ -808,6 +810,7 @@ async function readFlowPlaybook(flow: SequenceFlow): Promise<RetentionPlaybook> 
   if (error) throw new Error(error.message);
   if (!data?.enabled) throw Object.assign(new Error(`${flow.name} playbook is missing or disabled`), { status: 409 });
   const playbook = data as RetentionPlaybook;
+  assertPlaybookMatchesFlow(playbook, flow);
   playbook.ltp_sequence_config = flow.sequence.readConfig(playbook);
   return playbook;
 }

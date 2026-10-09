@@ -1,9 +1,12 @@
 import { z } from "zod";
-import type {
-  LtpSequenceConfig,
-  LtpTextSelection,
-  RetentionContext,
-  RetentionSequenceStep,
+import {
+  LTP_TEXT_RULES,
+  escapeRegExp,
+  type LtpSequenceConfig,
+  type LtpTextSelection,
+  type RetentionContext,
+  type RetentionSequenceStep,
+  type RetentionTextRules,
 } from "./retentionTypes";
 
 export const DEFAULT_LTP_SEQUENCE_CONFIG: LtpSequenceConfig = {
@@ -69,9 +72,12 @@ export const LtpSequenceConfigSchema = z.object({
   step2: Step2ConfigSchema,
 }).strict();
 
-export function validateLtpSequenceConfig(value: unknown): LtpSequenceConfig {
+export function validateLtpSequenceConfig(value: unknown, rules: RetentionTextRules = LTP_TEXT_RULES): LtpSequenceConfig {
   const parsed = LtpSequenceConfigSchema.safeParse(value);
-  if (!parsed.success) throw new Error(`Invalid Learn to Play phrase configuration: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+  if (!parsed.success) throw new Error(`Invalid ${rules.triggerProgramLabel} phrase configuration: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`);
+  const programLabel = new RegExp(`\\b${escapeRegExp(rules.triggerProgramLabel)}\\b`);
+  const offerPhrase = new RegExp(`\\b${escapeRegExp(rules.verifiedOfferPhrase)}\\b`);
+  const promoCode = new RegExp(`\\b${escapeRegExp(rules.verifiedPromoCode)}\\b`);
   const configuration = parsed.data;
   const allowedPlaceholders = new Set(["first", "ltp_date", "when", "program", "promo"]);
   for (const [step, groups] of Object.entries(configuration) as Array<[string, unknown]>) {
@@ -90,19 +96,19 @@ export function validateLtpSequenceConfig(value: unknown): LtpSequenceConfig {
     throw new Error("Step 1 openers must identify the player and PB Club");
   }
   if (configuration.step1.thanks.some((slot) =>
-    !/\bLearn to Play\b/.test(slot)
+    !programLabel.test(slot)
     || !slot.includes("{ltp_date}")
     || !/\b(?:thanks|thank|glad|hope you enjoyed|great having)\b/i.test(slot))) {
-    throw new Error("Step 1 thanks slots must thank the player, name Learn to Play, and include {ltp_date}");
+    throw new Error(`Step 1 thanks slots must thank the player, name ${rules.triggerProgramLabel}, and include {ltp_date}`);
   }
   if (configuration.step1.next_step.some((slot) => !slot.includes("{program}") || !slot.includes("{when}"))) {
     throw new Error("Step 1 next_step slots must include {program} and {when}");
   }
-  if (configuration.step1.offer.some((slot) => !slot.includes("{promo}") || !/\b25% off\b/.test(slot))) {
-    throw new Error("Step 1 offer slots must include the verified {promo} 25% benefit");
+  if (configuration.step1.offer.some((slot) => !slot.includes("{promo}") || !offerPhrase.test(slot))) {
+    throw new Error(`Step 1 offer slots must include the verified {promo} ${rules.verifiedOfferPhrase} benefit`);
   }
-  if (configuration.step1.offer_no_program.some((slot) => !slot.includes("{promo}") || !/\b25% off\b/.test(slot))) {
-    throw new Error("Step 1 no-program offer slots must include the verified {promo} 25% benefit");
+  if (configuration.step1.offer_no_program.some((slot) => !slot.includes("{promo}") || !offerPhrase.test(slot))) {
+    throw new Error(`Step 1 no-program offer slots must include the verified {promo} ${rules.verifiedOfferPhrase} benefit`);
   }
   if (configuration.step2.opener.some((slot) => !slot.includes("{first}"))) {
     throw new Error("Step 2 opener slots must include {first}");
@@ -130,13 +136,13 @@ export function validateLtpSequenceConfig(value: unknown): LtpSequenceConfig {
     if (/\{(?:when|ltp_date|program|promo)\}/.test(slot)) {
       throw new Error("Step 2 nudge/no-program slots cannot invent dates, events, programs, or a promotion");
     }
-    if (/\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*%|\b(?:percent|discount)\b/i.test(slot)) {
+    if (promoCode.test(slot) || /\b\d+(?:\.\d+)?\s*%|\b(?:percent|discount)\b/i.test(slot)) {
       throw new Error("Step 2 slots cannot contain a coupon or promotion");
     }
   }
   for (const [group, slots] of Object.entries(configuration.step2)) {
     for (const slot of slots) {
-      if (/\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:percent|discount|coupon|promo(?:tion)?|free|complimentary|offer)\b/i.test(slot)) {
+      if (promoCode.test(slot) || /\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:percent|discount|coupon|promo(?:tion)?|free|complimentary|offer)\b/i.test(slot)) {
         throw new Error(`Step 2 ${group} slots cannot mention a coupon, promotion, or benefit`);
       }
     }
@@ -205,6 +211,8 @@ export interface BuildLtpPhraseInput {
   promoCode?: string | null;
   config?: unknown;
   preferredSlotIndices?: Record<string, number>;
+  /** Flow rules; Learn to Play when omitted. */
+  rules?: RetentionTextRules;
 }
 
 export interface BuiltLtpStep {
@@ -215,7 +223,8 @@ export interface BuiltLtpStep {
 
 export function buildLtpStepText(input: BuildLtpPhraseInput): BuiltLtpStep {
   const { candidateId, step, context } = input;
-  const config = validateLtpSequenceConfig(input.config ?? DEFAULT_LTP_SEQUENCE_CONFIG);
+  const rules = input.rules ?? LTP_TEXT_RULES;
+  const config = validateLtpSequenceConfig(input.config ?? DEFAULT_LTP_SEQUENCE_CONFIG, rules);
   if (!/^[\w-]{1,128}$/.test(candidateId)) throw new Error("Candidate ID is required to seed deterministic phrase slots");
   if (!Number.isSafeInteger(input.seedNonce) || input.seedNonce < 0) throw new Error("Phrase seed nonce must be a non-negative safe integer");
   if (!context.trigger?.date || !context.player_first_name.trim()) throw new Error("LTP step builder requires a trigger date and player first name");
@@ -237,13 +246,14 @@ export function buildLtpStepText(input: BuildLtpPhraseInput): BuiltLtpStep {
   const program = context.next_program;
   const when = program ? formatLtpWhen(program.start_time) : null;
   const expectsProgram = !!program && !!when && context.variant !== "no_program";
-  if (step === 1 && (context.promo?.code !== "LTPNEXT25" || !context.promo.offer_text?.includes("25%"))) {
-    throw new Error("Step 1 cannot be built without a currently verified LTPNEXT25 25% offer");
+  if (step === 1 && (context.promo?.code !== rules.verifiedPromoCode
+    || !context.promo.offer_text?.toLocaleLowerCase().includes(rules.verifiedOfferPhrase.toLocaleLowerCase()))) {
+    throw new Error(`Step 1 cannot be built without a currently verified ${rules.verifiedPromoCode} ${rules.verifiedOfferPhrase} offer`);
   }
 
   const openerTemplate = chooseGroup("opener", allowedSteps.opener);
   const opener = fill(openerTemplate, { first: firstName });
-  const facts = { first: firstName, ltp_date: ltpDate, program: program?.name ?? "", when: when ?? "", promo: step === 1 ? (input.promoCode ?? context.promo?.code ?? "LTPNEXT25") : "" };
+  const facts = { first: firstName, ltp_date: ltpDate, program: program?.name ?? "", when: when ?? "", promo: step === 1 ? (input.promoCode ?? context.promo?.code ?? rules.verifiedPromoCode) : "" };
   const parts = [opener];
   if (step === 1) {
     const thanksTemplate = chooseGroup("thanks", config.step1.thanks);
@@ -268,7 +278,7 @@ export function buildLtpStepText(input: BuildLtpPhraseInput): BuiltLtpStep {
       parts.push(fill(ctaTemplate, facts));
     }
   }
-  const link = expectsProgram ? program!.signup_url : "https://pbclub.podplay.app";
+  const link = expectsProgram ? program!.signup_url : rules.bookingUrl;
   const body = `${parts.join(" ")} ${link}`;
   const textContext: LtpTextSelection = {
     step,
@@ -283,7 +293,7 @@ export function buildLtpStepText(input: BuildLtpPhraseInput): BuiltLtpStep {
     ...context,
     variant: expectsProgram ? "with_program" : "no_program",
     ...(step === 2 ? { promo: null, coupon_warning: null } : {}),
-    ...(!expectsProgram ? { booking_url: "https://pbclub.podplay.app" } : {}),
+    ...(!expectsProgram ? { booking_url: rules.bookingUrl } : {}),
     date_phrase: `on ${ltpDate}`,
     ltp_text: textContext,
     reason: null,

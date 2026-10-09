@@ -183,6 +183,19 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-09**: Retention engine generalization, slice 3 (server code only,
+  no behavior change). The Learn to Play text rules moved behind the flow
+  definition: `RetentionTextRules` (`retentionTypes.ts`) carries the trigger
+  program label, verified code, offer text and phrase, percentage and booking
+  URL; `ltpPhraseBuilder.ts`, `retentionText.ts`, `retentionCoupons.ts` and
+  the dispatch recheck in `ltpSequenceLifecycle.ts` take those rules instead
+  of literals (Learn to Play stays the default, so every existing call is
+  unchanged). `defineSequenceFlow()` in `retentionFlows.ts` builds a flow from
+  its rules; `retentionFlows.test.ts` defines a throwaway second flow and
+  builds and validates its texts end to end. The engine now refuses to run
+  when a `retention_playbooks` row seeded by migration 031 disagrees with the
+  flow in code (`assertPlaybookMatchesFlow`). Working rule added to
+  `CLAUDE.md`: test in dev before production, always.
 - **2026-10-09**: Retention engine generalization, slice 2: migration 031
   (`031_retention_flow_rules.sql`, written, not applied). The sequence RPCs
   from 013/018 and the inbound STOP handler from 028 now read their rules
@@ -225,8 +238,9 @@ Slice 1 (2026-10-09) moved the server code onto a flow registry. Slice 2
 literal key. A second flow still cannot be switched on until these are done,
 in roughly this order:
 
-1. **Apply migration 031 in production** (not yet applied). In the Supabase
-   SQL Editor, run `artifacts/api-server/migrations/031_retention_flow_rules.sql`
+1. **Apply migration 031** (not yet applied anywhere). Dev first: apply it to
+   a dev database (a Supabase branch or a copy of production) and run the dev
+   API server against it, then production. In the Supabase SQL Editor, run `artifacts/api-server/migrations/031_retention_flow_rules.sql`
    after 013-030. It is one transaction and safe to re-run. What it does:
    adds `flow_kind`, `trigger_program_label`, `verified_promo_code`,
    `verified_offer_phrase` and `booking_url` to `retention_playbooks`, seeds
@@ -244,13 +258,10 @@ in roughly this order:
    until it is applied nothing changes. Not covered by 031, by design: the
    LTP test tools (015, 016) and the report views (022-025) stay keyed to
    `ltp_followup`; they are LTP-specific tooling and reports.
-2. **Flow-specific text rules still live in LTP-named modules.**
-   `ltpPhraseBuilder.ts` (templates name Learn to Play, step 1 requires
-   `LTPNEXT25` and "25%"), `retentionText.ts` validators and the LLM prompt
-   branch, `retentionCoupons.ts` (benefit check only for `LTPNEXT25`). These
-   should move behind `RetentionFlowDefinition` so a flow supplies its own
-   builder and validator, reading the same rule columns 031 adds so code and
-   database never disagree.
+2. **Flow-specific text rules**: done in slice 3. What remains LTP-shaped by
+   name only: the `ltp_*` module and column names (`ltp_sequence_config`,
+   `ltp_text`, `ltp_date`) and the `ltp_followup` test tools. Renaming them is
+   cosmetic and touches the dashboard and generated API types; defer.
 3. **Routes.** `routes/retention.ts`, `routes/ltpSequence.ts`,
    `routes/ltpTestTools.ts` and `routes/retentionReports.ts` tag runs and
    filter on the literal key; they should pass the requested flow key through

@@ -1,12 +1,9 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_MODEL } from "./anthropicConfig";
-import { isSequenceFlowKey } from "./retentionFlows";
+import { isSequenceFlowKey, textRulesForPlaybook } from "./retentionFlows";
 import { retentionWeekday } from "./retentionDates";
-import {
-  RETENTION_LTP_VERIFIED_OFFER_TEXT,
-  RETENTION_NO_PROGRAM_BOOKING_URL,
-} from "./retentionTypes";
-import type { RetentionContext, RetentionPlaybook } from "./retentionTypes";
+import { LTP_TEXT_RULES, escapeRegExp } from "./retentionTypes";
+import type { RetentionContext, RetentionPlaybook, RetentionTextRules } from "./retentionTypes";
 import type { LtpTextSelection, RetentionSequenceStep } from "./retentionTypes";
 
 const VOICE_RULES = `You are a retention agent for a pickleball club. Write like a knowledgeable person at the front desk who knows the players personally: casual but not sloppy, warm but not gushing.
@@ -18,7 +15,7 @@ Follow every existing SMS voice rule:
 - Never use these phrases: "Hope this finds you well", "Just checking in", "I wanted to reach out", "Don't hesitate to reach out", "Feel free to", "Excited to share", "We've noticed", "We see that you", "We observed", "Based on your history", "We wanted to make sure", "Looking forward to hearing from you".
 - Only reference facts in the supplied context. Do not infer prior interactions, player type, motivation, or unstated timing. Never reveal surveillance or say what the system knows. Never validate or assign the player's level.
 - For with_program contexts, mention only the supplied next program and facts; do not invent familiarity, event details, urgency, or signup claims. Use its provided signup link naturally when appropriate.
-- For no_program contexts, mention only the required Learn to Play attendance fact with its supplied date_phrase. Do not mention another program or event, date, day, time, classmate, or program suggestion. Generic wording in the verified offer (including the word "program") and a generic booking-page call to action are allowed.`;
+- For no_program contexts, mention only the required attendance fact (the supplied attendance program) with its supplied date_phrase. Do not mention another program or event, date, day, time, classmate, or program suggestion. Generic wording in the verified offer (including the word "program") and a generic booking-page call to action are allowed.`;
 
 export class RetentionTextValidationError extends Error {
   constructor(readonly validation_errors: string[]) {
@@ -31,7 +28,16 @@ const TIME_REFERENCE_RE = /\b(?:yesterday|today|tomorrow|tonight|now|soon|later|
 const NO_PROGRAM_EXTRA_TIME_RE = /\b(?:in|within|after)\s+(?:a\s+couple(?:\s+of)?|couple(?:\s+of)?|a\s+few|few|several|a|an|one|two|three|four|five|six|seven|eight|nine|ten|\d+)\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\b|\b\d{1,2}\s*(?:a\.?m\.?|p\.?m\.?)\b|\b(?:spring|summer|fall|autumn|winter|noon|midnight)\b|\b\d{4}-\d{1,2}-\d{1,2}\b|\bnext\s+time\b/i;
 const NO_PROGRAM_SUGGESTION_RE = /\b(?:(?:(?:you should|you could|you might|you may|why not|consider|we recommend|i recommend|we suggest|i suggest)\s+(?:try|join|attend|take|play|sign up for|register for|book|check out|trying|joining|attending|taking|playing|signing up for|registering for|booking|checking out)\s+(?:(?:a|an|the|another|our|your|next|upcoming)\s+)?(?:beginner\s+|intermediate\s+|advanced\s+)?(?:programs?|events?|activities?))|(?:try|join|attend|take|play|sign up for|register for|check out)\s+(?:(?:a|an|the|another|our|your)\s+)?(?:beginner\s+|intermediate\s+|advanced\s+)?(?:class(?:es)?|programs?|events?|activities?|sessions?|lessons?|clinics?|open\s+play|drills?|guided\s+play))\b/i;
 const NO_PROGRAM_CLASSMATE_RE = /\b(?:classmates?|class(?:es)?|peers?|friends?|fellow players|other (?:players|members|people|participants)|members|participants|people from your class|people you met|players you know|everyone|your group)\b/i;
-const NO_PROGRAM_LTP_REFERENCE_RE = /\bLTP\b|\bLearn\s+to\s+Play\b/i;
+/** The trigger program's full name or its initials ("LTP"), which a no-program text must not repeat. */
+function triggerProgramReferencePattern(rules: RetentionTextRules): RegExp {
+  const words = rules.triggerProgramLabel.trim().split(/\s+/);
+  const initials = words.map((word) => word[0]).join("");
+  const spaced = words.map(escapeRegExp).join("\\s+");
+  return new RegExp(`\\b${escapeRegExp(initials)}\\b|\\b${spaced}\\b`, "i");
+}
+function exactTokenPattern(token: string): RegExp {
+  return new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRegExp(token)}(?![\\p{L}\\p{N}_])`, "u");
+}
 const NO_PROGRAM_WEEKDAY_ABBREVIATION_RE = /\b(?:mon|tue|tues|wed|thu|thur|thurs|fri|sat|sun)\b/i;
 const NO_PROGRAM_ACTIVITY_RE = /\b(?:beginner\s+|intermediate\s+|advanced\s+)?(?:class(?:es)?|lessons?|clinics?|open\s+play|drills?|guided\s+play|sessions?|round\s+robins?|leagues?|tournaments?|camps?|courses?|workshops?|practices?)\b/i;
 const NO_PROGRAM_RETURN_SUGGESTION_RE = /\b(?:when(?:ever)?|before|after|until|again|recently|previously|see you|look(?:ing)? forward to|come back|coming back|return(?:ing)? to|back on (?:the )?court|next time|ready to get back)\b/i;
@@ -52,6 +58,7 @@ export function validateLtpSequenceText(
   body: string,
   context: RetentionContext,
   selection: LtpTextSelection,
+  rules: RetentionTextRules = LTP_TEXT_RULES,
 ): string[] {
   const errors: string[] = [];
   const text = body.trim();
@@ -78,7 +85,7 @@ export function validateLtpSequenceText(
     return errors;
   }
 
-  const safeCode = step === 1 ? "LTPNEXT25" : "";
+  const safeCode = step === 1 ? rules.verifiedPromoCode : "";
   const knownProgram = context.next_program;
   const knownWhen = step === 2 && noProgram ? "" : selection.when ?? "";
   const facts = {
@@ -95,27 +102,31 @@ export function validateLtpSequenceText(
   for (const key of requiredSlots.filter((item) => item !== "opener")) {
     expectedParts.push(renderLtpStoredTemplate(selection.slot_templates[key], facts));
   }
-  const expectedLink = noProgram ? RETENTION_NO_PROGRAM_BOOKING_URL : knownProgram?.signup_url ?? "";
+  const expectedLink = noProgram ? rules.bookingUrl : knownProgram?.signup_url ?? "";
   if (!expectedLink) errors.push("LTP sequence context is missing the selected program's booking link");
   const expectedBody = `${expectedParts.join(" ")} ${expectedLink}`;
   if (text !== expectedBody) errors.push("Message differs from its immutable code-filled phrase selection");
   if (!text.endsWith(expectedLink)) errors.push("The booking link must be the final text with no punctuation after it");
 
+  const programLabelPattern = new RegExp(`\\b${escapeRegExp(rules.triggerProgramLabel)}\\b`);
+  const offerPhrasePattern = new RegExp(`\\b${escapeRegExp(rules.verifiedOfferPhrase)}\\b`, "i");
+  const promoCodePattern = new RegExp(`\\b${escapeRegExp(rules.verifiedPromoCode)}\\b`);
   if (step === 1) {
-    if (!/\bLearn to Play\b/.test(text)) errors.push("Step 1 must name Learn to Play");
-    if (!context.trigger?.date || !text.includes(selection.ltp_date)) errors.push("Step 1 must contain the code-filled Learn to Play attendance date");
-    if (!context.promo || context.promo.code !== "LTPNEXT25") {
-      errors.push("Step 1 requires the live-verified LTPNEXT25 coupon");
+    if (!programLabelPattern.test(text)) errors.push(`Step 1 must name ${rules.triggerProgramLabel}`);
+    if (!context.trigger?.date || !text.includes(selection.ltp_date)) errors.push(`Step 1 must contain the code-filled ${rules.triggerProgramLabel} attendance date`);
+    if (!context.promo || context.promo.code !== rules.verifiedPromoCode) {
+      errors.push(`Step 1 requires the live-verified ${rules.verifiedPromoCode} coupon`);
     } else {
       const benefit = context.promo.offer_text;
       const containsVerifiedBenefit = !!benefit && (
         text.toLocaleLowerCase().includes(benefit.toLocaleLowerCase())
-        || /\b25% off\b/i.test(text)
+        || offerPhrasePattern.test(text)
       );
-      if (!containsVerifiedBenefit) errors.push("Step 1 requires the verified 25% LTPNEXT25 benefit");
+      if (!containsVerifiedBenefit) errors.push(`Step 1 requires the verified ${rules.verifiedOfferPhrase} ${rules.verifiedPromoCode} benefit`);
       const claims = [...text.matchAll(PROMOTION_PERCENT_RE)];
-      if (claims.length !== 1 || Number(claims[0]?.[1]) !== 25) {
-        errors.push("Step 1 must contain exactly the verified 25% offer and no other percentage");
+      if (rules.verifiedPercent === null ? claims.length !== 0
+        : claims.length !== 1 || Number(claims[0]?.[1]) !== rules.verifiedPercent) {
+        errors.push(`Step 1 must contain exactly the verified ${rules.verifiedOfferPhrase} offer and no other percentage`);
       }
       PROMOTION_BENEFIT_RE.lastIndex = 0;
       if (PROMOTION_BENEFIT_RE.test(text)) errors.push("Step 1 cannot claim an unverified bonus or benefit");
@@ -123,22 +134,23 @@ export function validateLtpSequenceText(
     }
     if (noProgram) {
       if (context.next_program) errors.push("No-program step 1 cannot name a program or event");
-      if (!context.booking_url || context.booking_url !== RETENTION_NO_PROGRAM_BOOKING_URL) {
+      if (!context.booking_url || context.booking_url !== rules.bookingUrl) {
         errors.push("No-program step 1 must use the approved generic booking link");
       }
     } else {
       if (!knownProgram || !selection.when) errors.push("With-program step 1 needs its live-verified session and time");
-      if (context.promo?.code === "LTPNEXT25" && text.includes("LTPNEXT25") === false) {
-        errors.push("Step 1 must contain the exact LTPNEXT25 code");
+      if (context.promo?.code === rules.verifiedPromoCode && text.includes(rules.verifiedPromoCode) === false) {
+        errors.push(`Step 1 must contain the exact ${rules.verifiedPromoCode} code`);
       }
     }
   } else {
-    if (context.promo || /\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:discount|coupon|promo(?:tion)?)\b/i.test(text)) {
+    if (context.promo || promoCodePattern.test(text)
+      || /\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:discount|coupon|promo(?:tion)?)\b/i.test(text)) {
       errors.push("Step 2 cannot contain a promo code, coupon, percentage, discount, or offer");
     }
     if (noProgram) {
       if (context.next_program) errors.push("No-program step 2 cannot name a next program or event");
-      if (!text.endsWith(RETENTION_NO_PROGRAM_BOOKING_URL)) errors.push("No-program step 2 must end with the club booking page");
+      if (!text.endsWith(rules.bookingUrl)) errors.push("No-program step 2 must end with the club booking page");
     } else if (!knownProgram || !selection.when) {
       errors.push("With-program step 2 needs a fresh live-verified session and time");
     }
@@ -150,20 +162,20 @@ export function validateLtpSequenceText(
     selection.when ?? "",
     knownProgram?.name ?? "",
     expectedLink,
-    ...(step === 1 ? ["Learn to Play", "LTPNEXT25", context.promo?.offer_text ?? ""] : []),
+    ...(step === 1 ? [rules.triggerProgramLabel, rules.verifiedPromoCode, context.promo?.offer_text ?? ""] : []),
     ...(step === 2 && noProgram ? [selection.slot_templates.no_program_cta ?? ""] : []),
   ].filter(Boolean).sort((a, b) => b.length - a.length);
   let unexplained = text;
   for (const fact of suppliedFacts) unexplained = unexplained.replace(fact, " ");
   if (SEQUENCE_TIME_REFERENCE_RE.test(unexplained)) {
-    errors.push("Message may only mention the code-filled Learn to Play date and selected session time");
+    errors.push(`Message may only mention the code-filled ${rules.triggerProgramLabel} date and selected session time`);
   }
   const urls = text.match(/(?:https?:\/\/|www\.)[^\s<>"']+|\b[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.[a-z]{2,}(?:\/[^\s<>"']*)?/gi) ?? [];
   if (urls.length !== 1 || !urls[0]?.replace(/[),.;!?]+$/g, "").includes(expectedLink.replace(/[),.;!?]+$/g, ""))) {
     errors.push("Message must contain only its selected final booking URL");
   }
   if (noProgram && step === 1) {
-    const attendanceClause = `Learn to Play on ${selection.ltp_date}`;
+    const attendanceClause = `${rules.triggerProgramLabel} on ${selection.ltp_date}`;
     const afterAttendance = text.replace(selection.opener, " ").replace(attendanceClause, " ");
     const withoutVerifiedOffer = afterAttendance.replace(
       renderLtpStoredTemplate(selection.slot_templates.offer_no_program, facts),
@@ -200,10 +212,9 @@ function textAfterRequiredOpener(text: string, context: RetentionContext): strin
   return text.startsWith(opener) ? text.slice(opener.length) : text;
 }
 
-function noProgramAttendancePattern(datePhrase: string): RegExp {
-  const escapedDatePhrase = datePhrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function noProgramAttendancePattern(datePhrase: string, rules: RetentionTextRules): RegExp {
   return new RegExp(
-    `\\b(?:[Tt]hanks|[Tt]hank you) for (?:coming to|attending) Learn to Play ${escapedDatePhrase}(?![\\p{L}\\p{N}_])`,
+    `\\b(?:[Tt]hanks|[Tt]hank you) for (?:coming to|attending) ${escapeRegExp(rules.triggerProgramLabel)} ${escapeRegExp(datePhrase)}(?![\\p{L}\\p{N}_])`,
     "u",
   );
 }
@@ -301,11 +312,11 @@ function hasUnresolvedLiveLookupError(
   });
 }
 
-function validateUrls(text: string, context: RetentionContext): string[] {
+function validateUrls(text: string, context: RetentionContext, rules: RetentionTextRules): string[] {
   const errors: string[] = [];
   const variant = retentionVariant(context);
   const allowedUrls = variant === "no_program"
-    ? [RETENTION_NO_PROGRAM_BOOKING_URL]
+    ? [rules.bookingUrl]
     : [context.next_program?.signup_url, context.booked_event?.signup_url];
   const knownUrls = new Set(
     allowedUrls.filter(Boolean)
@@ -319,13 +330,13 @@ function validateUrls(text: string, context: RetentionContext): string[] {
   return errors;
 }
 
-function validateCommonLtpText(text: string, context: RetentionContext): string[] {
+function validateCommonLtpText(text: string, context: RetentionContext, rules: RetentionTextRules): string[] {
   const errors: string[] = [];
   const opener = `Hi ${context.player_first_name.trim()}, it's PB Club.`;
   if (!text.startsWith(opener)) errors.push(`Message must open exactly with "${opener}"`);
   if (/[\u2013\u2014]/u.test(text)) errors.push("Message must not contain em or en dashes");
-  if (!/(?<![\p{L}\p{N}_])LTPNEXT25(?![\p{L}\p{N}_])/u.test(text)) {
-    errors.push("Message must include LTPNEXT25 as an exact token");
+  if (!exactTokenPattern(rules.verifiedPromoCode).test(text)) {
+    errors.push(`Message must include ${rules.verifiedPromoCode} as an exact token`);
   }
   if (/ - /u.test(text)) errors.push('Message must not contain a spaced hyphen (" - ")');
   if ([...text].length > 320) errors.push("Message must be 320 Unicode characters or fewer");
@@ -359,35 +370,35 @@ function validateWithProgramLtpText(text: string, context: RetentionContext): st
   return errors;
 }
 
-function validateNoProgramLtpText(text: string, context: RetentionContext): string[] {
+function validateNoProgramLtpText(text: string, context: RetentionContext, rules: RetentionTextRules): string[] {
   const errors: string[] = [];
   let scannedText = textAfterRequiredOpener(text, context);
   if (!context.date_phrase) {
     errors.push("No-program text requires the supplied date_phrase");
   } else {
-    const attendancePattern = noProgramAttendancePattern(context.date_phrase);
+    const attendancePattern = noProgramAttendancePattern(context.date_phrase, rules);
     if (!attendancePattern.test(scannedText)) {
-      errors.push("Message must thank the player for coming to or attending Learn to Play with date_phrase verbatim");
+      errors.push(`Message must thank the player for coming to or attending ${rules.triggerProgramLabel} with date_phrase verbatim`);
     } else {
       scannedText = scannedText.replace(attendancePattern, " ");
     }
   }
   if (context.next_program) errors.push("A no_program context must not include a next program");
-  if (context.booking_url !== RETENTION_NO_PROGRAM_BOOKING_URL) {
+  if (context.booking_url !== rules.bookingUrl) {
     errors.push("No-program context must provide the exact approved booking-page URL");
   }
   if (
     !context.promo
-    || context.promo.code !== "LTPNEXT25"
-    || context.promo.offer_text !== RETENTION_LTP_VERIFIED_OFFER_TEXT
+    || context.promo.code !== rules.verifiedPromoCode
+    || context.promo.offer_text !== rules.verifiedOfferText
   ) {
-    errors.push("No-program text requires the canonical offer backed by verified LTPNEXT25 benefits");
+    errors.push(`No-program text requires the canonical offer backed by verified ${rules.verifiedPromoCode} benefits`);
   } else {
     const normalizedText = text.replace(/\s+/g, " ").toLocaleLowerCase();
     const normalizedOffer = context.promo.offer_text.replace(/\s+/g, " ").trim().toLocaleLowerCase();
     if (!normalizedText.includes(normalizedOffer)) errors.push("Message must include the verified offer text");
   }
-  if (!text.includes(RETENTION_NO_PROGRAM_BOOKING_URL)) {
+  if (!text.includes(rules.bookingUrl)) {
     errors.push("Message must include the exact approved booking-page URL");
   }
   if (/\bthank(?:s| you)?\b/i.test(scannedText)) {
@@ -405,7 +416,7 @@ function validateNoProgramLtpText(text: string, context: RetentionContext): stri
   }
   if (NO_PROGRAM_SUGGESTION_RE.test(scannedText)) errors.push("No-program message must not suggest an activity or program");
   if (NO_PROGRAM_CLASSMATE_RE.test(scannedText)) errors.push("No-program message must not reference classmates or other players");
-  if (NO_PROGRAM_LTP_REFERENCE_RE.test(scannedText)) errors.push("No-program message must not name the Learn to Play program");
+  if (triggerProgramReferencePattern(rules).test(scannedText)) errors.push(`No-program message must not name the ${rules.triggerProgramLabel} program`);
   if (NO_PROGRAM_ACTIVITY_RE.test(scannedText)) {
     errors.push("No-program message must not mention a specific program or activity type");
   }
@@ -435,17 +446,18 @@ export function validateRetentionTextBody(
   if (context.reason === "context_lookup_failed" || hasUnresolvedLiveLookupError(context.diagnostics)) {
     throw new RetentionTextValidationError(["Live retention context lookups are unresolved"]);
   }
-  const errors = validateUrls(text, context);
+  const rules = textRulesForPlaybook(playbook.key);
+  const errors = validateUrls(text, context, rules);
   if (isSequenceFlowKey(playbook.key)) {
     if (context.ltp_text) {
-      const sequenceErrors = validateLtpSequenceText(text, context, context.ltp_text);
+      const sequenceErrors = validateLtpSequenceText(text, context, context.ltp_text, rules);
       if (sequenceErrors.length) throw new RetentionTextValidationError(sequenceErrors);
       return text;
     }
     const variant = retentionVariant(context);
-    errors.push(...validateCommonLtpText(text, context));
+    errors.push(...validateCommonLtpText(text, context, rules));
     if (variant === "with_program") errors.push(...validateWithProgramLtpText(text, context));
-    else if (variant === "no_program") errors.push(...validateNoProgramLtpText(text, context));
+    else if (variant === "no_program") errors.push(...validateNoProgramLtpText(text, context, rules));
     else errors.push("LTP context must specify a variant or include a legacy next program");
     if (!context.promo && /(?:\b\d+(?:\.\d+)?\s*%|\b\d+\s+percent\b|\b(?:discount|promo(?:tion)?|coupon|free|complimentary|save|savings|offer)\b)/i.test(text)) {
       errors.push("Message includes an unverified promotion");
@@ -466,15 +478,15 @@ export interface RetentionTextResult {
   generated_preview: string | null;
 }
 
-function projectRetentionTextFacts(context: RetentionContext): Record<string, unknown> {
+function projectRetentionTextFacts(context: RetentionContext, rules: RetentionTextRules): Record<string, unknown> {
   if (retentionVariant(context) === "no_program") {
-    const verifiedPromo = context.promo?.code === "LTPNEXT25"
-      && context.promo.offer_text === RETENTION_LTP_VERIFIED_OFFER_TEXT
+    const verifiedPromo = context.promo?.code === rules.verifiedPromoCode
+      && context.promo.offer_text === rules.verifiedOfferText
       ? { code: context.promo.code, offer_text: context.promo.offer_text }
       : null;
     return {
       player_first_name: context.player_first_name,
-      attendance: { program: "Learn to Play", attended: true },
+      attendance: { program: rules.triggerProgramLabel, attended: true },
       date_phrase: context.date_phrase,
       promo: verifiedPromo,
       booking_url: context.booking_url,
@@ -503,8 +515,9 @@ export async function writeRetentionText(
   context: RetentionContext,
   playbook: RetentionPlaybook,
 ): Promise<RetentionTextResult> {
+  const rules = textRulesForPlaybook(playbook.key);
   if (isSequenceFlowKey(playbook.key)) {
-    throw new Error("Learn to Play texts must use the code-only sequence phrase builder, not LLM generation");
+    throw new Error(`${rules.triggerProgramLabel} texts must use the code-only sequence phrase builder, not LLM generation`);
   }
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("Claude credentials are not configured (ANTHROPIC_API_KEY)");
@@ -518,7 +531,7 @@ export async function writeRetentionText(
   const validationErrors: string[] = [];
   let generatedPreview: string | null = null;
   const variant = retentionVariant(context);
-  const promptContext = projectRetentionTextFacts(context);
+  const promptContext = projectRetentionTextFacts(context, rules);
   const guidance = variant === "no_program"
     ? ""
     : `\n\nPlaybook guidance:\n${playbook.message_guidance ?? "No additional guidance."}`;
@@ -534,8 +547,8 @@ export async function writeRetentionText(
 Write only the message body. Use only supplied context facts. Never invent facts.
 ${isSequenceFlowKey(playbook.key)
     ? retentionVariant(context) === "no_program"
-        ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Thank the player for coming to or attending Learn to Play, using the exact words "Learn to Play" and date_phrase verbatim. This is the only attendance or program reference allowed; do not mention any other program or event, date, day, time, classmate, or other-player reference. Do not add generic thanks for joining or being part of the club. Include the exact verified promo code and promo.offer_text, and this exact URL: ${RETENTION_NO_PROGRAM_BOOKING_URL}. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not suggest attending/joining/trying a specific activity or program, or name a specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes or spaced hyphens (" - ") and stay within 320 Unicode characters.`
-      : `For this Learn to Play follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include LTPNEXT25 exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`
+        ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Thank the player for coming to or attending ${rules.triggerProgramLabel}, using the exact words "${rules.triggerProgramLabel}" and date_phrase verbatim. This is the only attendance or program reference allowed; do not mention any other program or event, date, day, time, classmate, or other-player reference. Do not add generic thanks for joining or being part of the club. Include the exact verified promo code and promo.offer_text, and this exact URL: ${rules.bookingUrl}. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not suggest attending/joining/trying a specific activity or program, or name a specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes or spaced hyphens (" - ") and stay within 320 Unicode characters.`
+      : `For this ${rules.triggerProgramLabel} follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include ${rules.verifiedPromoCode} exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`
     : `If already_booked, thank the player and say "see you at [booked event name]" without mentioning an offer.`}
       ${variant === "no_program" ? "No generic playbook guidance applies to this variant." : "Respect the playbook guidance."}`,
       messages: [{
