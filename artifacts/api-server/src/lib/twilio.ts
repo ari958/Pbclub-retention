@@ -17,6 +17,7 @@ import {
   type LtpBookingBatchOptions,
 } from "./ltpSequenceLifecycle";
 import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
+import { isSequenceFlowKey } from "./retentionFlows";
 import { alertOperator } from "./operatorMonitoring";
 import { smsLiveEnabled } from "./backgroundPolicy";
 
@@ -341,7 +342,7 @@ async function sendApprovedMessage(
     message.approved_at,
     currentTime(),
   );
-  const ltpCandidate = retentionCandidate?.playbook_key === "ltp_followup"
+  const ltpCandidate = isSequenceFlowKey(retentionCandidate?.playbook_key)
     ? retentionCandidate as any
     : null;
   const promoCode = (retentionCandidate?.context as any)?.promo?.code;
@@ -409,7 +410,7 @@ async function sendApprovedMessage(
         await transitionLtpSequence(
           player.club_id,
           playerId,
-          "ltp_followup",
+          ltpCandidate.playbook_key,
           "exited_booked",
           "booking_since_step_trigger_or_real_send",
           firstCheck.booked.booked_event_id,
@@ -545,7 +546,7 @@ async function sendApprovedMessage(
           await transitionLtpSequence(
             player.club_id,
             playerId,
-            "ltp_followup",
+            ltpCandidate.playbook_key,
             "exited_booked",
             "booking_since_step_trigger_or_real_send",
             finalCheck.booked.booked_event_id,

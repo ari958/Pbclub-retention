@@ -14,6 +14,7 @@ import { performance } from "node:perf_hooks";
 import { logDispatchCheck } from "./dispatchAudit";
 import type { LtpBookingSnapshot } from "./ltpBookingSnapshot";
 import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
+import { isSequenceFlowKey, LTP_FOLLOWUP_FLOW, type RetentionSequenceFlowKey } from "./retentionFlows";
 
 export interface LtpBookingBatchOptions {
   client?: RetentionPodplayBatchClient;
@@ -311,7 +312,7 @@ export async function verifyLtpSequenceSchemaReady(): Promise<void> {
 export async function transitionLtpSequence(
   clubId: string,
   playerId: string,
-  playbookKey: "ltp_followup",
+  playbookKey: RetentionSequenceFlowKey,
   status: "paused_reply" | "exited_booked" | "exited_opt_out" | "completed",
   reason: string,
   bookedEventId: string | null = null,
@@ -375,7 +376,7 @@ export async function permanentlyOptOutPlayerAndExitLtpSequence(
   }
 
   try {
-    await transitionLtpSequence(clubId, playerId, "ltp_followup", "exited_opt_out", reason);
+    await transitionLtpSequence(clubId, playerId, LTP_FOLLOWUP_FLOW.key as RetentionSequenceFlowKey, "exited_opt_out", reason);
   } catch (error) {
     // Players without an LTP sequence need no sequence transition. All other
     // errors (including migration readiness failures) stay visible to callers.
@@ -436,7 +437,7 @@ export async function confirmLtpRecipientDelivery(messageId: string): Promise<bo
     .select("playbook_key,club_id,player_id,step,sequence_id")
     .eq("message_id", messageId).maybeSingle();
   if (candidateError) throw new Error(`Could not resolve LTP sequence for delivered message: ${candidateError.message}`);
-  if (candidate?.playbook_key !== "ltp_followup") return false;
+  if (!isSequenceFlowKey(candidate?.playbook_key)) return false;
 
   const { data: message, error: messageError } = await supabase.from("messages")
     .select("status,delivery_status,delivered_at,retention_delivery_kind")

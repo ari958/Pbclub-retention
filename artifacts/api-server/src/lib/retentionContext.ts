@@ -1,10 +1,7 @@
 import { supabase } from "./supabaseClient";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { toEtDate } from "./retentionDates";
-import {
-  RETENTION_LTP_VERIFIED_OFFER_TEXT,
-  RETENTION_NO_PROGRAM_BOOKING_URL,
-} from "./retentionTypes";
+import { RETENTION_NO_PROGRAM_BOOKING_URL } from "./retentionTypes";
 import type { RetentionContext, RetentionNextProgram, RetentionPlaybook } from "./retentionTypes";
 import type { RetentionSequenceStep } from "./retentionTypes";
 import {
@@ -12,11 +9,8 @@ import {
   type RetentionPodplayBatchClient,
 } from "./retentionPodplayBatch";
 
-export const normalizeRetentionName = (value: string) =>
-  value.normalize("NFKC").toLowerCase().replace(/[\u2010-\u2015_-]/g, " ").replace(/\s+/g, " ").trim();
-
-export const isLearnToPlayName = (value: string) =>
-  /\blearn to play\b/.test(normalizeRetentionName(value));
+import { findRetentionFlow, isLearnToPlayName, normalizeRetentionName } from "./retentionFlows";
+export { isLearnToPlayName, normalizeRetentionName };
 
 const timeET = (value: string) =>
   new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", minute: "2-digit" }).format(new Date(value));
@@ -416,10 +410,11 @@ export async function buildRetentionContext(args: {
   }
 
   const variant = next_program ? "with_program" : "no_program";
-  const isStepTwo = playbook.key === "ltp_followup" && args.sequenceStep === 2;
-  const isNoProgramLtp = !isStepTwo && variant === "no_program" && playbook.key === "ltp_followup";
-  const couponCode = isNoProgramLtp ? "LTPNEXT25" : playbook.promo_code;
-  const offerText = isNoProgramLtp ? RETENTION_LTP_VERIFIED_OFFER_TEXT : playbook.offer_text;
+  const sequenceFlow = findRetentionFlow(playbook.key)?.sequence ?? null;
+  const isStepTwo = !!sequenceFlow && args.sequenceStep === 2;
+  const isNoProgramLtp = !isStepTwo && variant === "no_program" && !!sequenceFlow;
+  const couponCode = isNoProgramLtp ? sequenceFlow.verifiedPromoCode : playbook.promo_code;
+  const offerText = isNoProgramLtp ? sequenceFlow.verifiedOfferText : playbook.offer_text;
   let promo: RetentionContext["promo"] = null;
   let coupon_warning: string | null = null;
   if (!isStepTwo && couponCode && (isNoProgramLtp || offerText)) {

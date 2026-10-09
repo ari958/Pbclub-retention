@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AGENT_MODEL } from "./anthropicConfig";
+import { isSequenceFlowKey } from "./retentionFlows";
 import { retentionWeekday } from "./retentionDates";
 import {
   RETENTION_LTP_VERIFIED_OFFER_TEXT,
@@ -435,7 +436,7 @@ export function validateRetentionTextBody(
     throw new RetentionTextValidationError(["Live retention context lookups are unresolved"]);
   }
   const errors = validateUrls(text, context);
-  if (playbook.key === "ltp_followup") {
+  if (isSequenceFlowKey(playbook.key)) {
     if (context.ltp_text) {
       const sequenceErrors = validateLtpSequenceText(text, context, context.ltp_text);
       if (sequenceErrors.length) throw new RetentionTextValidationError(sequenceErrors);
@@ -502,7 +503,7 @@ export async function writeRetentionText(
   context: RetentionContext,
   playbook: RetentionPlaybook,
 ): Promise<RetentionTextResult> {
-  if (playbook.key === "ltp_followup") {
+  if (isSequenceFlowKey(playbook.key)) {
     throw new Error("Learn to Play texts must use the code-only sequence phrase builder, not LLM generation");
   }
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -531,7 +532,7 @@ export async function writeRetentionText(
       max_tokens: 8192,
       system: `${VOICE_RULES}
 Write only the message body. Use only supplied context facts. Never invent facts.
-${playbook.key === "ltp_followup"
+${isSequenceFlowKey(playbook.key)
     ? retentionVariant(context) === "no_program"
         ? `For this no-program message, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Thank the player for coming to or attending Learn to Play, using the exact words "Learn to Play" and date_phrase verbatim. This is the only attendance or program reference allowed; do not mention any other program or event, date, day, time, classmate, or other-player reference. Do not add generic thanks for joining or being part of the club. Include the exact verified promo code and promo.offer_text, and this exact URL: ${RETENTION_NO_PROGRAM_BOOKING_URL}. Generic wording in promo.offer_text, including the word "program", is allowed. A generic booking-page call to action such as "Book here" is allowed. Do not suggest attending/joining/trying a specific activity or program, or name a specific activity type. Do not use conditional timing such as "when you're ready", "whenever", "before", "after", or "again". Do not add any other link. Use no em/en dashes or spaced hyphens (" - ") and stay within 320 Unicode characters.`
       : `For this Learn to Play follow-up, begin exactly with "Hi ${context.player_first_name}, it's PB Club.". Include LTPNEXT25 exactly, the complete next-program name, its weekday, and its signup_url. Include date_phrase verbatim as the only time reference other than the required next-program weekday. If already_booked, do not claim or describe the code as an offer or discount; include the required exact code without inventing benefits. Use no em/en dashes and stay within 320 Unicode characters.`

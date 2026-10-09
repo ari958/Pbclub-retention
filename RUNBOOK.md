@@ -183,6 +183,21 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-09**: Retention engine generalization, slice 1 (server code
+  only, no behavior change). New `src/lib/retentionFlows.ts` is the registry
+  of retention flows; `ltp_followup` is the first and only entry and carries
+  everything that used to be a literal in the engine: the Learn to Play
+  trigger matcher, the `LTPNEXT25` verified code and offer text, the opener,
+  the trigger-date format, the booking URL, the phrase-slot config reader and
+  the per-step promo rule (step 1 only). `retentionEngine.ts`,
+  `retentionContext.ts`, `retentionText.ts`, `retentionDispatch.ts`,
+  `ltpSequenceLifecycle.ts`, `twilio.ts` and `queuePoller.ts` now ask the
+  registry instead of comparing against `"ltp_followup"`.
+  `generateRetentionDrafts`, `regenerateLtpCandidateBatch`,
+  `reshuffleLtpCandidate` and `generateDueLtpStep2Drafts` take an optional
+  flow key that defaults to `ltp_followup`. `retentionFlows.test.ts` fails if
+  a literal key creeps back into those files. Remaining steps are listed under
+  "Retention engine generalization" in Open items.
 - **2026-10-09**: Operator test messages moved to the new private table
   `operator_test_messages` (migration 030). They never write `messages` or
   `contact_ledger`, whose live constraints rejected them.
@@ -190,6 +205,44 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 ---
 
 ## Open items
+
+### Retention engine generalization (prerequisite for any new flow)
+
+Slice 1 (2026-10-09, see changelog) moved the server code onto a flow
+registry. A second flow still cannot be switched on until these are done, in
+roughly this order:
+
+1. **Database RPCs accept only `ltp_followup`.** Migration 013's sequence
+   functions (`retention_create_candidate`, `retention_sequence_save_batch`,
+   `retention_sequence_transition`, `retention_sequence_due_step2`,
+   `retention_sequence_claim`, `retention_update_candidate`, the opt-out
+   trigger) branch on the literal key, and `save_batch` validates
+   "Learn to Play" and `LTPNEXT25` inside the step-1 body. The
+   `retention_candidates` CHECK (013 L231) allows a `sequence_id` only for
+   `ltp_followup`. A new numbered migration must make these read the flow's
+   rules from `retention_playbooks` (or a new flow-rules table) instead.
+   Migrations 015, 016, 018, 021, 022, 023, 024, 025 and 028 carry the same
+   literal.
+2. **Flow-specific text rules still live in LTP-named modules.**
+   `ltpPhraseBuilder.ts` (templates name Learn to Play, step 1 requires
+   `LTPNEXT25` and "25%"), `retentionText.ts` validators and the LLM prompt
+   branch, `retentionCoupons.ts` (benefit check only for `LTPNEXT25`). These
+   should move behind `RetentionFlowDefinition` so a flow supplies its own
+   builder and validator.
+3. **Routes.** `routes/retention.ts`, `routes/ltpSequence.ts`,
+   `routes/ltpTestTools.ts` and `routes/retentionReports.ts` tag runs and
+   filter on the literal key; they should pass the requested flow key through
+   to the engine's new optional parameter.
+4. **Dashboard.** `lib/ltpPhraseSlots.ts` (`isLtpCandidate`),
+   `components/ApprovalCard.tsx`, `pages/Approvals.tsx`,
+   `components/LtpTestTools.tsx` and `pages/Reports.tsx` branch on
+   `playbook_key === "ltp_followup"` and keep a local copy of the default
+   phrase-slot config.
+5. **Scheduler.** `scheduler.ts` runs generation and step-2 drafting for the
+   default flow only; it should iterate enabled flows.
+
+Dry-run and operator approval rules are unchanged throughout; none of this
+touches live sends.
 
 ### Broken send paths: must route through approval before enabling
 

@@ -15,6 +15,7 @@ import { buildLtpBookingSnapshot, createQueueBookingOptions, type LtpBookingSnap
 import { DispatchAudit } from "./dispatchAudit";
 import type { LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
 import { backgroundJobsEnabled, smsLiveEnabled } from "./backgroundPolicy";
+import { isSequenceFlowKey } from "./retentionFlows";
 import { withBackgroundLock } from "./backgroundLock";
 import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
 
@@ -110,7 +111,7 @@ async function runQueueTickUnlocked(): Promise<QueueTickStats> {
         audit.end("blocked");
         throw error;
       }
-      ready.push({ row, ltp: candidate?.playbook_key === "ltp_followup" });
+      ready.push({ row, ltp: isSequenceFlowKey(candidate?.playbook_key) });
     } catch (err) {
       audit.end("blocked");
       logger.error({ err, id: row.id }, "[queue] approval or kill-switch gate blocked dispatch");

@@ -1,9 +1,16 @@
 import { supabase } from "./supabaseClient";
 import { randomUUID } from "node:crypto";
 import { getTextEligibilitySkipReason, isTestPlayer } from "./retentionPolicy";
-import { buildRetentionContext, isLearnToPlayName, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
+import { buildRetentionContext, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
 import { RetentionTextValidationError, validateRetentionTextBody, writeRetentionText } from "./retentionText";
-import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateLtpSequenceConfig } from "./ltpPhraseBuilder";
+import {
+  DEFAULT_RETENTION_FLOW_KEY,
+  findRetentionFlow,
+  getRetentionFlow,
+  getSequenceFlow,
+  type RetentionFlowDefinition,
+  type RetentionSequenceFlowKey,
+} from "./retentionFlows";
 import { validateRetentionCoupon, type RetentionCouponValidation } from "./retentionCoupons";
 import { sanitizeScheduledSendAt } from "./playerTiming";
 import { checkLtpBookingSince, transitionLtpSequence, type LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
@@ -21,6 +28,8 @@ import {
   hasNonLtpAttendanceAfterTrigger,
 } from "./retentionDates";
 import type { RetentionCandidate, RetentionContext, RetentionPlaybook, RetentionSequenceStep } from "./retentionTypes";
+
+type SequenceFlow = ReturnType<typeof getSequenceFlow>;
 import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./retentionPodplayBatch";
 import { canReplacePrelaunchCandidate } from "./retentionPrelaunchReset";
 import { retentionRebuildLookbackDays } from "./retentionFreshness";
@@ -174,10 +183,19 @@ function withGenerationMetadata(
   };
 }
 
-function canGenerateRetentionText(context: RetentionContext): boolean {
+function verifiedPromoCode(flow: RetentionFlowDefinition): string | null {
+  return flow.sequence?.verifiedPromoCode ?? null;
+}
+
+function unverifiedOfferError(flow: RetentionFlowDefinition): string {
+  return `A verified ${verifiedPromoCode(flow) ?? "promo"} offer is unavailable for this context`;
+}
+
+function canGenerateRetentionText(context: RetentionContext, flow: RetentionFlowDefinition): boolean {
   if (context.variant === "no_program") {
     return context.next_program === null
-      && context.promo?.code === "LTPNEXT25"
+      && !!context.promo
+      && context.promo.code === verifiedPromoCode(flow)
       && !!context.promo.offer_text.trim();
   }
   if (context.variant === "with_program") return !!context.next_program;
@@ -185,9 +203,9 @@ function canGenerateRetentionText(context: RetentionContext): boolean {
   return !!context.next_program;
 }
 
-function contextGenerationBlockReason(context: RetentionContext): string {
+function contextGenerationBlockReason(context: RetentionContext, flow: RetentionFlowDefinition): string {
   if (context.variant === "no_program"
-    && (context.promo?.code !== "LTPNEXT25" || !context.promo.offer_text.trim())) {
+    && (!context.promo || context.promo.code !== verifiedPromoCode(flow) || !context.promo.offer_text.trim())) {
     return "coupon_not_verified";
   }
   return "context_incomplete";
@@ -267,10 +285,10 @@ function makeTriggerContext(
   };
 }
 
-function hasLaterNonLtpAttendance(rows: any[], triggerDate: string): boolean {
+function hasLaterNonLtpAttendance(flow: RetentionFlowDefinition, rows: any[], triggerDate: string): boolean {
   return hasNonLtpAttendanceAfterTrigger(rows.map((row) => ({
     attendance_date: toEtDate(String(row.attended_at)),
-    is_ltp: isLearnToPlayName(String(row.program_name ?? "")),
+    is_ltp: flow.isTriggerProgram(String(row.program_name ?? "")),
   })), triggerDate);
 }
 
@@ -292,13 +310,16 @@ function appendResult(
  */
 export async function generateRetentionDrafts(
   clubId: string, requestedLookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
+  flowKey: string = DEFAULT_RETENTION_FLOW_KEY,
 ) {
-  return withGenerationRun(clubId, "ltp_followup", "Generate", () =>
-    generateRetentionDraftsInternal(clubId, requestedLookbackDays));
+  const flow = getRetentionFlow(flowKey);
+  return withGenerationRun(clubId, flow.key, "Generate", () =>
+    generateRetentionDraftsInternal(clubId, flow, requestedLookbackDays));
 }
 
 async function generateRetentionDraftsInternal(
   clubId: string,
+  flow: RetentionFlowDefinition,
   requestedLookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
 ): Promise<RetentionGenerationResult> {
   const lookbackDays = normalizeRetentionLookbackDays(requestedLookbackDays);
@@ -338,12 +359,12 @@ async function generateRetentionDraftsInternal(
   ]);
   if (playbookResult.error) throw new Error(playbookResult.error.message);
   const playbooks = (playbookResult.data ?? []) as RetentionPlaybook[];
-  const playbook = playbooks.find((item) => item.key === "ltp_followup");
+  const playbook = playbooks.find((item) => item.key === flow.key);
   if (!playbook) return result;
-  await requireRetentionSequenceReady();
-  playbook.ltp_sequence_config = validateLtpSequenceConfig(
-    playbook.ltp_sequence_config ?? DEFAULT_LTP_SEQUENCE_CONFIG,
-  );
+  if (flow.sequence) {
+    await requireRetentionSequenceReady();
+    playbook.ltp_sequence_config = flow.sequence.readConfig(playbook);
+  }
   const couponCache = new Map<string, Promise<RetentionCouponValidation>>();
   if (playbook.promo_code) {
     const couponKey = `${clubId}:${playbook.promo_code}`;
@@ -368,14 +389,14 @@ async function generateRetentionDraftsInternal(
       || String(a.id).localeCompare(String(b.id)));
     const earliestDate = toEtDate(String(rows[0].attended_at));
     const name = rows[0]?.players?.name ?? null;
-    recordPlayerOutcome(playerId, name, "skipped", "First attendance was not exclusively Learn to Play");
+    recordPlayerOutcome(playerId, name, "skipped", `First attendance was not exclusively ${flow.triggerProgramLabel}`);
     if (!isAttendanceDateNearRetentionWindow(earliestDate, today, lookbackDays)) {
-      recordPlayerOutcome(playerId, name, "skipped", `Outside the ${lookbackDays}-day Learn to Play window`);
+      recordPlayerOutcome(playerId, name, "skipped", `Outside the ${lookbackDays}-day ${flow.triggerProgramLabel} window`);
       continue;
     }
     const onEarliest = rows.filter((row) => toEtDate(String(row.attended_at)) === earliestDate);
-    const ltp = onEarliest.filter((row) => isLearnToPlayName(row.program_name ?? ""));
-    if (!ltp.length || onEarliest.some((row) => !isLearnToPlayName(row.program_name ?? ""))) continue;
+    const ltp = onEarliest.filter((row) => flow.isTriggerProgram(row.program_name ?? ""));
+    if (!ltp.length || onEarliest.some((row) => !flow.isTriggerProgram(row.program_name ?? ""))) continue;
     result.stats.found++;
     const trigger = [...ltp].sort((a, b) =>
       String(a.event_id).localeCompare(String(b.event_id)) || String(a.id).localeCompare(String(b.id)))[0];
@@ -395,7 +416,7 @@ async function generateRetentionDraftsInternal(
   await withConcurrency(possibleCandidates, CONCURRENCY, async (candidate) => {
     try {
       const verified = await verifyRetentionTriggerEvent(clubId, candidate.trigger.event_id, clubCache, triggerCache);
-      if (!isLearnToPlayName(verified.name)) { skip("invalid_trigger", candidate.playerId); return; }
+      if (!flow.isTriggerProgram(verified.name)) { skip("invalid_trigger", candidate.playerId); return; }
       if (calendarDayDistance(verified.date, candidate.attendanceDate) > 1) {
         skip("invalid_trigger", candidate.playerId);
         return;
@@ -408,10 +429,10 @@ async function generateRetentionDraftsInternal(
         trigger: candidate.trigger,
         verifiedDate: verified.date,
         verifiedName: verified.name,
-        alreadyReturned: hasLaterNonLtpAttendance(byPlayer.get(candidate.playerId) ?? [], verified.date),
+        alreadyReturned: hasLaterNonLtpAttendance(flow, byPlayer.get(candidate.playerId) ?? [], verified.date),
       });
     } catch (error) {
-      recordError(`${candidate.playerId}: could not verify Learn to Play trigger event ${candidate.trigger.event_id}: ${errorMessage(error)}`);
+      recordError(`${candidate.playerId}: could not verify ${flow.triggerProgramLabel} trigger event ${candidate.trigger.event_id}: ${errorMessage(error)}`);
     }
   });
   if (!candidates.length) return result;
@@ -460,7 +481,7 @@ async function generateRetentionDraftsInternal(
   for (const player of players) recordPlayerName(player.id, player.name);
 
   const returned = freshCandidates.filter((candidate) => candidate.alreadyReturned);
-  if (playbook.key === "ltp_followup") {
+  if (flow.sequence) {
     const eligible: typeof freshCandidates = [];
     for (const candidate of freshCandidates.filter((item) => !item.alreadyReturned)) {
       const player = playerMap.get(candidate.playerId);
@@ -486,6 +507,7 @@ async function generateRetentionDraftsInternal(
     }
     const ltpBatch = await createInitialLtpCandidateBatch(
       clubId,
+      flow as SequenceFlow,
       [...eligible, ...safeReturned],
       playerMap,
       lookbackDays,
@@ -516,7 +538,7 @@ async function generateRetentionDraftsInternal(
     if (!player) { skip("missing_player"); continue; }
     const trigger = { date: candidate.verifiedDate, name: candidate.verifiedName, start_time: "" };
     const laterRows = (byPlayer.get(candidate.playerId) ?? [])
-      .filter((row) => !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > candidate.verifiedDate)
+      .filter((row) => !flow.isTriggerProgram(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > candidate.verifiedDate)
       .map((row) => ({ date: toEtDate(String(row.attended_at)), program_name: row.program_name ?? null }));
     const context = makeTriggerContext(trigger, player, "already_returned", [], { later_non_ltp_attendance: laterRows });
     context.trigger.event_id = String(candidate.trigger.event_id);
@@ -576,9 +598,9 @@ async function generateRetentionDraftsInternal(
         socialEventsCache, socialSignupsCache, clubCache, couponCache,
       });
       candidateContext = withGenerationMetadata(context, verifiedTrigger, lookbackDays, intendedSendAt);
-      if (!canGenerateRetentionText(candidateContext)) {
-        reason = contextGenerationBlockReason(candidateContext);
-        const errors = [candidateContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"];
+      if (!canGenerateRetentionText(candidateContext, flow)) {
+        reason = contextGenerationBlockReason(candidateContext, flow);
+        const errors = [candidateContext.coupon_warning ?? unverifiedOfferError(flow)];
         candidateContext = { ...candidateContext, reason, errors };
       } else {
         const textResult = await writeRetentionText(candidateContext, playbook);
@@ -633,7 +655,7 @@ async function generateRetentionDraftsInternal(
         errors: candidateContext.errors?.length ? candidateContext.errors : [reason === "no_next_program"
           ? "No matching next program with open spots was found"
           : reason === "coupon_not_verified"
-            ? candidateContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"
+            ? candidateContext.coupon_warning ?? unverifiedOfferError(flow)
             : "Retention context could not be built"],
       };
     }
@@ -672,8 +694,11 @@ async function loadClassmatesExternalIds(clubId: string, eventId: string, player
     .map((row: any) => row.players.external_id as string))];
 }
 
+// Run-history labels use the default flow: nothing may be read before each
+// operation's own readiness checks, so the candidate's key is not known yet.
+// recordGenerationPlaybook() corrects the label once the row is loaded.
 export async function regenerateRetentionCandidate(clubId: string, candidateId: string) {
-  return withGenerationRun(clubId, "ltp_followup", "Regenerate", () => regenerateRetentionCandidateInternal(clubId, candidateId));
+  return withGenerationRun(clubId, DEFAULT_RETENTION_FLOW_KEY, "Regenerate", () => regenerateRetentionCandidateInternal(clubId, candidateId));
 }
 async function regenerateRetentionCandidateInternal(
   clubId: string,
@@ -683,7 +708,8 @@ async function regenerateRetentionCandidateInternal(
     .select("id,playbook_key,status,context,updated_at").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
   if (error) throw new Error(error.message);
   if (row?.playbook_key) recordGenerationPlaybook(row.playbook_key);
-  if (row?.playbook_key === "ltp_followup") {
+  const rowFlow = findRetentionFlow(row?.playbook_key);
+  if (row && rowFlow?.sequence) {
     const recoveringReset = row.status === "needs_context"
       && (row.context?.reason === "test_reset_requires_rebuild"
         || row.context?.recovery_reason === "test_reset_requires_rebuild");
@@ -692,8 +718,8 @@ async function regenerateRetentionCandidateInternal(
       if (row.context.reason === "test_reset_requires_rebuild") await prepareLtpSimulationResetRetry(clubId, row);
     }
     const result = recoveringReset
-      ? await runLtpCandidateBatch(clubId, [candidateId], { retryContext: true })
-      : await regenerateLtpCandidateBatch(clubId, [candidateId]);
+      ? await runLtpCandidateBatch(clubId, rowFlow as SequenceFlow, [candidateId], { retryContext: true })
+      : await regenerateLtpCandidateBatch(clubId, [candidateId], rowFlow.key);
     if (result.failures.length) {
       throw Object.assign(new Error(result.failures[0].error), { status: result.failures[0].http_status });
     }
@@ -776,19 +802,18 @@ function ltpSendDate(): Date {
   return sanitizeScheduledSendAt(new Date(Date.now() + 60_000)) ?? new Date(Date.now() + 60_000);
 }
 
-async function readLtpPlaybook(): Promise<RetentionPlaybook> {
+async function readFlowPlaybook(flow: SequenceFlow): Promise<RetentionPlaybook> {
   const { data, error } = await supabase.from("retention_playbooks").select("*")
-    .eq("key", "ltp_followup").maybeSingle();
+    .eq("key", flow.key).maybeSingle();
   if (error) throw new Error(error.message);
-  if (!data?.enabled) throw Object.assign(new Error("LTP follow-up playbook is missing or disabled"), { status: 409 });
+  if (!data?.enabled) throw Object.assign(new Error(`${flow.name} playbook is missing or disabled`), { status: 409 });
   const playbook = data as RetentionPlaybook;
-  playbook.ltp_sequence_config = validateLtpSequenceConfig(
-    playbook.ltp_sequence_config ?? DEFAULT_LTP_SEQUENCE_CONFIG,
-  );
+  playbook.ltp_sequence_config = flow.sequence.readConfig(playbook);
   return playbook;
 }
 
 function ltpFailedContext(
+  flow: RetentionFlowDefinition,
   prior: RetentionContext,
   trigger: { event_id: string; name: string; date: string },
   firstName: string,
@@ -805,7 +830,7 @@ function ltpFailedContext(
       player_first_name: firstName,
       next_program: null,
       variant: "no_program",
-      date_phrase: `on ${formatLtpDateSafe(trigger.date)}`,
+      date_phrase: `on ${formatLtpDateSafe(flow, trigger.date)}`,
       send_date_et: toEtDate(ltpSendDate()),
       lookback_days: lookbackDays,
       stale: lookbackDays > DEFAULT_RETENTION_LOOKBACK_DAYS,
@@ -818,8 +843,8 @@ function ltpFailedContext(
         seed_nonce: seedNonce,
         slot_indices: {},
         slot_templates: {},
-        opener: `Hi ${firstName}, it's PB Club.`,
-        ltp_date: formatLtpDateSafe(trigger.date),
+        opener: flow.opener(firstName),
+        ltp_date: formatLtpDateSafe(flow, trigger.date),
         when: null,
       },
     },
@@ -827,9 +852,9 @@ function ltpFailedContext(
   };
 }
 
-function formatLtpDateSafe(date: string): string {
+function formatLtpDateSafe(flow: RetentionFlowDefinition, date: string): string {
   try {
-    return formatLtpDate(date);
+    return flow.formatTriggerDate(date);
   } catch {
     return date;
   }
@@ -854,11 +879,12 @@ function ltpErrorStatus(error: unknown): number {
 
 async function readLtpCandidatesForBatch(
   clubId: string,
+  flow: SequenceFlow,
   candidateIds: string[],
   options: LtpBatchOptions,
 ) {
   const { data, error } = await supabase.from("retention_candidates").select("*")
-    .eq("club_id", clubId).eq("playbook_key", "ltp_followup").in("id", candidateIds);
+    .eq("club_id", clubId).eq("playbook_key", flow.key).in("id", candidateIds);
   if (error) throw new Error(error.message);
   if ((data ?? []).length !== candidateIds.length) {
     throw Object.assign(new Error("One or more LTP sequence candidates were not found for this club"), { status: 404 });
@@ -876,7 +902,7 @@ async function readLtpCandidatesForBatch(
     recordCandidatePlayer(candidates[index].id, candidates[index].player_id, player.name);
     if (player.opted_out === true) {
       await transitionLtpSequence(
-        clubId, candidates[index].player_id, "ltp_followup", "exited_opt_out", "player_opted_out",
+        clubId, candidates[index].player_id, flow.key as RetentionSequenceFlowKey, "exited_opt_out", "player_opted_out",
       );
       optedOutCandidateIds.push(candidates[index].id);
     }
@@ -915,6 +941,7 @@ async function readLtpCandidatesForBatch(
 
 async function buildLtpBatchWriteItems(
   clubId: string,
+  flow: SequenceFlow,
   candidates: LtpCandidateBatchInput[],
   playbook: RetentionPlaybook,
   client: RetentionPodplayBatchClient,
@@ -971,7 +998,7 @@ async function buildLtpBatchWriteItems(
     if (player.opted_out === true) {
       if (candidate.sequence_id) {
         await transitionLtpSequence(
-          clubId, candidate.player_id, "ltp_followup", "exited_opt_out", "player_opted_out",
+          clubId, candidate.player_id, flow.key as RetentionSequenceFlowKey, "exited_opt_out", "player_opted_out",
         );
       }
       const reason = "opted_out";
@@ -994,7 +1021,7 @@ async function buildLtpBatchWriteItems(
     }
 
     let trigger: VerifiedRetentionTrigger = {
-      name: previousContext.trigger?.name ?? "Learn to Play",
+      name: previousContext.trigger?.name ?? flow.triggerProgramLabel,
       date: previousContext.trigger?.date ?? "",
       start_time: "",
     };
@@ -1008,15 +1035,15 @@ async function buildLtpBatchWriteItems(
       trigger = await verifyRetentionTriggerEvent(
         clubId, candidate.trigger_event_id, clubCache, triggerCache, client,
       );
-      if (!isLearnToPlayName(trigger.name)
+      if (!flow.isTriggerProgram(trigger.name)
         || (previousContext.trigger?.date && trigger.date !== previousContext.trigger.date)) {
-        throw Object.assign(new Error("The live trigger no longer matches the saved Learn to Play event date"), { status: 409 });
+        throw Object.assign(new Error(`The live trigger no longer matches the saved ${flow.triggerProgramLabel} event date`), { status: 409 });
       }
       // Step 2 has its own delivery-based due window; the original clinic may
       // legitimately be older than three days by then. Step 1 must qualify now.
       if (step === 1 && !isRetentionTriggerDate(trigger.date, toEtDate(sendAt), lookbackDays)) {
         throw Object.assign(new Error(
-          `The live Learn to Play attendance is outside the current ${lookbackDays}-day eligibility window`,
+          `The live ${flow.triggerProgramLabel} attendance is outside the current ${lookbackDays}-day eligibility window`,
         ), { status: 409 });
       }
       const attendanceCutoff = candidate.attendance_cutoff ?? trigger.start_time;
@@ -1056,8 +1083,8 @@ async function buildLtpBatchWriteItems(
             seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
             slot_indices: {},
             slot_templates: {},
-            opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
-            ltp_date: formatLtpDateSafe(trigger.date),
+            opener: flow.opener(player.name?.trim().split(/\s+/)[0] ?? ""),
+            ltp_date: formatLtpDateSafe(flow, trigger.date),
             when: null,
           },
         };
@@ -1080,7 +1107,7 @@ async function buildLtpBatchWriteItems(
               next_program: null,
               variant: "no_program",
               promo: null,
-              booking_url: "https://pbclub.podplay.app",
+              booking_url: flow.bookingUrl,
               reason: "already_booked",
               errors: [],
               diagnostics: { ...(previousContext.diagnostics ?? {}), exited_on_booking_since_step1: recentBooking },
@@ -1093,8 +1120,8 @@ async function buildLtpBatchWriteItems(
                 seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
                 slot_indices: {},
                 slot_templates: {},
-                opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
-                ltp_date: formatLtpDateSafe(trigger.date),
+                opener: flow.opener(player.name?.trim().split(/\s+/)[0] ?? ""),
+                ltp_date: formatLtpDateSafe(flow, trigger.date),
                 when: null,
               },
             };
@@ -1104,15 +1131,12 @@ async function buildLtpBatchWriteItems(
           }
         }
         if (reason !== "already_booked") {
-        const couponKey = `${clubId}:${playbook.promo_code ?? "LTPNEXT25"}`;
+        const stepOnePromo = flow.sequence.promoCodeForStep(playbook, 1) ?? flow.sequence.verifiedPromoCode;
+        const couponKey = `${clubId}:${stepOnePromo}`;
         if (step === 1 && !couponCache.has(couponKey)) {
-          couponCache.set(couponKey, validateRetentionCoupon(
-            clubId, playbook.promo_code ?? "LTPNEXT25", client.fetch,
-          ));
+          couponCache.set(couponKey, validateRetentionCoupon(clubId, stepOnePromo, client.fetch));
         }
-        const sequencePlaybook: RetentionPlaybook = step === 2
-          ? { ...playbook, promo_code: null, offer_text: null }
-          : playbook;
+        const sequencePlaybook: RetentionPlaybook = flow.sequence.playbookForStep(playbook, step);
         const context = await buildRetentionContext({
           clubId,
           player,
@@ -1144,15 +1168,15 @@ async function buildLtpBatchWriteItems(
               seed_nonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
               slot_indices: {},
               slot_templates: {},
-              opener: `Hi ${player.name?.trim().split(/\s+/)[0] ?? ""}, it's PB Club.`,
-              ltp_date: formatLtpDateSafe(trigger.date),
+              opener: flow.opener(player.name?.trim().split(/\s+/)[0] ?? ""),
+              ltp_date: formatLtpDateSafe(flow, trigger.date),
               when: null,
             },
           };
           transitions.push({ player_id: candidate.player_id, booked_event_id: bookedEvent.event_id });
         } else {
-          const promo = step === 1 ? (playbook.promo_code ?? "LTPNEXT25") : null;
-          const built = buildLtpStepText({
+          const promo = flow.sequence.promoCodeForStep(playbook, step);
+          const built = flow.sequence.buildStepText({
             candidateId: candidate.id,
             seedNonce: optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation),
             step,
@@ -1194,7 +1218,7 @@ async function buildLtpBatchWriteItems(
       }
     } catch (error) {
       const failure = contextFailure(error);
-      const failed = ltpFailedContext(previousContext, {
+      const failed = ltpFailedContext(flow, previousContext, {
         event_id: candidate.trigger_event_id, name: trigger.name, date: trigger.date || previousContext.trigger?.date || "",
       }, player.name?.trim().split(/\s+/)[0] ?? "", error, lookbackDays, step,
       optionsNonce(previousContext.ltp_text?.seed_nonce, selectedOperation));
@@ -1216,7 +1240,7 @@ async function buildLtpBatchWriteItems(
       id: candidate.id,
       club_id: clubId,
       player_id: candidate.player_id,
-      playbook_key: "ltp_followup",
+      playbook_key: flow.key,
       trigger_event_id: candidate.trigger_event_id,
       step,
       operation: selectedOperation,
@@ -1261,8 +1285,8 @@ function validateLtpBodyForErrors(body: string, context: RetentionContext, playb
   }
 }
 
-async function transitionLtpSequenceBooked(clubId: string, playerId: string, eventId: string | null): Promise<void> {
-  await transitionLtpSequence(clubId, playerId, "ltp_followup", "exited_booked", "booked_after_ltp", eventId);
+async function transitionLtpSequenceBooked(clubId: string, flow: SequenceFlow, playerId: string, eventId: string | null): Promise<void> {
+  await transitionLtpSequence(clubId, playerId, flow.key as RetentionSequenceFlowKey, "exited_booked", "booked_after_ltp", eventId);
 }
 
 async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[], testMode = false): Promise<void> {
@@ -1285,6 +1309,7 @@ async function saveLtpSequenceBatch(clubId: string, items: LtpBatchWriteItem[], 
 
 async function runLtpCandidateBatch(
   clubId: string,
+  flow: SequenceFlow,
   candidateIds: string[],
   options: LtpBatchOptions = {},
 ): Promise<LtpSequenceBatchResult> {
@@ -1298,8 +1323,8 @@ async function runLtpCandidateBatch(
   try {
     await requireRetentionSequenceReady();
     const [candidates, playbook] = await Promise.all([
-      readLtpCandidatesForBatch(clubId, candidateIds, options),
-      readLtpPlaybook(),
+      readLtpCandidatesForBatch(clubId, flow, candidateIds, options),
+      readFlowPlaybook(flow),
     ]);
     const client = new RetentionPodplayBatchClient();
     let items: LtpBatchWriteItem[];
@@ -1308,7 +1333,7 @@ async function runLtpCandidateBatch(
     let failures: { candidate_id: string; error: string; http_status: number }[];
     try {
       ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(
-        clubId, candidates, playbook, client,
+        clubId, flow, candidates, playbook, client,
         options.retryContext ? "retry_context" : options.reshuffle ? "reshuffle" : "regenerate",
       ));
     } catch (error) {
@@ -1329,7 +1354,7 @@ async function runLtpCandidateBatch(
       }
       if (items.length) await saveLtpSequenceBatch(clubId, items, testItems.length > 0);
       for (const transition of transitions) {
-        await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+        await transitionLtpSequenceBooked(clubId, flow, transition.player_id, transition.booked_event_id);
       }
       return { schema_ready: true, results, failures, podplay: client.telemetry };
     } catch (error) {
@@ -1350,6 +1375,7 @@ async function runLtpCandidateBatch(
 
 async function createInitialLtpCandidateBatch(
   clubId: string,
+  flow: SequenceFlow,
   sourceCandidates: Array<{
     playerId: string;
     trigger: any;
@@ -1366,7 +1392,7 @@ async function createInitialLtpCandidateBatch(
   const candidates: LtpCandidateBatchInput[] = sourceCandidates.map((source) => ({
     id: randomUUID(),
     player_id: source.playerId,
-    playbook_key: "ltp_followup",
+    playbook_key: flow.key,
     trigger_event_id: String(source.trigger.event_id),
     context: {
       trigger: { event_id: String(source.trigger.event_id), name: source.verifiedName, date: source.verifiedDate },
@@ -1386,17 +1412,17 @@ async function createInitialLtpCandidateBatch(
     updated_at: "",
     step: 1,
   }));
-  const playbook = await readLtpPlaybook();
+  const playbook = await readFlowPlaybook(flow);
   const client = new RetentionPodplayBatchClient();
   let items: LtpBatchWriteItem[];
   let results: RetentionRegenerationResult[];
   let transitions: { player_id: string; booked_event_id: string | null }[];
   let failures: { candidate_id: string; error: string; http_status: number }[];
   try {
-    ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(clubId, candidates, playbook, client, "create"));
+    ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(clubId, flow, candidates, playbook, client, "create"));
     if (items.length) await saveLtpSequenceBatch(clubId, items);
     for (const transition of transitions) {
-      await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+      await transitionLtpSequenceBooked(clubId, flow, transition.player_id, transition.booked_event_id);
     }
     return { schema_ready: true, results, failures, podplay: client.telemetry };
   } catch (error) {
@@ -1412,25 +1438,22 @@ async function createInitialLtpCandidateBatch(
 }
 
 /** Rebuilds a whole sequence batch atomically; it never approves, schedules, or sends. */
-export async function regenerateLtpCandidateBatch(clubId: string, candidateIds: string[]) {
-  return withGenerationRun(clubId, "ltp_followup", "Rebuild LTP", () => regenerateLtpCandidateBatchInternal(clubId, candidateIds));
-}
-async function regenerateLtpCandidateBatchInternal(
-  clubId: string,
-  candidateIds: string[],
-): Promise<LtpSequenceBatchResult> {
-  return runLtpCandidateBatch(clubId, candidateIds);
+export async function regenerateLtpCandidateBatch(clubId: string, candidateIds: string[], flowKey: string = DEFAULT_RETENTION_FLOW_KEY) {
+  const flow = getSequenceFlow(flowKey);
+  return withGenerationRun(clubId, flow.key, `Rebuild ${flow.shortLabel}`, () => runLtpCandidateBatch(clubId, flow, candidateIds));
 }
 
 /** Drafted-only deterministic phrase reshuffle, protected by the migration CAS write. */
-export async function reshuffleLtpCandidate(clubId: string, candidateId: string) {
-  return withGenerationRun(clubId, "ltp_followup", "Reshuffle", () => reshuffleLtpCandidateInternal(clubId, candidateId));
+export async function reshuffleLtpCandidate(clubId: string, candidateId: string, flowKey: string = DEFAULT_RETENTION_FLOW_KEY) {
+  const flow = getSequenceFlow(flowKey);
+  return withGenerationRun(clubId, flow.key, "Reshuffle", () => reshuffleLtpCandidateInternal(clubId, flow, candidateId));
 }
 async function reshuffleLtpCandidateInternal(
   clubId: string,
+  flow: SequenceFlow,
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
-  const result = await runLtpCandidateBatch(clubId, [candidateId], { reshuffle: true });
+  const result = await runLtpCandidateBatch(clubId, flow, [candidateId], { reshuffle: true });
   if (result.failures.length) {
     throw Object.assign(new Error(result.failures[0].error), { status: result.failures[0].http_status });
   }
@@ -1438,10 +1461,11 @@ async function reshuffleLtpCandidateInternal(
 }
 
 /** Creates unscheduled step-2 drafts only from migration-gated real step-1 delivery cohorts. */
-export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds?: string[]) {
-  return withGenerationRun(clubId, "ltp_followup", "Test step-2 drafts", () => generateDueLtpStep2DraftsInternal(clubId, testCandidateIds));
+export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds?: string[], flowKey: string = DEFAULT_RETENTION_FLOW_KEY) {
+  const flow = getSequenceFlow(flowKey);
+  return withGenerationRun(clubId, flow.key, "Test step-2 drafts", () => generateDueLtpStep2DraftsInternal(clubId, flow, testCandidateIds));
 }
-async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateIds?: string[]): Promise<LtpSequenceBatchResult> {
+async function generateDueLtpStep2DraftsInternal(clubId: string, flow: SequenceFlow, testCandidateIds?: string[]): Promise<LtpSequenceBatchResult> {
   const testMode = testCandidateIds !== undefined;
   if (testMode) {
     requireLtpTestOverride();
@@ -1468,7 +1492,7 @@ async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateId
     const candidates: LtpCandidateBatchInput[] = dueRows.map((row) => ({
       id: randomUUID(),
       player_id: String(row.player_id),
-      playbook_key: "ltp_followup",
+      playbook_key: flow.key,
       trigger_event_id: String(row.trigger_event_id),
       context: { ...row.context, ...(testMode ? { ltp_test_mode: true } : {}) } as RetentionContext,
       status: "sent",
@@ -1487,7 +1511,7 @@ async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateId
         throw Object.assign(new Error(`Due step-2 cohort row ${row.id ?? index} lacks verified real step-1 facts`), { status: 409 });
       }
     }
-    const playbook = await readLtpPlaybook();
+    const playbook = await readFlowPlaybook(flow);
     const client = new RetentionPodplayBatchClient();
     let items: LtpBatchWriteItem[];
     let results: RetentionRegenerationResult[];
@@ -1495,7 +1519,7 @@ async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateId
     let failures: { candidate_id: string; error: string; http_status: number }[];
     try {
       ({ items, results, transitions, failures } = await buildLtpBatchWriteItems(
-        clubId, candidates, playbook, client, "create",
+        clubId, flow, candidates, playbook, client, "create",
       ));
       if (testMode) {
         // Exits do not create an empty step-2 candidate. The shared transition
@@ -1504,7 +1528,7 @@ async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateId
       }
       if (items.length) await saveLtpSequenceBatch(clubId, items, testMode);
       for (const transition of transitions) {
-        await transitionLtpSequenceBooked(clubId, transition.player_id, transition.booked_event_id);
+        await transitionLtpSequenceBooked(clubId, flow, transition.player_id, transition.booked_event_id);
       }
       return { schema_ready: true, results, failures, podplay: client.telemetry };
     } catch (failure) {
@@ -1525,7 +1549,7 @@ async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateId
 
 /** Eligibility and schema are checked before any PodPlay or model request. */
 export async function retryRetentionContextBatch(clubId: string, candidateIds: string[]) {
-  return withGenerationRun(clubId, "ltp_followup", "Retry context", () => retryRetentionContextBatchInternal(clubId, candidateIds));
+  return withGenerationRun(clubId, DEFAULT_RETENTION_FLOW_KEY, "Retry context", () => retryRetentionContextBatchInternal(clubId, candidateIds));
 }
 async function retryRetentionContextBatchInternal(
   clubId: string,
@@ -1551,8 +1575,9 @@ async function retryRetentionContextBatchInternal(
     }
     const keys = new Set(candidates.map((candidate: any) => candidate.playbook_key as string));
     recordGenerationPlaybook(keys.size === 1 ? [...keys][0] : null);
-    if (candidates.every((candidate: any) => candidate.playbook_key === "ltp_followup")) {
-      return runLtpCandidateBatch(clubId, candidateIds, { retryContext: true });
+    const batchFlow = keys.size === 1 ? findRetentionFlow([...keys][0]) : undefined;
+    if (batchFlow?.sequence) {
+      return runLtpCandidateBatch(clubId, batchFlow as SequenceFlow, candidateIds, { retryContext: true });
     }
     const batch: RetentionRebuildBatch = {
       client: new RetentionPodplayBatchClient(),
@@ -1620,7 +1645,8 @@ async function rebuildRetentionCandidate(
 
   const previousContext = candidate.context as RetentionContext;
   const triggerDate = previousContext?.trigger?.date;
-  if (!triggerDate) throw Object.assign(new Error("Candidate context is missing the Learn to Play trigger date"), { status: 409 });
+  const flow = getRetentionFlow(candidate.playbook_key);
+  if (!triggerDate) throw Object.assign(new Error(`Candidate context is missing the ${flow.triggerProgramLabel} trigger date`), { status: 409 });
   let trigger = { event_id: candidate.trigger_event_id, name: previousContext.trigger.name, date: triggerDate };
   const lookbackDays = normalizeRetentionLookbackDays(Number(previousContext.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS));
   let laterNonLtpAttendance: { date: string; program_name: string | null }[] = [];
@@ -1630,8 +1656,8 @@ async function rebuildRetentionCandidate(
       const verified = await verifyRetentionTriggerEvent(
         clubId, candidate.trigger_event_id, batch.clubCache, batch.triggerCache, batch.client,
       );
-      if (!isLearnToPlayName(verified.name) || !isRetentionTriggerDate(verified.date, toEtDate(new Date()), lookbackDays)) {
-        throw new Error("The live trigger is not Learn to Play within the candidate's original lookback window");
+      if (!flow.isTriggerProgram(verified.name) || !isRetentionTriggerDate(verified.date, toEtDate(new Date()), lookbackDays)) {
+        throw new Error(`The live trigger is not ${flow.triggerProgramLabel} within the candidate's original lookback window`);
       }
       trigger = { event_id: candidate.trigger_event_id, name: verified.name, date: verified.date };
     }
@@ -1639,7 +1665,7 @@ async function rebuildRetentionCandidate(
       .select("program_name,attended_at").eq("player_id", candidate.player_id);
     if (attendanceError) throw new Error(attendanceError.message);
     laterNonLtpAttendance = (attendance ?? []).filter((row: any) =>
-      !isLearnToPlayName(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > trigger.date,
+      !flow.isTriggerProgram(String(row.program_name ?? "")) && toEtDate(String(row.attended_at)) > trigger.date,
     ).map((row: any) => ({ date: toEtDate(String(row.attended_at)), program_name: row.program_name ?? null }));
   } catch (error) {
     attendanceFailure = contextFailure(error);
@@ -1716,13 +1742,13 @@ async function rebuildRetentionCandidate(
         intendedSendAt,
       );
       generatedContext = newContext;
-      if (!canGenerateRetentionText(newContext)) {
+      if (!canGenerateRetentionText(newContext, flow)) {
         newStatus = "needs_context";
-        reason = contextGenerationBlockReason(newContext);
+        reason = contextGenerationBlockReason(newContext, flow);
         newContext = {
           ...newContext,
           reason,
-          errors: [newContext.coupon_warning ?? "A verified LTPNEXT25 offer is unavailable for this context"],
+          errors: [newContext.coupon_warning ?? unverifiedOfferError(flow)],
         };
       } else {
         const textResult = await writeRetentionText(newContext, playbook);
