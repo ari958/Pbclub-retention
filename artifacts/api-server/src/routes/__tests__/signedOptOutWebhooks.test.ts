@@ -100,6 +100,21 @@ test("signed STOP, provider STOP classification and 21610: one event/alert each,
       console.log(`${scenario.label}: 1 event + 1 fake alert; two replays add 0 events/alerts`);
     }
     assert.equal(db.sql("SELECT count(*) FROM retention_sequences WHERE sequence_status='exited_opt_out'"), "3");
+    for (const [n, body, kind] of [[70, "START", "start"], [71, "Thanks for the invitation", "reply"]] as const) {
+      const url = `${process.env.PUBLIC_API_URL}/api/messages/webhook/inbound?clubSlug=pb-club`;
+      const params = { From: "+15550000101", To: "+15550000998", MessageSid: sid(n), Body: body };
+      const signature = twilio.getExpectedTwilioSignature("signed-webhook-fixture-token", url, params);
+      const response = await fetch(url, { method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", "X-Twilio-Signature": signature },
+        body: new URLSearchParams(params) });
+      assert.equal(response.status, 200, await response.text());
+      assert.equal(db.sql(`SELECT kind FROM sms_inbound_receipts WHERE twilio_message_sid='${sid(n)}'`), kind);
+      assert.equal(db.sql("SELECT count(*) FROM sms_optout_events"), "3");
+      assert.equal(fakeAlerts, 3);
+    }
+    assert.equal(db.sql(`SELECT sms_opt_in AND NOT opted_out FROM players WHERE id='${uuid(11)}'`), "t");
+    assert.equal(db.sql("SELECT count(*) FROM retention_sequences WHERE sequence_status='exited_opt_out'"), "3",
+      "START and subsequent reply do not reopen closed sequences");
     assert.equal(memberSmsCalls, 0);
   } finally {
     try {

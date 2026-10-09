@@ -7,7 +7,7 @@ Signed webhook tests should execute native receipt, opt-out, transition, and ale
 
 **Why:** Mocked RPC success conceals missing transition prerequisites and alert ownership failures. Scraping another test's SQL template also mixes schema and interpolated seed data.
 
-**How to apply:** Own a dedicated fixture schema, include every column referenced by native functions, and verify event/alert replay counts and cleanup. Never use shared databases or real SMS transports.
+**How to apply:** Own a dedicated fixture schema matched to production metadata; do not invent a column merely because a function references it. Verify event/alert replay counts and cleanup. Never use shared databases or real SMS transports.
 
 Compile and exercise transactional retention migrations in an isolated PostgreSQL fixture before handing them to the operator. Source-contract checks and TypeScript checks do not prove PL/pgSQL compilation or safe backfill ordering.
 
@@ -44,3 +44,9 @@ Exercise reset followed by fresh regeneration through the application entry poin
 **Why:** A guarded reset passed SQL assertions but left a needs-context state that ordinary regeneration rejected. The context-retry path also had narrower accepted reasons and needed the retained pending message's body for its compare-and-swap checks.
 
 **How to apply:** Verify the complete recovery transition, including reason compatibility, existing-message snapshots, approval blocking while facts are rebuilt, and the final unapproved draft. A passing SQL reset test does not establish that the application can finish recovery.
+
+Match affected fixture relations to the actual production columns, types, nullability and defaults before trusting native SQL success.
+
+**Why:** Receipt tests passed because several isolated conversation fixtures supplied a timestamp column absent from production. Executing real SQL against that invented schema missed a live inbound outage.
+
+**How to apply:** Compare read-only production schema metadata, share the verified relation definition across fixtures, and first reproduce the unmodified failing function against it. REST metadata does not expose stored function bodies or all constraints/triggers; report those limits rather than claiming live-definition or full-schema equivalence.

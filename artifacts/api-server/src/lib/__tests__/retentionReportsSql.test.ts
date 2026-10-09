@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { operatorPostgresFixture } from "./fixtures/operatorPostgres";
 import { isLearnToPlayName } from "../retentionContext";
+import { conversationsTableSql } from "./fixtures/conversationsSchema";
 
 const migration = readFileSync(new URL("../../../migrations/022_retention_reports_and_optouts.sql", import.meta.url), "utf8");
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -13,7 +14,7 @@ test("report migration: real SQL, backfills, attribution, LTP parity, receipt re
   try {
     db.sql(`
       CREATE TABLE players(id uuid PRIMARY KEY,club_id uuid,name text,phone text,opted_out boolean DEFAULT false,sms_opt_in boolean DEFAULT true);
-      CREATE TABLE conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),club_id uuid,player_id uuid,triggered_by text,created_at timestamptz DEFAULT now());
+      ${conversationsTableSql}
       CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),player_id uuid,conversation_id uuid,body text,direction text,
         sent_by text,status text,twilio_message_sid text,sent_at timestamptz DEFAULT now(),error_code text,error_message text,
         approved_at timestamptz,delivery_status text,delivered_at timestamptz,dispatch_claimed_at timestamptz,dispatch_token uuid);
@@ -59,6 +60,7 @@ test("report migration: real SQL, backfills, attribution, LTP parity, receipt re
       GRANT SELECT ON players,messages,conversations,attendances,retention_sequences,retention_candidates TO service_role;
     `);
     db.sql(migration);
+    db.sql(readFileSync(new URL("../../../migrations/028_inbound_conversation_order.sql", import.meta.url), "utf8"));
     assert.equal(db.sql("SELECT string_agg(source||':'||n,',' ORDER BY source) FROM (SELECT source,count(*) n FROM sms_optout_events GROUP BY source)t"),
       "carrier_21610:1,manual:1,stop_reply:1");
     assert.equal(db.sql("SELECT count(*) FROM sms_optout_events WHERE alerted_at IS NOT NULL"), "0");

@@ -4,6 +4,7 @@ import { execFile, spawnSync } from "node:child_process";
 import { promisify } from "node:util";
 import test from "node:test";
 import { operatorPostgresFixture } from "./fixtures/operatorPostgres";
+import { conversationsTableSql } from "./fixtures/conversationsSchema";
 
 test("isolated PostgreSQL inbox: unknown/STOP, scoped unique match, pause, retry, failure durability and privacy", async () => {
   const { sql, connection, close } = operatorPostgresFixture();
@@ -13,12 +14,12 @@ test("isolated PostgreSQL inbox: unknown/STOP, scoped unique match, pause, retry
   const to = "+15557654321";
   const sid = (n: number) => `SM${n.toString(16).padStart(32,"0")}`;
   const capture = (n: number, from: string, body: string, slug="pb-club") =>
-    `SELECT capture_sms_inbound('${slug}','${from}','${to}','${sid(n)}','${body}')`;
+    `SELECT capture_sms_inbound('${slug}','${from}','${to}','${sid(n)}','${body}',NULL::text)`;
   const get = (n: number, from: string, body: string) => JSON.parse(sql(capture(n,from,body)));
   try {
     sql(`
       CREATE TABLE players(id uuid PRIMARY KEY,club_id uuid REFERENCES clubs(id),phone text,sms_opt_in boolean DEFAULT true,opted_out boolean DEFAULT false);
-      CREATE TABLE conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),player_id uuid REFERENCES players(id),club_id uuid REFERENCES clubs(id),triggered_by text,created_at timestamptz DEFAULT now());
+      ${conversationsTableSql}
       CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),player_id uuid REFERENCES players(id),conversation_id uuid REFERENCES conversations(id),body text,direction text,sent_by text,status text,twilio_message_sid text,sent_at timestamptz,dispatch_claimed_at timestamptz,dispatch_token uuid,error_message text);
       CREATE TABLE retention_sequences(club_id uuid,player_id uuid,playbook_key text,sequence_status text);
       CREATE TABLE fixture_failure(enabled boolean); INSERT INTO fixture_failure VALUES(false);
@@ -32,6 +33,14 @@ test("isolated PostgreSQL inbox: unknown/STOP, scoped unique match, pause, retry
     `);
     const migration = readFileSync(new URL("../../../migrations/021_sms_inbound_receipts.sql",import.meta.url),"utf8");
     sql(migration); sql(migration);
+    // Install only the native receipt/event additions needed by the corrected
+    // six-argument function; this fixture still owns its failure-injection RPC.
+    const reports = readFileSync(new URL("../../../migrations/022_retention_reports_and_optouts.sql", import.meta.url), "utf8");
+    const events = reports.match(/CREATE TABLE IF NOT EXISTS public\.sms_optout_events \([\s\S]*?\n\);/)?.[0];
+    assert.ok(events);
+    sql("ALTER TABLE sms_inbound_receipts ADD COLUMN twilio_optout_type text;");
+    sql(events);
+    sql(readFileSync(new URL("../../../migrations/028_inbound_conversation_order.sql", import.meta.url), "utf8"));
     const unknown = get(1,"+15550000111","Hi");
     assert.equal(unknown.player_id,null); assert.equal(unknown.match_reason,"unknown");
     assert.equal(unknown.club_id,club); assert.equal(unknown.body,"Hi"); assert.ok(unknown.processed_at);
