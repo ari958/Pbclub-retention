@@ -11,6 +11,12 @@ export interface RetentionPlaybook {
   message_guidance: string | null;
   holdout_pct: number;
   ltp_sequence_config?: LtpSequenceConfig;
+  /** Flow rules read by the sequence RPCs (migration 031). Absent on rows read before it is applied. */
+  flow_kind?: "single" | "sequence";
+  trigger_program_label?: string | null;
+  verified_promo_code?: string | null;
+  verified_offer_phrase?: string | null;
+  booking_url?: string | null;
 }
 
 export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | "exited_test";

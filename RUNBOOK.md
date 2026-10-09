@@ -183,6 +183,18 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-09**: Retention engine generalization, slice 2: migration 031
+  (`031_retention_flow_rules.sql`, written, not applied). The sequence RPCs
+  from 013/018 and the inbound STOP handler from 028 now read their rules
+  (`flow_kind`, trigger program label, verified promo code, offer phrase,
+  booking URL) from the `retention_playbooks` row instead of the literal
+  `ltp_followup` / `LTPNEXT25` / booking-URL strings. The literal-keyed
+  candidate CHECK becomes a trigger. `retentionFlowRulesSql.test.ts` installs
+  the real 013 writers, 018 and 031 twice on a throwaway Postgres, re-runs the
+  018 reset assertions unchanged, drafts a step 1 for a second sequence flow
+  through the same RPC, and proves an inbound STOP exits every sequence flow.
+  `RetentionPlaybook` gained the new optional columns. Apply instructions
+  under Open items.
 - **2026-10-09**: Retention engine generalization, slice 1 (server code
   only, no behavior change). New `src/lib/retentionFlows.ts` is the registry
   of retention flows; `ltp_followup` is the first and only entry and carries
@@ -208,27 +220,37 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ### Retention engine generalization (prerequisite for any new flow)
 
-Slice 1 (2026-10-09, see changelog) moved the server code onto a flow
-registry. A second flow still cannot be switched on until these are done, in
-roughly this order:
+Slice 1 (2026-10-09) moved the server code onto a flow registry. Slice 2
+(2026-10-09) wrote migration 031, which moves the database rules off the
+literal key. A second flow still cannot be switched on until these are done,
+in roughly this order:
 
-1. **Database RPCs accept only `ltp_followup`.** Migration 013's sequence
-   functions (`retention_create_candidate`, `retention_sequence_save_batch`,
-   `retention_sequence_transition`, `retention_sequence_due_step2`,
-   `retention_sequence_claim`, `retention_update_candidate`, the opt-out
-   trigger) branch on the literal key, and `save_batch` validates
-   "Learn to Play" and `LTPNEXT25` inside the step-1 body. The
-   `retention_candidates` CHECK (013 L231) allows a `sequence_id` only for
-   `ltp_followup`. A new numbered migration must make these read the flow's
-   rules from `retention_playbooks` (or a new flow-rules table) instead.
-   Migrations 015, 016, 018, 021, 022, 023, 024, 025 and 028 carry the same
-   literal.
+1. **Apply migration 031 in production** (not yet applied). In the Supabase
+   SQL Editor, run `artifacts/api-server/migrations/031_retention_flow_rules.sql`
+   after 013-030. It is one transaction and safe to re-run. What it does:
+   adds `flow_kind`, `trigger_program_label`, `verified_promo_code`,
+   `verified_offer_phrase` and `booking_url` to `retention_playbooks`, seeds
+   the `ltp_followup` row with the values the functions used to hard-code,
+   replaces 013's literal-keyed candidate CHECK with the
+   `retention_candidates_sequence_identity` trigger, and amends the installed
+   sequence RPCs plus 028's inbound STOP handler in place (same
+   `pg_get_functiondef` technique as 015 and 018, so 018's amendment
+   survives). The install aborts, changing nothing, if any function body has
+   drifted from what 013/018/028 installed, or if an existing candidate row
+   would violate the generalized identity rule. The final `SELECT` must print
+   `retention_sequence_ready = t` and the playbook rows with their rules.
+   Deploying the branch before applying it is safe: the server-side readiness
+   check (`retention_sequence_ready`) is only redefined by 031 itself, so
+   until it is applied nothing changes. Not covered by 031, by design: the
+   LTP test tools (015, 016) and the report views (022-025) stay keyed to
+   `ltp_followup`; they are LTP-specific tooling and reports.
 2. **Flow-specific text rules still live in LTP-named modules.**
    `ltpPhraseBuilder.ts` (templates name Learn to Play, step 1 requires
    `LTPNEXT25` and "25%"), `retentionText.ts` validators and the LLM prompt
    branch, `retentionCoupons.ts` (benefit check only for `LTPNEXT25`). These
    should move behind `RetentionFlowDefinition` so a flow supplies its own
-   builder and validator.
+   builder and validator, reading the same rule columns 031 adds so code and
+   database never disagree.
 3. **Routes.** `routes/retention.ts`, `routes/ltpSequence.ts`,
    `routes/ltpTestTools.ts` and `routes/retentionReports.ts` tag runs and
    filter on the literal key; they should pass the requested flow key through
