@@ -19,6 +19,13 @@ const outcome = {
   step2_drafted: false, step2_approved: false, step2_sent: false, step2_delivered: false, step2_booked: false,
   outcome: "in_window", window_closes_at: new Date(Date.now() + 21 * 86400_000).toISOString(), is_test: false,
 };
+const testPlayerId = "00000000-0000-4000-8000-000000000004";
+const optout = {
+  id: "00000000-0000-4000-8000-000000000010", player_id: outcome.player_id,
+  name: "Normal fixture", opted_out_at: new Date().toISOString(), source: "unattributed",
+  event_source: "stop_reply", twilio_optout_type: "STOP", playbook_key: null, step: null,
+  body: null, optout_message_id: null, is_test: false,
+};
 function query(table: string) {
   tables.push(table);
   const filters: Record<string, any> = {};
@@ -29,8 +36,13 @@ function query(table: string) {
     if (table === "playbook_outcomes") assert.equal(filters.is_test, false, "test sequences excluded from all cohort reads");
     if (schemaMissing) return { data: null, error: { code: "PGRST205", message: "fixture missing reporting view" } };
     const rows = table === "playbook_outcomes"
-      ? (!filters.playbook_key || filters.playbook_key === outcome.playbook_key ? [outcome] : [])
-      : table === "ltp_baseline" ? [{ n_players: 4, n_booked: 1, rate: 0.25 }] : [];
+      ? (!filters.playbook_key || filters.playbook_key === outcome.playbook_key ? [
+        outcome, { ...outcome, sequence_id: testPlayerId, player_id: testPlayerId },
+      ] : [])
+      : table === "ltp_baseline" ? [{ n_players: 4, n_booked: 1, rate: 0.25 }]
+      : table === "players" ? [{ id: testPlayerId }]
+      : table === "sms_optouts" ? [optout, { ...optout, id: testPlayerId, player_id: testPlayerId, is_test: true }] : [];
+    if (table === "players") assert.equal(filters.is_test, true);
     const selected = rows.map(row => Object.fromEntries(fields.split(",").map(f => [f, (row as any)[f]])));
     return { data: single ? selected[0] ?? null : selected, error: null };
   };
@@ -63,7 +75,10 @@ test("reports is SELECT-only, club-scoped, validated, and baseline is flow-speci
   assert.equal(report.outcomes.length, 1);
   assert.deepEqual(report.playbook_keys, ["ltp_followup"]);
   assert.deepEqual(report.baseline, { n_players: 4, n_booked: 1, rate: 0.25 });
-  assert.equal(report.club_opt_out_total, 0);
+  assert.equal(report.club_opt_out_total, 1, "test opt-out excluded from club-wide total");
+  assert.equal(report.optouts.length, 2, "test opt-out retained in the panel");
+  assert.equal(report.optouts.filter((row: any) => row.is_test).length, 1);
+  assert.ok(report.outcomes.every((row: any) => row.player_id !== testPlayerId), "test player excluded from scorecard");
   tables.length = 0;
   const other = await fetch(`${base}/retention/reports?slug=reports-fixture&playbook_key=other&period=all`);
   assert.equal(other.status, 200);

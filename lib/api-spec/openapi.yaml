@@ -705,6 +705,7 @@ components:
         - step
         - body
         - optout_message_id
+        - is_test
       properties:
         id: { type: string, format: uuid }
         player_id: { type: ["string", "null"], format: uuid }
@@ -717,6 +718,7 @@ components:
         step: { type: ["integer", "null"] }
         body: { type: ["string", "null"] }
         optout_message_id: { type: ["string", "null"], format: uuid }
+        is_test: { type: boolean }
     RetentionBaseline:
       type: object
       additionalProperties: false

@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { isTestPlayer } from "./retentionPolicy";
 import { validateRetentionCoupon } from "./retentionCoupons";
 import {
   calculateRetentionOpenSpots,
@@ -267,9 +268,10 @@ export async function checkLtpBookingSince(
   assertValidCutoff(cutoffISO);
   const cutoff = Date.parse(cutoffISO);
   const { data: player, error: playerError } = await supabase.from("players")
-    .select("id,external_id,club_id").eq("id", playerId).eq("club_id", clubId).maybeSingle();
+    .select("id,external_id,club_id,notes").eq("id", playerId).eq("club_id", clubId).maybeSingle();
   if (playerError) failClosed(`player identity lookup failed: ${playerError.message}`);
   if (!player || player.club_id !== clubId) failClosed("player does not belong to this club");
+  if (isTestPlayer(player)) failClosed("test players are not eligible for retention");
   if (typeof player.external_id !== "string" || !player.external_id.trim()) {
     failClosed("player has no verified PodPlay external ID");
   }

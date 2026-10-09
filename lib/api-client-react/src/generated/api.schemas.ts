@@ -114,6 +114,7 @@ export interface RetentionSmsOptout {
   body: string | null;
   /** @nullable */
   optout_message_id: string | null;
+  is_test: boolean;
 }
 
 export interface RetentionBaseline {

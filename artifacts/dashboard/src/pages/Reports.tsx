@@ -174,7 +174,7 @@ export default function Reports() {
               {optouts.map((item: RetentionSmsOptout) => <article className="optout-event" key={item.id} data-testid={`row-optout-${item.id}`}>
                 <div className="optout-event-date">{formatDate(item.opted_out_at)}<span>{item.name || "Unknown player"}</span></div>
                 <div className="optout-message"><p>{item.body || "No preceding text is available."}</p><span>{item.playbook_key ? item.playbook_key.replaceAll("_", " ") : "No playbook attributed"}</span></div>
-                <div className="optout-meta"><span className="step-chip">{item.step == null ? "Step —" : `Step ${item.step}`}</span><span className={`source-chip ${item.source === "unattributed" ? "unattributed" : ""}`}>{item.source}</span></div>
+                <div className="optout-meta">{item.is_test && <span className="step-chip" data-testid={`badge-test-optout-${item.id}`}>Test</span>}<span className="step-chip">{item.step == null ? "Step —" : `Step ${item.step}`}</span><span className={`source-chip ${item.source === "unattributed" ? "unattributed" : ""}`}>{item.source}</span></div>
               </article>)}
             </div>}
           </section>

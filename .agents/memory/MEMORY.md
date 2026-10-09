@@ -31,4 +31,5 @@
 - [Operator alert incidents](operator-alert-incidents.md) — one global worker; API/watchdog share incident identities; preclaim alerts and reconcile ambiguous provider outcomes.
 - [Inbound SMS policy](inbound-sms-policy.md) — retain unknown/STOP receipts privately; ambiguous phone matches stay unlinked; tenant comes from the assigned webhook endpoint.
 - [LTP test recovery](ltp-test-recovery-policy.md) — close the four stranded override-test roots, not reset/redraft; preserve archive/messages; test clocks need stored destination proof.
+- [Test-player safeguards](test-player-safeguards.md) — exclude test accounts from current/future retention regardless of START; keep test opt-outs visible but out of metrics.
 - [Coupon call measurement](coupon-call-measurement.md) — historical upsert totals and current live signups do not establish exact past HTTP cost; use recorded run counters.

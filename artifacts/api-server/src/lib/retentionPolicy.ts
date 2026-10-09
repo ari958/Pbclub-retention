@@ -15,6 +15,8 @@ export function parkInRetentionOnlyMode(error: string): RequestHandler {
 }
 
 export interface TextEligibility {
+  is_test?: boolean | null;
+  notes?: string | null;
   phone?: string | null;
   opted_out?: boolean | null;
   sms_opt_in?: boolean | null;
@@ -22,9 +24,15 @@ export interface TextEligibility {
   sms_consented_at?: string | null;
 }
 
-export type TextEligibilitySkipReason = "no_phone" | "opted_out" | "marketing_consent";
+export const TEST_PLAYER_MARKER = "[TEST_PLAYER]";
+export function isTestPlayer(player: Pick<TextEligibility, "is_test" | "notes">): boolean {
+  return player.is_test === true || !!player.notes?.includes(TEST_PLAYER_MARKER);
+}
+
+export type TextEligibilitySkipReason = "test_player" | "no_phone" | "opted_out" | "marketing_consent";
 
 export function getTextEligibilitySkipReason(player: TextEligibility): TextEligibilitySkipReason | null {
+  if (isTestPlayer(player)) return "test_player";
   if (!player.phone?.trim()) return "no_phone";
   if (player.opted_out === true) return "opted_out";
   if (!requiresMarketingConsent()) return null;

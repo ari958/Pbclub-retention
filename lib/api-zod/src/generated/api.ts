@@ -94,6 +94,7 @@ export const GetRetentionReportsResponse = zod.object({
       step: zod.number().nullable(),
       body: zod.string().nullable(),
       optout_message_id: zod.string().uuid().nullable(),
+      is_test: zod.boolean(),
     }),
   ),
   baseline: zod.union([

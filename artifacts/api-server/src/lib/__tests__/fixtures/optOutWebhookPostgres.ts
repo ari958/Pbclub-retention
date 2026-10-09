@@ -3,14 +3,14 @@ import { readFileSync } from "node:fs";
 import { operatorPostgresFixture } from "./operatorPostgres";
 
 /** Native SQL, socket-only disposable database; never uses a workspace DB URL. */
-export function optOutWebhookPostgres() {
+export function optOutWebhookPostgres(withTestPlayerMigration = false) {
   const db = operatorPostgresFixture();
   const load = (name: string) => readFileSync(new URL(`../../../../migrations/${name}`, import.meta.url), "utf8");
   try {
     // Own the fixture schema; native migrations supply receipt/opt-out/alert
     // constraints and functions. Do not scrape seeds from another test.
     db.sql(`
-      CREATE TABLE players(id uuid PRIMARY KEY,club_id uuid,name text,phone text,opted_out boolean DEFAULT false,sms_opt_in boolean DEFAULT true);
+      CREATE TABLE players(id uuid PRIMARY KEY,club_id uuid,name text,phone text,notes text,opted_out boolean DEFAULT false,sms_opt_in boolean DEFAULT true);
       CREATE TABLE conversations(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),club_id uuid,player_id uuid,triggered_by text,created_at timestamptz DEFAULT now());
       CREATE TABLE messages(id uuid PRIMARY KEY DEFAULT gen_random_uuid(),player_id uuid,conversation_id uuid,body text,direction text,
         sent_by text,status text,twilio_message_sid text,sent_at timestamptz,error_code text,error_message text,
@@ -37,6 +37,7 @@ export function optOutWebhookPostgres() {
     db.sql(transition);
     db.sql(load("021_sms_inbound_receipts.sql"));
     db.sql(load("022_retention_reports_and_optouts.sql"));
+    if (withTestPlayerMigration) db.sql(load("027_test_players_and_optout_reporting.sql"));
   } catch (error) {
     db.close();
     throw error;

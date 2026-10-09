@@ -1,6 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { randomUUID } from "node:crypto";
-import { getTextEligibilitySkipReason } from "./retentionPolicy";
+import { getTextEligibilitySkipReason, isTestPlayer } from "./retentionPolicy";
 import { buildRetentionContext, isLearnToPlayName, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
 import { RetentionTextValidationError, validateRetentionTextBody, writeRetentionText } from "./retentionText";
 import { buildLtpStepText, DEFAULT_LTP_SEQUENCE_CONFIG, formatLtpDate, validateLtpSequenceConfig } from "./ltpPhraseBuilder";
@@ -26,6 +26,7 @@ import { canReplacePrelaunchCandidate } from "./retentionPrelaunchReset";
 import { retentionRebuildLookbackDays } from "./retentionFreshness";
 
 export type RetentionSkipReason =
+  | "test_player"
   | "no_phone"
   | "opted_out"
   | "duplicate"
@@ -37,6 +38,7 @@ export type RetentionSkipReason =
   | "already_returned";
 
 const SKIP_REASONS: RetentionSkipReason[] = [
+  "test_player",
   "no_phone",
   "opted_out",
   "duplicate",
@@ -436,7 +438,7 @@ export async function generateRetentionDrafts(
 
   const playerIds = [...new Set(freshCandidates.map((candidate) => candidate.playerId))];
   const players = await pageAll<any>((from, to) => supabase.from("players")
-    .select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id")
+    .select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id,notes")
     .eq("club_id", clubId).in("id", playerIds).range(from, to));
   const playerMap = new Map(players.map((player) => [player.id, player]));
 
@@ -457,6 +459,7 @@ export async function generateRetentionDrafts(
     const safeReturned: typeof returned = [];
     for (const candidate of returned) {
       const player = playerMap.get(candidate.playerId);
+      if (player && isTestPlayer(player)) { skip("test_player"); continue; }
       if (player?.opted_out === true) {
         skip("opted_out");
         continue;
@@ -931,7 +934,7 @@ async function buildLtpBatchWriteItems(
       data: message,
       error: messageError,
     }] = await Promise.all([
-      supabase.from("players").select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id")
+      supabase.from("players").select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id,notes")
         .eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle(),
       candidate.message_id
         ? supabase.from("messages").select("id,body,status,approved_at,approved_by,approved_body,scheduled_send_at,dispatch_claimed_at,sent_at").eq("id", candidate.message_id).maybeSingle()
