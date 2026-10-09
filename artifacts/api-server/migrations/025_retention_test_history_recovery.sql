@@ -1,4 +1,4 @@
--- WRITE-ONLY PROPOSAL. Do not apply without explicit authorization.
+-- Applied manually in the Supabase SQL Editor on 2026-10-08.
 -- Leave uniqueness, conflict targets, and message rows completely untouched.
 -- Compare-and-set and exact linked-message proof protect these four roots.
 -- No draft/send RPC is called; no ledger or reporting-view changes are made.

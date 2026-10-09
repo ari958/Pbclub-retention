@@ -1,6 +1,6 @@
--- Apply in the EXISTING external Supabase SQL Editor. VIEW CHANGES ONLY.
+-- Applied manually in the Supabase SQL Editor on 2026-10-08. VIEW CHANGES ONLY.
 -- Migration 023 is already applied. Do not rerun 022 or 023.
--- Capture the SELECT counts below before and after applying this file.
+-- The SELECT counts below are retained for verification.
 BEGIN;
 
 -- Step 1: preserve the existing column order and sent-only production cohort.

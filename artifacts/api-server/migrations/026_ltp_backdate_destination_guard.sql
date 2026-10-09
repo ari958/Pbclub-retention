@@ -1,3 +1,4 @@
+-- Applied manually in the Supabase SQL Editor on 2026-10-08.
 -- FUNCTION-ONLY installer for the updated 015 test-clock guard.
 -- Do not rerun migration 015 (or 022/023). No data or sending-setting changes.
 BEGIN;
