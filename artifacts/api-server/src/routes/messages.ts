@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { OPERATOR_TEST_TEXT } from "../lib/operatorTestMessage";
+import { recordOperatorTestReceipt } from "../lib/operatorTestMessage";
 import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
@@ -575,6 +575,27 @@ router.post("/messages/webhook/status", async (req, res) => {
       .or("player_id.not.is.null,conversation_id.not.is.null");
     return claimToken === undefined ? query.is("dispatch_token", null) : query.eq("dispatch_token", claimToken);
   };
+  // Operator tests live in operator_test_messages (migration 030), never in
+  // messages: no player, milestone or opt-out handling applies to them.
+  const operatorId = req.query.operator_test_id;
+  if (operatorId !== undefined) {
+    if (memberCorrelation || typeof operatorId !== "string" || !uuid.test(operatorId)) {
+      res.status(400).send("Invalid operator test correlation");
+      return;
+    }
+    const receipt = await recordOperatorTestReceipt(operatorId, messageSid, MessageStatus, ErrorCode, ErrorMessage);
+    if (receipt.error) {
+      req.log.error({ err: receipt.error.message, MessageSid }, "Could not persist operator test delivery status");
+      res.status(503).send("Could not persist delivery status; retry required");
+      return;
+    }
+    if (!receipt.matched) req.log.warn({ MessageSid }, "Signed operator test receipt matched no recorded test");
+    if (MessageStatus === "failed" || MessageStatus === "undelivered") {
+      void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
+    }
+    res.status(204).send();
+    return;
+  }
   try {
     const result = await bindMemberClaim(supabase
       .from("messages")
@@ -594,19 +615,6 @@ router.post("/messages/webhook/status", async (req, res) => {
         statusError = { message: "Signed member receipt did not match its approved dispatch claim" };
       }
     }
-    const operatorId = req.query.operator_test_id;
-    if (!statusError && !affected?.length && typeof operatorId === "string"
-      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operatorId)) {
-      // Signed callback may beat persistence of the SID. Match only this fixed, claimed operator test.
-      const early = await supabase.from("messages")
-        .update({ ...update, twilio_message_sid: messageSid })
-        .eq("id", operatorId).eq("retention_delivery_kind", "test").eq("body", OPERATOR_TEST_TEXT)
-        .is("player_id", null).is("conversation_id", null).is("twilio_message_sid", null)
-        .not("dispatch_token", "is", null)
-        .select("id,player_id,conversation_id,retention_delivery_kind");
-      affected = early.data;
-      statusError = early.error;
-    }
   } catch (error) {
     statusError = { message: error instanceof Error ? error.message : String(error) };
   }
@@ -614,15 +622,12 @@ router.post("/messages/webhook/status", async (req, res) => {
     req.log.error({ err: statusError.message, MessageSid }, "Could not persist Twilio delivery status");
   }
 
-  const operatorTestReceipt = Array.isArray(affected) && affected.length > 0
-    && affected.every(message => message.retention_delivery_kind === "test" && !message.player_id && !message.conversation_id);
   // Real 21610 failures receive one context-rich opt-out alert below instead
   // of an additional generic delivery failure alert.
-  if ((MessageStatus === "failed" || MessageStatus === "undelivered")
-    && (!isTwilio21610(ErrorCode) || operatorTestReceipt)) {
+  if ((MessageStatus === "failed" || MessageStatus === "undelivered") && !isTwilio21610(ErrorCode)) {
     void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
   }
-  if (isTwilio21610(ErrorCode) && !operatorTestReceipt) {
+  if (isTwilio21610(ErrorCode)) {
     let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
     if (!messages.length) {
       const { data: linked, error: lookupError } = await bindMemberClaim(supabase

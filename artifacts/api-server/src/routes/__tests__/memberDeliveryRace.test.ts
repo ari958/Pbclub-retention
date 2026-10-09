@@ -309,6 +309,16 @@ test("operator-test signed fallback still preserves early receipts without playe
     assert.equal((await callback(options.statusCallback, "delivered")).status, 204);
   };
   await sendOperatorTestMessage(clubId, "fixture-operator");
-  assert.equal(message().delivery_status, "delivered"); assert.equal(message().retention_delivery_kind, "test");
-  assert.equal(message().player_id, null); assert.equal(realMilestones().length, 0);
+  const [recorded] = rows.operator_test_messages;
+  assert.equal(recorded.delivery_status, "delivered"); assert.ok(recorded.delivered_at);
+  assert.equal(recorded.status, "sent"); assert.equal(recorded.actor, "fixture-operator");
+  assert.equal(rows.messages.length, 0, "operator tests never create player message rows");
+  assert.equal((rows.contact_ledger ?? []).length, 0); assert.equal(realMilestones().length, 0);
+});
+test("operator-test receipts reject malformed or mixed correlation", async () => {
+  rows.messages = []; rows.operator_test_messages = [];
+  const base = "https://fixture.example/api/messages/webhook/status";
+  assert.equal((await callback(`${base}?operator_test_id=not-a-uuid`, "delivered")).status, 400);
+  const mixed = `${base}?operator_test_id=00000000-0000-4000-8000-0000000000aa&member_message_id=00000000-0000-4000-8000-0000000000bb&dispatch_claimed_at=2026-10-07T16:00:00Z`;
+  assert.equal((await callback(mixed, "delivered")).status, 400);
 });

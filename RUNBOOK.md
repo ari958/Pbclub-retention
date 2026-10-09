@@ -107,6 +107,9 @@ Code: `artifacts/api-server/src/lib/backgroundEnvironment.mjs`
   client no longer writes. Milestone and monthly-recap generation now use the
   shared `AGENT_MODEL` (`anthropicConfig.ts`) instead of a hard-coded
   `claude-sonnet-4-5`. Rewrote `CLAUDE.md` against the code.
+- **2026-10-09**: Operator test messages moved to the new private table
+  `operator_test_messages` (migration 030). They never write `messages` or
+  `contact_ledger`, whose live constraints rejected them.
 
 ---
 
@@ -124,7 +127,17 @@ message row and pass its `messageId` before it is switched on.
 - Feedback reply "thanks" auto-reply: `src/routes/messages.ts` (`sendViaTwilio(From, thanksMsg)`)
 - Experiment dispatch: `src/routes/experiments.ts` (`sendViaTwilio(freshPlayer.phone, messageBody)`)
 
-### Operator test message is broken against the live schema (confirmed 2026-10-09)
+### Operator test message: apply migration 030 before deploying the fix
+
+**Status:** fixed on the branch; migration 030 not yet applied in production.
+
+1. Run `artifacts/api-server/migrations/030_operator_test_messages.sql` in the
+   Supabase SQL editor (additive: one new private table), then the read-only
+   checks at the bottom of that file.
+2. Deploy. Until 030 is applied, the Settings card reports "install migration
+   030" and sends nothing.
+
+Background, kept for the record:
 
 Production schema query results (2026-10-09): `messages.player_id` is NOT NULL.
 `contact_ledger` CHECKs allow `purpose` in (promotion, cancellation, other) and
@@ -135,9 +148,10 @@ Production schema query results (2026-10-09): `messages.player_id` is NOT NULL.
 "Cannot record operator test". Twilio is never called, so no text is sent. If
 that insert passed, its `contact_ledger` row (`purpose='operator_test'`, JSON
 `outcome`) would also be rejected. Its history lookup reads that JSON `outcome`
-too. Fix this before relying on the Settings "Send operator test message"
-button. Approved member sends are unaffected: they write `purpose='promotion'`
-with no `outcome`.
+too. Fix (2026-10-09): operator tests now write only to `operator_test_messages`
+(no `messages` or `contact_ledger` row), and their status callbacks update that
+table. Approved member sends were never affected: they write
+`purpose='promotion'` with no `outcome`.
 
 ### Pre-existing test failures (not caused by 2026-10-09 changes)
 

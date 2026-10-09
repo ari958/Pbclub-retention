@@ -1,27 +1,31 @@
 import assert from "node:assert/strict";
 import { after, beforeEach, test } from "node:test";
 import { supabase } from "../supabaseClient";
-import { getOperatorTestMessages, OPERATOR_TEST_TEXT, sendOperatorTestMessage } from "../operatorTestMessage";
+import {
+  getOperatorTestMessages, OPERATOR_TEST_TABLE, OPERATOR_TEST_TEXT, recordOperatorTestReceipt, sendOperatorTestMessage,
+} from "../operatorTestMessage";
 import { setTwilioClientFactoryForTests, setTwilioClockForTests } from "../twilio";
 import { assertRetentionDraftFresh } from "../retentionFreshness";
 
 const original = { from: supabase.from, env: { ...process.env } };
 process.env.NODE_ENV = "test";
-let messages: any[] = [], ledger: any[] = [], calls: any[] = [];
-let kill = false, failLedger = false, failProvider = false, pauseAfterLedger = false, earlyReceipt = false;
+// messages and contact_ledger are tracked only to prove operator tests never touch them.
+let tests: any[] = [], messages: any[] = [], ledger: any[] = [], calls: any[] = [];
+let kill = false, failRecord = false, failProvider = false, pauseAfterRecord = false, earlyReceipt = false;
 (supabase as any).from = (table: string) => {
   let action = "", payload: any, single = false;
   const filters: Record<string, any> = {};
   const q: any = new Proxy({}, { get(_target, key) {
     const result = () => {
       if (table === "clubs") return { data: { sms_kill_switch: kill }, error: null };
-      let rows = table === "messages" ? messages : table === "contact_ledger" ? ledger : [];
+      let rows = table === OPERATOR_TEST_TABLE ? tests : table === "messages" ? messages : table === "contact_ledger" ? ledger : [];
       if (action === "insert") {
-        if (table === "contact_ledger" && failLedger) return { data: null, error: { message: "offline ledger" } };
+        if (table === OPERATOR_TEST_TABLE && failRecord) return { data: null, error: { message: "offline table" } };
         rows.push({ ...payload, created_at: new Date().toISOString() });
-        if (table === "contact_ledger" && pauseAfterLedger) kill = true;
+        if (table === OPERATOR_TEST_TABLE && pauseAfterRecord) kill = true;
       }
-      rows = rows.filter(row => Object.entries(filters).every(([k, v]) => Array.isArray(v) ? v.includes(row[k]) : row[k] === v));
+      rows = rows.filter(row => Object.entries(filters).every(([k, v]) =>
+        Array.isArray(v) ? v.includes(row[k]) : v === null ? row[k] == null : row[k] === v));
       if (action === "update") rows.forEach(row => Object.assign(row, payload));
       return { data: single ? rows[0] ?? null : rows, error: null };
     };
@@ -35,27 +39,29 @@ let kill = false, failLedger = false, failProvider = false, pauseAfterLedger = f
 };
 setTwilioClientFactoryForTests(() => ({ messages: { create: async (options: any) => {
   calls.push(options);
-  if (earlyReceipt) messages.at(-1).delivery_status = "delivered";
+  if (earlyReceipt) tests.at(-1).delivery_status = "delivered";
   if (failProvider) throw new Error("Ambiguous provider failure");
   return { sid: "SMoffline-fixture", status: "queued" };
 } } } as any));
 beforeEach(() => {
-  messages = []; ledger = []; calls = []; kill = false; failLedger = false; failProvider = false; pauseAfterLedger = false; earlyReceipt = false;
+  tests = []; messages = []; ledger = []; calls = [];
+  kill = false; failRecord = false; failProvider = false; pauseAfterRecord = false; earlyReceipt = false;
   process.env.SMS_LIVE = "true"; process.env.SMS_TEST_OVERRIDE_TO = "+15551234567";
   process.env.PUBLIC_API_URL = "https://operator.example";
   setTwilioClockForTests(() => new Date("2026-10-07T16:00:00Z"));
 });
+const writes = () => tests.length + messages.length + ledger.length + calls.length;
 test("unset override refuses before DB writes or transport", async () => {
   delete process.env.SMS_TEST_OVERRIDE_TO;
   await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /OVERRIDE/);
-  assert.equal(messages.length + ledger.length + calls.length, 0);
+  assert.equal(writes(), 0);
 });
 test("kill switch and live-off block without creating an approval or send", async () => {
   kill = true;
   await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /kill switch/);
   kill = false; process.env.SMS_LIVE = "false";
   await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /Live sending/);
-  assert.equal(messages.length + ledger.length + calls.length, 0);
+  assert.equal(writes(), 0);
 });
 test("send window blocks operator tests", async () => {
   setTwilioClockForTests(() => new Date("2026-10-07T06:00:00Z"));
@@ -63,28 +69,27 @@ test("send window blocks operator tests", async () => {
   assert.equal(calls.length, 0);
 });
 test("kill switch is checked again immediately before provider submission", async () => {
-  pauseAfterLedger = true;
+  pauseAfterRecord = true;
   await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /kill switch/);
   assert.equal(calls.length, 0);
-  assert.equal(messages[0].status, "failed");
-  assert.equal(ledger[0].is_test, true);
+  assert.equal(tests[0].status, "failed");
 });
-test("fixed override transport persists test message, ledger, actor, SID, and refreshed receipt", async () => {
+test("fixed override transport records actor, SID and refreshed receipt only in operator_test_messages", async () => {
   const result = await sendOperatorTestMessage("club", "operator:fixture");
   assert.equal(calls.length, 1);
   assert.equal(calls[0].to, "+15551234567");
   assert.equal(calls[0].body, OPERATOR_TEST_TEXT);
   assert.equal(new URL(calls[0].statusCallback).pathname, "/api/messages/webhook/status");
   assert.equal(new URL(calls[0].statusCallback).searchParams.get("operator_test_id"), result.message_id);
-  assert.equal(messages[0].retention_delivery_kind, "test");
-  assert.equal(messages[0].player_id, null);
-  assert.equal(messages[0].approved_at, null);
-  assert.equal(messages[0].approved_by, null);
-  assert.equal(ledger[0].is_test, true);
-  assert.equal(ledger[0].player_id, null);
-  assert.match(ledger[0].outcome, /operator:fixture/);
+  assert.equal(tests.length, 1);
+  assert.equal(tests[0].club_id, "club");
+  assert.equal(tests[0].actor, "operator:fixture");
+  assert.equal(tests[0].status, "sent");
+  assert.equal(tests[0].twilio_message_sid, "SMoffline-fixture");
+  assert.equal(messages.length + ledger.length, 0, "no player message or contact ledger row");
   assert.equal(result.twilio_sid, "SMoffline-fixture");
-  messages[0].delivery_status = "delivered"; // persisted status callback result
+  assert.equal(result.delivery_status, "queued");
+  tests[0].delivery_status = "delivered"; // persisted status callback result
   assert.equal((await getOperatorTestMessages("club"))[0].delivery_status, "delivered");
 });
 test("an early delivery receipt is not overwritten by the provider's queued response", async () => {
@@ -92,16 +97,33 @@ test("an early delivery receipt is not overwritten by the provider's queued resp
   await sendOperatorTestMessage("club", "operator:fixture");
   assert.equal((await getOperatorTestMessages("club"))[0].delivery_status, "delivered");
 });
-test("ledger failure prevents transport; provider failure preserves a claimed audited failure", async () => {
-  failLedger = true;
-  await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /audit/);
+test("record failure prevents transport; provider failure keeps an audited failure", async () => {
+  failRecord = true;
+  await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /migration 030/);
   assert.equal(calls.length, 0);
-  failLedger = false; failProvider = true;
+  failRecord = false; failProvider = true;
   await assert.rejects(sendOperatorTestMessage("club", "operator:fixture"), /provider/);
   assert.equal(calls.length, 1);
-  assert.equal(messages.at(-1).status, "failed");
-  assert.ok(messages.at(-1).dispatch_token);
-  assert.equal(JSON.parse(ledger[0].outcome).result, "attempted");
+  assert.equal(tests.at(-1).status, "failed");
+  assert.match(tests.at(-1).error_message, /Ambiguous provider failure/);
+});
+test("receipts bind an unset SID once and never move to a different SID", async () => {
+  tests = [{ id: "t1", club_id: "club", status: "sent", twilio_message_sid: null, delivery_status: null }];
+  assert.deepEqual(await recordOperatorTestReceipt("t1", "SMfirst", "delivered"), { matched: true, error: null });
+  assert.equal(tests[0].twilio_message_sid, "SMfirst");
+  assert.equal(tests[0].delivery_status, "delivered");
+  assert.ok(tests[0].delivered_at);
+  assert.deepEqual(await recordOperatorTestReceipt("t1", "SMother", "failed"), { matched: false, error: null });
+  assert.equal(tests[0].twilio_message_sid, "SMfirst");
+  assert.equal(tests[0].status, "sent");
+});
+test("failed receipts mark the test failed with Twilio's error", async () => {
+  tests = [{ id: "t1", club_id: "club", status: "sent", twilio_message_sid: "SMx", delivery_status: "queued" }];
+  await recordOperatorTestReceipt("t1", "SMx", "undelivered", "30034", "Unregistered number");
+  assert.equal(tests[0].status, "failed");
+  assert.equal(tests[0].delivery_status, "undelivered");
+  assert.equal(tests[0].error_code, "30034");
+  assert.equal(tests[0].error_message, "Unregistered number");
 });
 test("production freshness blocks stale drafts and expires them at five days", () => {
   const now = new Date("2026-10-07T16:00:00Z");
