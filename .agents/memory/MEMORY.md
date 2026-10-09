@@ -34,3 +34,4 @@
 - [Test-player safeguards](test-player-safeguards.md) — exclude test accounts from current/future retention regardless of START; keep test opt-outs visible but out of metrics.
 - [Coupon call measurement](coupon-call-measurement.md) — historical upsert totals and current live signups do not establish exact past HTTP cost; use recorded run counters.
 - [Run-history boundaries](run-history-boundaries.md) — history is optional observability; its player-outcome counts include prefilters that legacy generation counters omit.
+- [GitHub source-control access](github-source-control-access.md) — an active account connection is not proof that workspace Git can authenticate to the repository.
