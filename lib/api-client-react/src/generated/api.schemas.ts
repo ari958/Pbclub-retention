@@ -5,6 +5,138 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type RunPlayerOutcomeOutcome =
+  (typeof RunPlayerOutcomeOutcome)[keyof typeof RunPlayerOutcomeOutcome];
+
+export const RunPlayerOutcomeOutcome = {
+  drafted: "drafted",
+  skipped: "skipped",
+  error: "error",
+} as const;
+
+export interface RunPlayerOutcome {
+  /** @nullable */
+  player_id: string | null;
+  player_name: string;
+  outcome: RunPlayerOutcomeOutcome;
+  reason: string;
+}
+
+/**
+ * @nullable
+ */
+export type GenerationRunStatus =
+  | (typeof GenerationRunStatus)[keyof typeof GenerationRunStatus]
+  | null;
+
+export const GenerationRunStatus = {
+  success: "success",
+  partial: "partial",
+  failed: "failed",
+} as const;
+
+export type GenerationRunDetails = {
+  outcomes: RunPlayerOutcome[];
+};
+
+export interface GenerationRun {
+  id: string;
+  club_id: string;
+  /** @nullable */
+  playbook_key: string | null;
+  trigger: string;
+  /** @nullable */
+  operator: string | null;
+  started_at: string;
+  /** @nullable */
+  finished_at: string | null;
+  /** @nullable */
+  status: GenerationRunStatus;
+  evaluated: number;
+  drafted: number;
+  skipped: number;
+  errors: number;
+  details: GenerationRunDetails;
+}
+
+/**
+ * @nullable
+ */
+export type SyncRunStepStatus =
+  | (typeof SyncRunStepStatus)[keyof typeof SyncRunStepStatus]
+  | null;
+
+export const SyncRunStepStatus = {
+  success: "success",
+  partial: "partial",
+  failed: "failed",
+  skipped: "skipped",
+} as const;
+
+export type SyncRunStepCounts = { [key: string]: number };
+
+export interface SyncRunStep {
+  name: string;
+  started_at: string;
+  /** @nullable */
+  finished_at: string | null;
+  /** @nullable */
+  status: SyncRunStepStatus;
+  counts: SyncRunStepCounts;
+  /** @nullable */
+  error: string | null;
+  generation_run_id?: string;
+}
+
+export type NightlyRunTrigger =
+  (typeof NightlyRunTrigger)[keyof typeof NightlyRunTrigger];
+
+export const NightlyRunTrigger = {
+  scheduled: "scheduled",
+  manual: "manual",
+} as const;
+
+/**
+ * @nullable
+ */
+export type NightlyRunStatus =
+  | (typeof NightlyRunStatus)[keyof typeof NightlyRunStatus]
+  | null;
+
+export const NightlyRunStatus = {
+  success: "success",
+  partial: "partial",
+  failed: "failed",
+} as const;
+
+export interface NightlyRun {
+  id: string;
+  club_id: string;
+  trigger: NightlyRunTrigger;
+  started_at: string;
+  /** @nullable */
+  finished_at: string | null;
+  /** @nullable */
+  status: NightlyRunStatus;
+  steps: SyncRunStep[];
+}
+
+export interface GenerationRunsResponse {
+  schema_ready: boolean;
+  timezone: string;
+  /** @nullable */
+  scheduled_time: string | null;
+  runs: GenerationRun[];
+}
+
+export interface NightlyRunsResponse {
+  schema_ready: boolean;
+  timezone: string;
+  /** @nullable */
+  scheduled_time: string | null;
+  runs: NightlyRun[];
+}
+
 export type PlayerSmsStatusStatus =
   (typeof PlayerSmsStatusStatus)[keyof typeof PlayerSmsStatusStatus];
 
@@ -828,6 +960,22 @@ export const RetentionApprovalStatusParameter = {
   needs_context: "needs_context",
   manual_edit: "manual_edit",
 } as const;
+
+export type GetGenerationRunsParams = {
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+  run_id?: string;
+};
+
+export type GetNightlyRunsParams = {
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+  run_id?: string;
+};
 
 export type GetPlayerSmsStatusParams = {
   /**

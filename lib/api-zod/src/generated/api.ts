@@ -7,6 +7,103 @@
  */
 import * as zod from "zod";
 
+export const GetGenerationRunsQueryParams = zod.object({
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+  run_id: zod.coerce.string().uuid().optional(),
+});
+
+export const GetGenerationRunsResponse = zod.object({
+  schema_ready: zod.boolean(),
+  timezone: zod.string(),
+  scheduled_time: zod.string().nullable(),
+  runs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      club_id: zod.string().uuid(),
+      playbook_key: zod.string().nullable(),
+      trigger: zod.string(),
+      operator: zod.string().nullable(),
+      started_at: zod.coerce.date(),
+      finished_at: zod.coerce.date().nullable(),
+      status: zod
+        .union([
+          zod.literal("success"),
+          zod.literal("partial"),
+          zod.literal("failed"),
+          zod.literal(null),
+        ])
+        .nullable(),
+      evaluated: zod.number(),
+      drafted: zod.number(),
+      skipped: zod.number(),
+      errors: zod.number(),
+      details: zod.object({
+        outcomes: zod.array(
+          zod.object({
+            player_id: zod.string().nullable(),
+            player_name: zod.string(),
+            outcome: zod.enum(["drafted", "skipped", "error"]),
+            reason: zod.string(),
+          }),
+        ),
+      }),
+    }),
+  ),
+});
+
+export const GetNightlyRunsQueryParams = zod.object({
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+  run_id: zod.coerce.string().uuid().optional(),
+});
+
+export const GetNightlyRunsResponse = zod.object({
+  schema_ready: zod.boolean(),
+  timezone: zod.string(),
+  scheduled_time: zod.string().nullable(),
+  runs: zod.array(
+    zod.object({
+      id: zod.string().uuid(),
+      club_id: zod.string().uuid(),
+      trigger: zod.enum(["scheduled", "manual"]),
+      started_at: zod.coerce.date(),
+      finished_at: zod.coerce.date().nullable(),
+      status: zod
+        .union([
+          zod.literal("success"),
+          zod.literal("partial"),
+          zod.literal("failed"),
+          zod.literal(null),
+        ])
+        .nullable(),
+      steps: zod.array(
+        zod.object({
+          name: zod.string(),
+          started_at: zod.coerce.date(),
+          finished_at: zod.coerce.date().nullable(),
+          status: zod
+            .union([
+              zod.literal("success"),
+              zod.literal("partial"),
+              zod.literal("failed"),
+              zod.literal("skipped"),
+              zod.literal(null),
+            ])
+            .nullable(),
+          counts: zod.record(zod.string(), zod.number()),
+          error: zod.string().nullable(),
+          generation_run_id: zod.string().uuid().optional(),
+        }),
+      ),
+    }),
+  ),
+});
+
 /**
  * @summary Read current SMS flags and the latest recorded opt-out event
  */

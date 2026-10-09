@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { logger } from "./logger";
+import { recordSyncStepError } from "./runHistory";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,6 +113,7 @@ async function persistTiming(playerId: string, result: PlayerTimingResult): Prom
     .eq("id", playerId);
   if (error) {
     logger.warn({ playerId, err: error.message }, "[playerTiming] failed to cache timing (migration pending?)");
+    recordSyncStepError(`Timing cache for ${playerId}: ${error.message}`);
   }
 }
 
@@ -162,6 +164,7 @@ export async function computePlayerTiming(
 
   if (error) {
     logger.warn({ playerId, err: error.message }, "[playerTiming] query failed — returning defaults");
+    recordSyncStepError(`Timing lookup for ${playerId}: ${error.message}`);
     return DEFAULTS;
   }
 

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { generateDueLtpStep2Drafts, regenerateLtpCandidateBatch } from "../retentionEngine.js";
 import { supabase } from "../supabaseClient.js";
+import { flushRunHistoryForTests } from "../runHistory";
 
 const CLUB_ID = "00000000-0000-4000-8000-000000000031";
 const PLAYER_ID = "00000000-0000-4000-8000-000000000032";
@@ -35,8 +36,15 @@ function mockSupabase(options: { dueRows?: unknown[]; candidate?: unknown }) {
   const originalRpc = (supabase as any).rpc;
   const rpcCalls: Array<{ name: string; args: any }> = [];
   const tableCalls: string[] = [];
+  const history = new Map<string, any>();
   (supabase as any).from = (table: string) => {
     tableCalls.push(table);
+    if (table === "retention_generation_runs") return {
+      upsert(row: any) { return { abortSignal: async () => {
+        history.set(row.id, structuredClone(row));
+        return { error: null };
+      } }; },
+    };
     const query: any = {
       select() { return query; },
       eq() { return query; },
@@ -44,7 +52,7 @@ function mockSupabase(options: { dueRows?: unknown[]; candidate?: unknown }) {
       maybeSingle() {
         if (table === "players") {
           return Promise.resolve({
-            data: { id: PLAYER_ID, club_id: CLUB_ID, opted_out: true },
+            data: { id: PLAYER_ID, club_id: CLUB_ID, name: "Fixture opted-out player", opted_out: true },
             error: null,
           });
         }
@@ -75,6 +83,7 @@ function mockSupabase(options: { dueRows?: unknown[]; candidate?: unknown }) {
   return {
     rpcCalls,
     tableCalls,
+    history,
     restore() {
       (supabase as any).from = originalFrom;
       (supabase as any).rpc = originalRpc;
@@ -86,6 +95,7 @@ test("due step 2 opt-out exits before building or saving a candidate", async () 
   const mocked = mockSupabase({ dueRows: [dueStep2Row] });
   try {
     const result = await generateDueLtpStep2Drafts(CLUB_ID);
+    await flushRunHistoryForTests();
     assert.deepEqual(result.failures, []);
     assert.equal(result.results.length, 1);
     assert.equal(result.results[0].status, "skipped");
@@ -95,7 +105,11 @@ test("due step 2 opt-out exits before building or saving a candidate", async () 
       && args.p_status === "exited_opt_out"
       && args.p_reason === "player_opted_out"));
     assert.ok(!mocked.rpcCalls.some(({ name }) => name === "retention_sequence_save_batch"));
-    assert.deepEqual(mocked.tableCalls, ["retention_playbooks", "players"]);
+    assert.deepEqual(mocked.tableCalls.filter(table => table !== "retention_generation_runs"), ["retention_playbooks", "players"]);
+    assert.equal(mocked.history.size, 1);
+    const run = [...mocked.history.values()][0];
+    assert.equal(run.status, "success"); assert.equal(run.skipped, 1); assert.equal(run.errors, 0);
+    assert.equal(run.details.outcomes[0].player_name, "Fixture opted-out player");
   } finally {
     mocked.restore();
   }
@@ -122,12 +136,15 @@ test("manual LTP regeneration transitions an opted-out player and returns HTTP 4
       regenerateLtpCandidateBatch(CLUB_ID, [CANDIDATE_ID]),
       (error: unknown) => (error as { status?: number }).status === 409,
     );
+    await flushRunHistoryForTests();
     assert.ok(mocked.rpcCalls.some(({ name, args }) =>
       name === "retention_sequence_transition"
       && args.p_status === "exited_opt_out"
       && args.p_reason === "player_opted_out"));
     assert.ok(!mocked.rpcCalls.some(({ name }) => name === "retention_sequence_save_batch"));
-    assert.deepEqual(mocked.tableCalls, ["retention_candidates", "retention_playbooks", "players"]);
+    assert.deepEqual(mocked.tableCalls.filter(table => table !== "retention_generation_runs"), ["retention_candidates", "retention_playbooks", "players"]);
+    assert.equal(mocked.history.size, 1);
+    assert.equal([...mocked.history.values()][0].status, "failed");
   } finally {
     mocked.restore();
   }

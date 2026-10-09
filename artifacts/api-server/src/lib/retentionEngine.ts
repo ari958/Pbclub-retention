@@ -25,6 +25,8 @@ import { RetentionPodplayBatchClient, type RetentionPodplayTelemetry } from "./r
 import { canReplacePrelaunchCandidate } from "./retentionPrelaunchReset";
 import { retentionRebuildLookbackDays } from "./retentionFreshness";
 
+import { withGenerationRun, recordPlayerOutcome, recordPlayerName, recordCandidatePlayer, recordGenerationPlaybook, plainOutcomeReason } from "./runHistory";
+
 export type RetentionSkipReason =
   | "test_player"
   | "no_phone"
@@ -289,6 +291,13 @@ function appendResult(
  * message; successfully generated texts are unscheduled and unapproved.
  */
 export async function generateRetentionDrafts(
+  clubId: string, requestedLookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
+) {
+  return withGenerationRun(clubId, "ltp_followup", "Generate", () =>
+    generateRetentionDraftsInternal(clubId, requestedLookbackDays));
+}
+
+async function generateRetentionDraftsInternal(
   clubId: string,
   requestedLookbackDays = DEFAULT_RETENTION_LOOKBACK_DAYS,
 ): Promise<RetentionGenerationResult> {
@@ -312,9 +321,10 @@ export async function generateRetentionDrafts(
     coupon_check: { code: null, valid: null, warning: null },
     drafts: [],
   };
-  const skip = (reason: RetentionSkipReason) => {
+  const skip = (reason: RetentionSkipReason, playerId?: string, name?: string | null) => {
     result.stats.skipped++;
     result.stats.skipped_by_reason[reason]++;
+    if (playerId) recordPlayerOutcome(playerId, name, "skipped", plainOutcomeReason(reason));
   };
   const recordError = (message: string) => {
     result.errors.push(message);
@@ -323,7 +333,7 @@ export async function generateRetentionDrafts(
   const [playbookResult, attendance] = await Promise.all([
     supabase.from("retention_playbooks").select("*").eq("enabled", true),
     pageAll<any>((from, to) => supabase.from("attendances")
-      .select("id,player_id,event_id,program_name,attended_at,players!inner(club_id)")
+      .select("id,player_id,event_id,program_name,attended_at,players!inner(club_id,name)")
       .eq("players.club_id", clubId).order("attended_at", { ascending: true }).order("id", { ascending: true }).range(from, to)),
   ]);
   if (playbookResult.error) throw new Error(playbookResult.error.message);
@@ -357,14 +367,20 @@ export async function generateRetentionDrafts(
       toEtDate(String(a.attended_at)).localeCompare(toEtDate(String(b.attended_at)))
       || String(a.id).localeCompare(String(b.id)));
     const earliestDate = toEtDate(String(rows[0].attended_at));
-    if (!isAttendanceDateNearRetentionWindow(earliestDate, today, lookbackDays)) continue;
+    const name = rows[0]?.players?.name ?? null;
+    recordPlayerOutcome(playerId, name, "skipped", "First attendance was not exclusively Learn to Play");
+    if (!isAttendanceDateNearRetentionWindow(earliestDate, today, lookbackDays)) {
+      recordPlayerOutcome(playerId, name, "skipped", `Outside the ${lookbackDays}-day Learn to Play window`);
+      continue;
+    }
     const onEarliest = rows.filter((row) => toEtDate(String(row.attended_at)) === earliestDate);
     const ltp = onEarliest.filter((row) => isLearnToPlayName(row.program_name ?? ""));
     if (!ltp.length || onEarliest.some((row) => !isLearnToPlayName(row.program_name ?? ""))) continue;
     result.stats.found++;
     const trigger = [...ltp].sort((a, b) =>
       String(a.event_id).localeCompare(String(b.event_id)) || String(a.id).localeCompare(String(b.id)))[0];
-    if (!trigger.event_id) { skip("invalid_trigger"); continue; }
+    if (!trigger.event_id) { skip("invalid_trigger", playerId, name); continue; }
+    recordPlayerOutcome(playerId, name, "skipped", "Not selected for drafting");
     possibleCandidates.push({
       playerId,
       trigger,
@@ -379,13 +395,13 @@ export async function generateRetentionDrafts(
   await withConcurrency(possibleCandidates, CONCURRENCY, async (candidate) => {
     try {
       const verified = await verifyRetentionTriggerEvent(clubId, candidate.trigger.event_id, clubCache, triggerCache);
-      if (!isLearnToPlayName(verified.name)) { skip("invalid_trigger"); return; }
+      if (!isLearnToPlayName(verified.name)) { skip("invalid_trigger", candidate.playerId); return; }
       if (calendarDayDistance(verified.date, candidate.attendanceDate) > 1) {
-        skip("invalid_trigger");
+        skip("invalid_trigger", candidate.playerId);
         return;
       }
       result.stats.verified++;
-      if (!isRetentionTriggerDate(verified.date, today, lookbackDays)) { skip("out_of_window"); return; }
+      if (!isRetentionTriggerDate(verified.date, today, lookbackDays)) { skip("out_of_window", candidate.playerId); return; }
       result.stats.new_ltp_players++;
       candidates.push({
         playerId: candidate.playerId,
@@ -424,7 +440,7 @@ export async function generateRetentionDrafts(
       hasResetReplacement = true;
       return true;
     }
-    skip("duplicate");
+    skip("duplicate", candidate.playerId);
     return false;
   });
   if (!freshCandidates.length) return result;
@@ -441,17 +457,18 @@ export async function generateRetentionDrafts(
     .select("id,name,external_id,phone,opted_out,sms_opt_in,consent_source,sms_consented_at,club_id,notes")
     .eq("club_id", clubId).in("id", playerIds).range(from, to));
   const playerMap = new Map(players.map((player) => [player.id, player]));
+  for (const player of players) recordPlayerName(player.id, player.name);
 
   const returned = freshCandidates.filter((candidate) => candidate.alreadyReturned);
   if (playbook.key === "ltp_followup") {
     const eligible: typeof freshCandidates = [];
     for (const candidate of freshCandidates.filter((item) => !item.alreadyReturned)) {
       const player = playerMap.get(candidate.playerId);
-      if (!player) { skip("missing_player"); continue; }
+      if (!player) { skip("missing_player", candidate.playerId); continue; }
       const eligibilityReason = getTextEligibilitySkipReason(player);
-      if (eligibilityReason) { skip(eligibilityReason); continue; }
+      if (eligibilityReason) { skip(eligibilityReason, candidate.playerId, player.name); continue; }
       if (stableBucket(`${candidate.playerId}:${playbook.key}`) < Number(playbook.holdout_pct ?? 0) * 100) {
-        skip("holdout");
+        skip("holdout", candidate.playerId, player.name);
         continue;
       }
       eligible.push(candidate);
@@ -459,12 +476,12 @@ export async function generateRetentionDrafts(
     const safeReturned: typeof returned = [];
     for (const candidate of returned) {
       const player = playerMap.get(candidate.playerId);
-      if (player && isTestPlayer(player)) { skip("test_player"); continue; }
+      if (player && isTestPlayer(player)) { skip("test_player", candidate.playerId, player.name); continue; }
       if (player?.opted_out === true) {
-        skip("opted_out");
+        skip("opted_out", candidate.playerId, player?.name);
         continue;
       }
-      skip("already_returned");
+      skip("already_returned", candidate.playerId, player?.name);
       safeReturned.push(candidate);
     }
     const ltpBatch = await createInitialLtpCandidateBatch(
@@ -655,13 +672,17 @@ async function loadClassmatesExternalIds(clubId: string, eventId: string, player
     .map((row: any) => row.players.external_id as string))];
 }
 
-export async function regenerateRetentionCandidate(
+export async function regenerateRetentionCandidate(clubId: string, candidateId: string) {
+  return withGenerationRun(clubId, "ltp_followup", "Regenerate", () => regenerateRetentionCandidateInternal(clubId, candidateId));
+}
+async function regenerateRetentionCandidateInternal(
   clubId: string,
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
   const { data: row, error } = await supabase.from("retention_candidates")
     .select("id,playbook_key,status,context,updated_at").eq("id", candidateId).eq("club_id", clubId).maybeSingle();
   if (error) throw new Error(error.message);
+  if (row?.playbook_key) recordGenerationPlaybook(row.playbook_key);
   if (row?.playbook_key === "ltp_followup") {
     const recoveringReset = row.status === "needs_context"
       && (row.context?.reason === "test_reset_requires_rebuild"
@@ -844,13 +865,15 @@ async function readLtpCandidatesForBatch(
   }
   const candidateMap = new Map((data ?? []).map((row: any) => [String(row.id), row as LtpCandidateBatchInput]));
   const candidates = candidateIds.map((id) => candidateMap.get(id)!);
+  for (const candidate of candidates) recordCandidatePlayer(candidate.id, candidate.player_id);
   const playerRows = await Promise.all(candidates.map((candidate) => supabase.from("players")
-    .select("id,opted_out").eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle()));
+    .select("id,name,opted_out").eq("id", candidate.player_id).eq("club_id", clubId).maybeSingle()));
   const optedOutCandidateIds: string[] = [];
   for (let index = 0; index < candidates.length; index++) {
     const { data: player, error: playerError } = playerRows[index];
     if (playerError) throw new Error(playerError.message);
     if (!player) throw Object.assign(new Error(`Candidate ${candidates[index].id} player was not found`), { status: 409 });
+    recordCandidatePlayer(candidates[index].id, candidates[index].player_id, player.name);
     if (player.opted_out === true) {
       await transitionLtpSequence(
         clubId, candidates[index].player_id, "ltp_followup", "exited_opt_out", "player_opted_out",
@@ -920,6 +943,7 @@ async function buildLtpBatchWriteItems(
   const transitions: { player_id: string; booked_event_id: string | null }[] = [];
   const failures: { candidate_id: string; error: string; http_status: number }[] = [];
   for (const candidate of sorted) {
+    recordCandidatePlayer(candidate.id, candidate.player_id);
     const previousContext = candidate.context ?? {} as RetentionContext;
     const step = candidate.step ?? previousContext.ltp_text?.step ?? 1;
     const lookbackDays = operation === "create"
@@ -943,6 +967,7 @@ async function buildLtpBatchWriteItems(
     if (playerError) throw new Error(playerError.message);
     if (messageError) throw new Error(messageError.message);
     if (!player) throw Object.assign(new Error(`Candidate ${candidate.id} player was not found`), { status: 409 });
+    recordCandidatePlayer(candidate.id, candidate.player_id, player.name);
     if (player.opted_out === true) {
       if (candidate.sequence_id) {
         await transitionLtpSequence(
@@ -1387,7 +1412,10 @@ async function createInitialLtpCandidateBatch(
 }
 
 /** Rebuilds a whole sequence batch atomically; it never approves, schedules, or sends. */
-export async function regenerateLtpCandidateBatch(
+export async function regenerateLtpCandidateBatch(clubId: string, candidateIds: string[]) {
+  return withGenerationRun(clubId, "ltp_followup", "Rebuild LTP", () => regenerateLtpCandidateBatchInternal(clubId, candidateIds));
+}
+async function regenerateLtpCandidateBatchInternal(
   clubId: string,
   candidateIds: string[],
 ): Promise<LtpSequenceBatchResult> {
@@ -1395,7 +1423,10 @@ export async function regenerateLtpCandidateBatch(
 }
 
 /** Drafted-only deterministic phrase reshuffle, protected by the migration CAS write. */
-export async function reshuffleLtpCandidate(
+export async function reshuffleLtpCandidate(clubId: string, candidateId: string) {
+  return withGenerationRun(clubId, "ltp_followup", "Reshuffle", () => reshuffleLtpCandidateInternal(clubId, candidateId));
+}
+async function reshuffleLtpCandidateInternal(
   clubId: string,
   candidateId: string,
 ): Promise<RetentionRegenerationResult> {
@@ -1407,7 +1438,10 @@ export async function reshuffleLtpCandidate(
 }
 
 /** Creates unscheduled step-2 drafts only from migration-gated real step-1 delivery cohorts. */
-export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds?: string[]): Promise<LtpSequenceBatchResult> {
+export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds?: string[]) {
+  return withGenerationRun(clubId, "ltp_followup", "Test step-2 drafts", () => generateDueLtpStep2DraftsInternal(clubId, testCandidateIds));
+}
+async function generateDueLtpStep2DraftsInternal(clubId: string, testCandidateIds?: string[]): Promise<LtpSequenceBatchResult> {
   const testMode = testCandidateIds !== undefined;
   if (testMode) {
     requireLtpTestOverride();
@@ -1490,7 +1524,10 @@ export async function generateDueLtpStep2Drafts(clubId: string, testCandidateIds
 }
 
 /** Eligibility and schema are checked before any PodPlay or model request. */
-export async function retryRetentionContextBatch(
+export async function retryRetentionContextBatch(clubId: string, candidateIds: string[]) {
+  return withGenerationRun(clubId, "ltp_followup", "Retry context", () => retryRetentionContextBatchInternal(clubId, candidateIds));
+}
+async function retryRetentionContextBatchInternal(
   clubId: string,
   candidateIds: string[],
 ): Promise<RetentionContextRetryBatchResult> {
@@ -1512,6 +1549,8 @@ export async function retryRetentionContextBatch(
     if (candidates?.length !== candidateIds.length || candidates.some((candidate: any) => !canRetryRetentionContext(candidate))) {
       throw Object.assign(new Error("Every requested candidate must still need context with reason context_lookup_failed or no_next_program"), { status: 409 });
     }
+    const keys = new Set(candidates.map((candidate: any) => candidate.playbook_key as string));
+    recordGenerationPlaybook(keys.size === 1 ? [...keys][0] : null);
     if (candidates.every((candidate: any) => candidate.playbook_key === "ltp_followup")) {
       return runLtpCandidateBatch(clubId, candidateIds, { retryContext: true });
     }
@@ -1550,6 +1589,7 @@ async function rebuildRetentionCandidate(
   if (candidateError) throw new Error(candidateError.message);
   if (!candidateRow) throw Object.assign(new Error("Retention candidate not found"), { status: 404 });
   const candidate = candidateRow as RetentionCandidate;
+  recordCandidatePlayer(candidate.id, candidate.player_id);
   if (operation === "retry_context" && !canRetryRetentionContext(candidate)) {
     throw Object.assign(new Error("Only eligible needs_context candidates can retry context"), { status: 409 });
   }
@@ -1567,6 +1607,7 @@ async function rebuildRetentionCandidate(
   if (playbookError) throw new Error(playbookError.message);
   if (messageError) throw new Error(messageError.message);
   if (!player || !playbook) throw Object.assign(new Error("Candidate player or playbook was not found"), { status: 409 });
+  recordPlayerName(candidate.player_id, player.name);
   if (playbook.enabled !== true) throw Object.assign(new Error("Candidate playbook is not enabled"), { status: 409 });
   if ((operation === "regenerate" && !candidate.message_id) || (candidate.message_id && !message)) {
     throw Object.assign(new Error("Draft message is missing and cannot be regenerated safely"), { status: 409 });

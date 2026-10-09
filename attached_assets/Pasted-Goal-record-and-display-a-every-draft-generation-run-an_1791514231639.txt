@@ -1,0 +1,23 @@
+Goal: record and display (a) every draft generation run and (b) every nightly sync run. No sends, approvals, sending-setting or playbook changes. Schema changes go in migration 029; write it and stop before applying.
+
+1. Read back first.
+
+List every button and job that generates or rebuilds drafts (for example: Generate, Regenerate, Reshuffle, and the nightly scheduler). For each, report the route, file and line, and what result it currently returns to the screen.
+Describe the nightly sync chain: its scheduled time and timezone, each step in order, and what’s currently recorded per run in jobs / job_logs (status, timestamps, last_run_day, counts, errors). Report whether a per-run history exists or only the latest state.
+
+2. Generation run log. Migration 029 creates retention_generation_runs: id, club_id, playbook_key, trigger (button:<name> or nightly), operator (for button clicks), started_at, finished_at, status (success | partial | failed), and counts for evaluated, drafted, skipped, and errors. Add a details jsonb holding per-player outcomes: player name, outcome (drafted / skipped / error), and the reason in plain words (e.g. “booked since Learn to Play,” “outside 3-day window,” “test player,” “no open spots in suggested session,” “promo code invalid,” “already drafted”).
+
+3. Nightly sync run log. If step 1 shows no per-run history, migration 029 also creates nightly_sync_runs: id, club_id, started_at, finished_at, status, trigger (scheduled | manual), and a steps jsonb with, per step: name, started_at, finished_at, status, key counts (e.g. events synced, attendances upserted, coupon/order calls, drafts created), and the error message if any. Link to the generation run when the chain drafts.
+
+Both tables use the standard RLS pattern and grants. Every path writes exactly one row per run, including runs that fail partway. Logging failures must never block or change the sync or generation.
+
+4. Display.
+
+Dashboard, top of page: a sync status line, e.g. “Nightly sync: today 2:05 AM, succeeded in 18m.” Green for success, amber for partial, red for failed, gray for “hasn’t run yet today.” Clicking it opens the history.
+Sync history: last 14 runs, each expandable to its per-step status, durations, counts, and errors.
+Approvals page: a Recent generation runs panel, newest first, showing time, trigger, playbook, status, and counts, with each run expandable to the per-player outcomes and reasons.
+The on-screen result after clicking a generation button stays visible until dismissed, with a “View details” link to that run.
+
+5. Missed-run alert. If no nightly sync has completed within 2 hours after its scheduled time, send one operator alert via alertOperator, using the date as the incident claim so it fires once per day. A failed run also sends one alert, naming the failed step.
+
+6. Verify. Run tsc --noEmit and the focused tests, including: a generation run where every candidate is skipped, a sync that fails mid-chain, and the missed-run alert firing exactly once. Report a STATUS line per step.

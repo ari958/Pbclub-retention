@@ -69,10 +69,12 @@ export interface ApprovalsResponse {
   counts?: { all: number; drafted: number; approved: number; skipped: number; sent: number; needs_context?: number; manual_edit?: number };
 }
 export interface GenerateResult {
+  run_id?: string | null;
   created?: number; skipped?: number; needs_context?: number; manual_edit?: number; errors?: string[]; lookback_days?: number;
   stats?: { found?: number; new_ltp_players?: number; created?: number; drafted?: number; skipped?: number; needs_context?: number; manual_edit?: number; errors?: string[]; skipped_by_reason?: Record<string, number> };
 }
 export interface RegenerateResult {
+  run_id?: string | null;
   candidate_id: string;
   status: "drafted" | "needs_context" | "manual_edit" | "skipped";
   reason: string | null;
@@ -90,12 +92,16 @@ export interface PodplayRetryTelemetry {
   retries: Array<{ path: string; attempt: number; retry_number: number; wait_ms: number; status: number }>;
 }
 export interface RetryContextEnvelope {
+  run_id?: string | null;
+  run_ids?: string[];
   schema_ready: boolean;
   results: RegenerateResult[];
   failures?: Array<{ candidate_id: string; error: string; http_status: number }>;
   podplay: PodplayRetryTelemetry;
 }
 export interface LtpRegenerateBatchEnvelope {
+  run_id?: string | null;
+  run_ids?: string[];
   schema_ready: boolean;
   results: RegenerateResult[];
   failures?: Array<{ candidate_id: string; error: string; http_status: number }>;
@@ -107,7 +113,7 @@ export const DEFAULT_LOOKBACK_DAYS = 3 as const;
 export const LOOKBACK_DAY_OPTIONS = [3, 7, 14, 30] as const;
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number) { super(message); }
+  constructor(message: string, public status: number, public runId: string | null = null) { super(message); }
 }
 
 async function call<T>(slug: string, path: string, method = "GET", body?: unknown): Promise<T> {
@@ -118,13 +124,16 @@ async function call<T>(slug: string, path: string, method = "GET", body?: unknow
     credentials: "include",
   });
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new ApiError((data as { error?: string }).error ?? `HTTP ${res.status}`, res.status);
+  if (!res.ok) {
+    const d = data as { error?: string; run_id?: unknown };
+    throw new ApiError(d.error ?? `HTTP ${res.status}`, res.status, typeof d.run_id === "string" ? d.run_id : null);
+  }
   return data as T;
 }
 
 export const retentionApi = {
   ltpTestAction: (s: string, id: string, action: "backdate" | "simulate_booking" | "dispatch_check" | "reset_simulated", actor: string) =>
-    call<Record<string, unknown>>(s, `/api/retention/test-tools/candidates/${id}`, "POST", { action, actor }),
+    call<Record<string, unknown> & { run_id?: string | null }>(s, `/api/retention/test-tools/candidates/${id}`, "POST", { action, actor }),
   draftTestStep2: (s: string, candidate_ids: string[]) =>
     call<LtpRegenerateBatchEnvelope>(s, "/api/retention/test-tools/draft-step2", "POST", { candidate_ids }),
   list: (s: string, status: ApprovalListStatus) => call<ApprovalsResponse>(s, approvalListPath(status)),
@@ -148,3 +157,5 @@ export const retentionApi = {
   bulk: (s: string, key: string, approved_by: string, candidate_ids: string[], expected_bodies: Record<string, string>) =>
     call<BulkResult>(s, `/api/retention/playbooks/${encodeURIComponent(key)}/approve`, "POST", { approved_by, candidate_ids, expected_bodies }),
 };
+
+export { ApiError as RetentionApiError };

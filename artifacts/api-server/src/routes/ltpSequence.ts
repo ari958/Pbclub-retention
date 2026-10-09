@@ -40,7 +40,7 @@ router.post("/retention/regenerate-batch", requireClub, async (req, res) => {
     ));
   } catch (error: any) {
     const status = operationErrorStatus(error);
-    return res.status(status).json({ schema_ready: status !== 503, error: error.message });
+    return res.status(status).json({ schema_ready: status !== 503, error: error.message, run_id: error.run_id ?? null });
   }
 });
 
@@ -53,7 +53,7 @@ router.post("/retention/candidates/:id/reshuffle", requireClub, async (req, res)
     return res.json(await reshuffleLtpCandidate((req as ClubScopedRequest).clubId, req.params.id as string));
   } catch (error: any) {
     const status = operationErrorStatus(error);
-    return res.status(status).json({ schema_ready: status !== 503, error: error.message });
+    return res.status(status).json({ schema_ready: status !== 503, error: error.message, run_id: error.run_id ?? null });
   }
 });
 

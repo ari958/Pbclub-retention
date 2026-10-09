@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { GenerationRunsPanel } from "@/components/GenerationRunsPanel";
+import { RunResultBanner, type RunResult } from "@/components/RunResultBanner";
 import { Sidebar } from "@/components/Sidebar";
 import { ApprovalCard, btn } from "@/components/ApprovalCard";
 import { LtpSequenceConfigEditor } from "@/components/LtpSequenceConfigEditor";
@@ -8,7 +11,7 @@ import { useClub } from "@/lib/ClubContext";
 import { snapshotBulk } from "@/lib/approvalGuards";
 import { requestApprovalList } from "@/lib/approvalListRequest";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
-import { combineRetryContextEnvelopes } from "@/lib/retryContextEnvelope";
+import { combineRetryContextEnvelopes, envelopeRunIds } from "@/lib/retryContextEnvelope";
 import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type LtpSequenceConfig, type RetryContextEnvelope } from "@/lib/retentionApi";
 import { canApproveLtpCandidate, canReshuffleLtpCandidate, isLtpCandidate } from "@/lib/ltpPhraseSlots";
 
@@ -51,6 +54,11 @@ export default function Approvals() {
   const [ltpBatchBusy, setLtpBatchBusy] = useState(false);
   const [ltpReshufflingId, setLtpReshufflingId] = useState<string | null>(null);
   const [ltpConfigBusyKey, setLtpConfigBusyKey] = useState<string | null>(null);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
+  const [searchParams] = useSearchParams();
+  const focusRunId = searchParams.get("generation_run");
+  const errRun = (e: unknown) => (e instanceof ApiError && e.runId ? [e.runId] : []);
+  useEffect(() => { setRunResult(null); setRetryContextReport(null); }, [slug]);
   const setEditing = useCallback((id: string, on: boolean) => {
     setEditingIds((s) => { if (s.has(id) === on) return s; const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
   }, []);
@@ -119,8 +127,9 @@ export default function Approvals() {
       const duplicates = r.stats?.skipped_by_reason?.duplicate ?? 0;
       const msg = `${found === undefined ? "" : `Recent LTP players matched: ${found}. `}Drafts created: ${r.created ?? r.stats?.drafted ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}.${duplicates ? ` Duplicate blocks: ${duplicates}.` : ""}${errs ? ` ${st.errors?.[0] ?? ""}` : ""} Nothing was sent.`;
       if (errs) toast.info(msg); else toast.success(msg);
+      setRunResult({ tone: errs ? "info" : "success", message: msg, runIds: r.run_id ? [r.run_id] : [] });
       await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Generate failed"); }
+    } catch (e) { const m = e instanceof Error ? e.message : "Generate failed"; toast.error(m); setRunResult({ tone: "error", message: `Generate failed: ${m}`, runIds: errRun(e) }); }
     finally { setGenerating(false); }
   };
 
@@ -139,13 +148,17 @@ export default function Approvals() {
           try { return JSON.stringify(error); } catch { return String(error); }
         }),
       ].filter((value): value is string => Boolean(value));
+      const rids = result.run_id ? [result.run_id] : [];
       if (result.status === "drafted") {
-        toast.success("Draft regenerated. Review the updated text and context before approving.");
+        const m = "Draft regenerated. Review the updated text and context before approving.";
+        toast.success(m); setRunResult({ tone: "success", message: m, runIds: rids });
       } else {
-        toast.info(`Regeneration finished with status ${result.status.replace("_", " ")}${detail.length ? `: ${detail.join("; ")}` : "."}`);
+        const m = `Regeneration finished with status ${result.status.replace("_", " ")}${detail.length ? `: ${detail.join("; ")}` : "."}`;
+        toast.info(m); setRunResult({ tone: "info", message: m, runIds: rids });
       }
     } catch (e) {
-      toast.error(e instanceof Error ? `Could not regenerate this draft: ${e.message}` : "Could not regenerate this draft");
+      const m = e instanceof Error ? `Could not regenerate this draft: ${e.message}` : "Could not regenerate this draft";
+      toast.error(m); setRunResult({ tone: "error", message: m, runIds: errRun(e) });
     } finally {
       try { await load(); } finally { setRegeneratingId(null); }
     }
@@ -162,26 +175,35 @@ export default function Approvals() {
     setRetryContextReport(null);
     setRetryContextBusy(true);
     setBusy((current) => new Set([...current, ...retryableIds]));
+    const completedReports: RetryContextEnvelope[] = [];
     try {
       let report: RetryContextEnvelope;
       if (single) {
         report = await retentionApi.retryContext(slug, retryableIds[0]);
       } else {
-        const reports: RetryContextEnvelope[] = [];
         for (let offset = 0; offset < retryableIds.length; offset += 50) {
           const chunk = retryableIds.slice(offset, offset + 50);
-          reports.push(await retentionApi.retryContextBatch(slug, chunk));
+          completedReports.push(await retentionApi.retryContextBatch(slug, chunk));
         }
-        report = combineRetryContextEnvelopes(reports);
+        report = combineRetryContextEnvelopes(completedReports);
       }
       setRetryContextReport(report);
       const statusCounts = report.results.reduce<Record<string, number>>((counts, result) => {
         counts[result.status] = (counts[result.status] ?? 0) + 1;
         return counts;
       }, {});
-      toast.info(`Context retry finished: ${Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no results"}. See results and PodPlay telemetry below.`);
+      const rm = `Context retry finished: ${Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no results"}. See results and PodPlay telemetry below.`;
+      toast.info(rm);
+      setRunResult({ tone: "info", message: rm, runIds: envelopeRunIds(report) });
     } catch (e) {
-      toast.error(e instanceof Error ? `Could not retry context: ${e.message}` : "Could not retry context");
+      const m = e instanceof Error ? `Could not retry context: ${e.message}` : "Could not retry context";
+      const partialReport = completedReports.length ? combineRetryContextEnvelopes(completedReports) : null;
+      if (partialReport) setRetryContextReport(partialReport);
+      toast.error(m); setRunResult({
+        tone: "error",
+        message: `${m}${partialReport ? ` ${partialReport.results.length} earlier candidate results are retained below.` : ""}`,
+        runIds: [...new Set([...(partialReport ? envelopeRunIds(partialReport) : []), ...errRun(e)])],
+      });
     } finally {
       try { await load(); }
       finally {
@@ -205,11 +227,13 @@ export default function Approvals() {
       const failures = result.failures?.length ?? 0;
       const statuses = Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no candidates rebuilt";
       const message = `LTP cohort rebuild: ${statuses}${failures ? `, ${failures} failures` : ""}. Drafts only; no approvals or sends.`;
-      if (failures || result.results.some((candidate) => candidate.status !== "drafted")) toast.info(message);
-      else toast.success(message);
+      const partial = failures > 0 || result.results.some((candidate) => candidate.status !== "drafted");
+      if (partial) toast.info(message); else toast.success(message);
+      setRunResult({ tone: partial ? "info" : "success", message, runIds: envelopeRunIds(result) });
       await load();
     } catch (e) {
-      toast.error(e instanceof Error ? `Could not rebuild the drafted LTP cohort: ${e.message}` : "Could not rebuild the drafted LTP cohort");
+      const m = e instanceof Error ? `Could not rebuild the drafted LTP cohort: ${e.message}` : "Could not rebuild the drafted LTP cohort";
+      toast.error(m); setRunResult({ tone: "error", message: m, runIds: errRun(e) });
       await load();
     } finally {
       setLtpBatchBusy(false);
@@ -222,10 +246,12 @@ export default function Approvals() {
     setLtpReshufflingId(candidate.id);
     try {
       const result = await retentionApi.reshuffleLtp(slug, candidate.id);
-      if (result.status === "drafted") toast.success("LTP phrase slots reshuffled. Review the new draft; it remains unapproved and unsent.");
-      else toast.info(`Reshuffle returned ${result.status.replace("_", " ")}${result.reason ? `: ${result.reason}` : ""}. Review the updated candidate.`);
+      const rids = result.run_id ? [result.run_id] : [];
+      if (result.status === "drafted") { const m = "LTP phrase slots reshuffled. Review the new draft; it remains unapproved and unsent."; toast.success(m); setRunResult({ tone: "success", message: m, runIds: rids }); }
+      else { const m = `Reshuffle returned ${result.status.replace("_", " ")}${result.reason ? `: ${result.reason}` : ""}. Review the updated candidate.`; toast.info(m); setRunResult({ tone: "info", message: m, runIds: rids }); }
     } catch (e) {
-      toast.error(e instanceof Error ? `Could not reshuffle this LTP draft: ${e.message}` : "Could not reshuffle this LTP draft");
+      const m = e instanceof Error ? `Could not reshuffle this LTP draft: ${e.message}` : "Could not reshuffle this LTP draft";
+      toast.error(m); setRunResult({ tone: "error", message: m, runIds: errRun(e) });
     } finally {
       try { await load(); }
       finally { setLtpReshufflingId(null); }
@@ -471,6 +497,9 @@ export default function Approvals() {
             ))}
           </div>
 
+          {runResult && <RunResultBanner result={runResult} onDismiss={() => setRunResult(null)} />}
+          <GenerationRunsPanel key={slug} slug={slug} focusId={focusRunId} />
+
           {retryContextReport && (
             <section data-testid="panel-retry-context-report" aria-live="polite" style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: 8, padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
               <div style={{ fontWeight: 600, color: D.text, fontSize: 13 }}>Context retry results</div>
@@ -591,7 +620,7 @@ export default function Approvals() {
                   {list.map((c) => (
                     <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
                       liveSending={data?.mode.sms_live === true}
-                      testTools={data?.mode.test_override_configured ? <LtpTestTools candidate={c} slug={slug} actor={operator} onChanged={load} /> : undefined}
+                      testTools={data?.mode.test_override_configured ? <LtpTestTools candidate={c} slug={slug} actor={operator} onChanged={load} onRunResult={setRunResult} /> : undefined}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
                       onSave={(b) => withBusy(c.id, () => retentionApi.edit(slug, c.id, b), c.status === "approved" ? "Saved. Approval reset; approve again to schedule." : c.status === "manual_edit" ? "Edit saved. Review the refreshed status before approving." : "Draft saved")}
                       onApprove={() => { if (!editingIds.has(c.id) && c.message && needOperator()) withBusy(c.id, () => retentionApi.approve(slug, c.id, operator.trim(), c.message?.body ?? ""), "Approved and scheduled"); }}

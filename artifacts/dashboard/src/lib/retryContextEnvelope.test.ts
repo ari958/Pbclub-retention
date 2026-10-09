@@ -51,3 +51,8 @@ test("retry-context envelope aggregation reports schema readiness false if any b
     response(false, "manual_edit", 1),
   ]).schema_ready, false);
 });
+test("batch aggregation preserves every generation run link once", () => {
+  const first = { ...response(true, "drafted", 1), run_id: "run-a" };
+  const second = { ...response(true, "needs_context", 1), run_id: "run-b", run_ids: ["run-a", "run-b"] };
+  assert.deepEqual(combineRetryContextEnvelopes([first, second]).run_ids, ["run-a", "run-b"]);
+});

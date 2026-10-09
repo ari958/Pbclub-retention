@@ -21,8 +21,12 @@ import experimentsRouter from "./experiments";
 import retentionRouter from "./retention";
 import retentionReportsRouter from "./retentionReports";
 import operatorTestRouter from "./operatorTest";
+import runHistoryRouter from "./runHistory";
+import { runHistoryRequestContext } from "../lib/runHistory";
 
 const router: IRouter = Router();
+router.use(runHistoryRequestContext);
+router.use(runHistoryRouter);
 
 router.use(healthRouter);
 router.use(playersRouter);

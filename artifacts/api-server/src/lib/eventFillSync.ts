@@ -35,6 +35,7 @@ import {
   isPeakSeason,
 } from "./classifyEvent";
 import { logger } from "./logger";
+import { recordSyncStepError } from "./runHistory";
 import { INACTIVE_SIGNUP_STATUSES } from "./signupStatus";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -337,12 +338,14 @@ export async function syncEventFill(
       if (upsertErr) {
         stats.errors++;
         logger.error({ eventId, upsertErr }, "[eventFillSync] upsert failed");
+        recordSyncStepError(`Event ${eventId} fill save: ${upsertErr.message}`);
       } else {
         stats.fetched++;
       }
     } catch (err: any) {
       stats.errors++;
       logger.error({ eventId, err: err.message }, "[eventFillSync] fetch error");
+      recordSyncStepError(`Event ${eventId} fill lookup: ${err.message}`);
     }
 
     await sleep(sleepMs);

@@ -5,6 +5,7 @@ import { backgroundJobsEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
 import { getDefaultClubSlug, resolveClubSlug } from "./clubResolver";
 import { workerIdentity } from "./workerIdentity";
+import { checkNightlyRunAlerts } from "./nightlyRunAlerts";
 
 const startedAt = Date.now();
 let alertTransportForTests: ((to: string, from: string, body: string) => Promise<void>) | null = null;
@@ -19,7 +20,7 @@ export async function recordRuntime(name: string, result: string) {
 
 /** Operator-only infrastructure alert; never routes through a player approval or test override. */
 export async function alertOperator(key: string, text: string) {
-  const source = key.startsWith("nightly:") || key.startsWith("nightly-start:") ? "nightly-chain"
+  const source = key.startsWith("nightly:") || key.startsWith("nightly-start:") || key.startsWith("nightly-run-failed:") ? "nightly-chain"
     : key.startsWith("queue-failure:") ? "sms-queue"
     : key.startsWith("send-failed:") || key.startsWith("dispatch-failed:") ? "sms-dispatch" : "watchdog";
   return observeOperatorCondition(key, true, text, source);
@@ -135,8 +136,8 @@ export function operatorAlertReasons(health: Awaited<ReturnType<typeof runtimeHe
       const elapsedMinutes = (nowMinutes - hour * 60 - minute + 1440) % 1440;
       const scheduledAt = Math.floor(now / 60_000) * 60_000 - elapsedMinutes * 60_000;
       const lastAt = health.schedule.last_started_at ?? health.last_nightly_sync.at;
-      if (elapsedMinutes >= 60 && (!lastAt || Date.parse(lastAt) < scheduledAt)) {
-         reasons.push({ key: "nightly_missing", text: "Nightly sync has not run within one hour of its scheduled time." });
+      if (elapsedMinutes >= 120 && (!lastAt || Date.parse(lastAt) < scheduledAt)) {
+         reasons.push({ key: "nightly_missing", text: "Nightly sync has not completed within two hours of its scheduled time." });
       }
     } else if (now - workerStartedAt >= 60 * 60 * 1000) {
       reasons.push({ key: "nightly_schedule_missing", text: "Nightly sync has no configured schedule. Check club settings." });
@@ -149,7 +150,14 @@ export async function runOperatorWatchdog() {
   await withBackgroundLock("operator-watchdog", async () => {
     const health = await runtimeHealth();
     const reasons = operatorAlertReasons(health);
-    for (const reason of reasons) await alertOperator(reason.key, reason.text);
+    // Structured run history owns nightly failures/completion deadlines.
+    // Do not submit a second generic alert for the same failed run.
+    for (const reason of reasons.filter(item => !["nightly_failure", "nightly_missing"].includes(item.key))) {
+      await alertOperator(reason.key, reason.text);
+    }
+    const clubId = await resolveClubSlug(getDefaultClubSlug());
+    await checkNightlyRunAlerts(clubId, health.schedule?.time ?? null,
+      health.schedule?.timezone ?? "America/New_York", alertOperator);
     if (health.status === "ok") {
       const active = new Set(reasons.map(reason => reason.key));
       for (const key of ["queue_stale", "nightly_failure", "nightly_missing", "nightly_schedule_missing"]) {

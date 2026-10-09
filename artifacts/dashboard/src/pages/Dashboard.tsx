@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/components/Toast";
+import { NightlyRunsPanel } from "@/components/NightlyRunsPanel";
 import { Sidebar } from "@/components/Sidebar";
 import { PlayerDrawer } from "@/components/PlayerDrawer";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
@@ -855,6 +856,7 @@ export default function Dashboard() {
             <span style={{ fontWeight: 600, fontSize: 14, color: "#fff" }}>Dashboard</span>
           </header>
           <main style={{ flex: 1, overflowY: "auto", padding: "24px", background: C.surface }}>
+            <NightlyRunsPanel slug={club.slug} />
             {retentionStatsError && (
               <div role="alert" style={{ marginBottom: 14, padding: "10px 14px", border: `1px solid ${C.red}`, borderRadius: 6, color: C.redText, fontSize: 12 }}>
                 Dashboard statistics could not be loaded: {retentionStatsError}

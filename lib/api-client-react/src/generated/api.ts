@@ -24,6 +24,9 @@ import type {
   DraftLtpTestStep2Params,
   EditRetentionDraftParams,
   GenerateRetentionDraftsParams,
+  GenerationRunsResponse,
+  GetGenerationRunsParams,
+  GetNightlyRunsParams,
   GetPlayerSmsStatusParams,
   GetRetentionReportsParams,
   HealthStatus,
@@ -31,6 +34,7 @@ import type {
   LtpTestAction200,
   LtpTestActionBody,
   LtpTestActionParams,
+  NightlyRunsResponse,
   OperatorLoginBody,
   OperatorSession200,
   OperatorTestResult,
@@ -80,6 +84,186 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+export const getGetGenerationRunsUrl = (params?: GetGenerationRunsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/retention/generation-runs?${stringifiedParams}`
+    : `/api/retention/generation-runs`;
+};
+
+export const getGenerationRuns = async (
+  params?: GetGenerationRunsParams,
+  options?: RequestInit,
+): Promise<GenerationRunsResponse> => {
+  return customFetch<GenerationRunsResponse>(getGetGenerationRunsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetGenerationRunsQueryKey = (
+  params?: GetGenerationRunsParams,
+) => {
+  return [
+    `/api/retention/generation-runs`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetGenerationRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getGenerationRuns>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetGenerationRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getGenerationRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetGenerationRunsQueryKey(params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getGenerationRuns>>
+  > = ({ signal }) => getGenerationRuns(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getGenerationRuns>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetGenerationRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getGenerationRuns>>
+>;
+export type GetGenerationRunsQueryError = ErrorType<void>;
+
+export function useGetGenerationRuns<
+  TData = Awaited<ReturnType<typeof getGenerationRuns>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetGenerationRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getGenerationRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetGenerationRunsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
+
+export const getGetNightlyRunsUrl = (params?: GetNightlyRunsParams) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/sync/nightly/runs?${stringifiedParams}`
+    : `/api/sync/nightly/runs`;
+};
+
+export const getNightlyRuns = async (
+  params?: GetNightlyRunsParams,
+  options?: RequestInit,
+): Promise<NightlyRunsResponse> => {
+  return customFetch<NightlyRunsResponse>(getGetNightlyRunsUrl(params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetNightlyRunsQueryKey = (params?: GetNightlyRunsParams) => {
+  return [`/api/sync/nightly/runs`, ...(params ? [params] : [])] as const;
+};
+
+export const getGetNightlyRunsQueryOptions = <
+  TData = Awaited<ReturnType<typeof getNightlyRuns>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetNightlyRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getNightlyRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey = queryOptions?.queryKey ?? getGetNightlyRunsQueryKey(params);
+
+  const queryFn: QueryFunction<Awaited<ReturnType<typeof getNightlyRuns>>> = ({
+    signal,
+  }) => getNightlyRuns(params, { signal, ...requestOptions });
+
+  return { queryKey, queryFn, ...queryOptions } as UseQueryOptions<
+    Awaited<ReturnType<typeof getNightlyRuns>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetNightlyRunsQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getNightlyRuns>>
+>;
+export type GetNightlyRunsQueryError = ErrorType<void>;
+
+export function useGetNightlyRuns<
+  TData = Awaited<ReturnType<typeof getNightlyRuns>>,
+  TError = ErrorType<void>,
+>(
+  params?: GetNightlyRunsParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getNightlyRuns>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetNightlyRunsQueryOptions(params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Read current SMS flags and the latest recorded opt-out event

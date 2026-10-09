@@ -19,6 +19,7 @@ import { generateDueLtpStep2Drafts, generateRetentionDrafts } from "./retentionE
 import { backgroundJobsEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
 import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
+import { withNightlyRun, observeSyncStep, recordSyncStepMessage, recordSkippedSyncStep, markNightlyFailed, nightlyFailureDescription, nightlyFailureKey } from "./runHistory";
 
 const CLUB_ID = "c8976e15-e002-4619-bb4b-b1a70f5cd7ab";
 const JOB_NIGHTLY             = "nightly_sync";
@@ -77,12 +78,18 @@ export async function runNightlyChain(todayStr?: string, incrementalDaysOverride
   try {
     await withBackgroundLock("nightly-chain", () => runNightlyChainUnlocked(todayStr, incrementalDaysOverride));
   } catch (error) {
-    await alertOperator(`nightly-start:${new Date().toISOString().slice(0, 10)}`, "Nightly sync could not start or finish. Check worker and database logs.");
+    await alertOperator((error as any)?.nightly_run_id ? `nightly-run-failed:${(error as any).nightly_run_id}` : `nightly-start:${new Date().toISOString().slice(0, 10)}`,
+      `Nightly sync failed at ${(error as any)?.nightly_failed_step ?? "startup"}. Check worker and sync history.`);
     throw error;
   }
 }
 
 async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverride?: number): Promise<void> {
+  return withNightlyRun(CLUB_ID, todayStr ? "scheduled" : "manual",
+    () => executeNightlyChain(todayStr, incrementalDaysOverride));
+}
+
+async function executeNightlyChain(todayStr?: string, incrementalDaysOverride?: number): Promise<void> {
   const INCREMENTAL_DAYS_EFFECTIVE = incrementalDaysOverride ?? INCREMENTAL_DAYS;
   logger.info("[scheduler] Starting nightly chain");
   await startJob(JOB_NIGHTLY);
@@ -108,17 +115,18 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     await appendJobLog(JOB_NIGHTLY, "Crash recovery: reclaimStaleJobs check complete — no stale jobs found");
   }
 
+  let failureStep = "Player import and DUPR refresh";
   try {
     // Step 1: Player import
     await startJob(JOB_IMPORT);
     await appendJobLog(JOB_IMPORT, "Nightly: player import started");
     try {
-      const importStats: Record<string, number> = await importAllPlayers(
+      const importStats: Record<string, number> = await observeSyncStep("Player import and DUPR refresh", () => importAllPlayers(
         CLUB_ID,
-        (msg: string) => appendJobLog(JOB_IMPORT, msg),
+        (msg: string) => { recordSyncStepMessage(msg); return appendJobLog(JOB_IMPORT, msg); },
         () => isCancelled(JOB_IMPORT),
         true  // skipAttendanceSync — nightly chain handles this in step 2
-      );
+      ));
       await finishJob(JOB_IMPORT, "done", importStats);
       await appendJobLog(JOB_IMPORT, "Nightly: player import finished");
     } catch (err: any) {
@@ -129,23 +137,27 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 2: Incremental event sync (last 14 days)
+    failureStep = "Event/attendance sync";
     // Cross-job guard: if a manual event sync is already running, skip this step
     // to avoid concurrent double-writes to the attendances table.
     const manualEventsJob = await getJob(JOB_EVENTS);
     if (manualEventsJob.status === "running") {
+      recordSkippedSyncStep("Event/attendance sync", "Manual event sync is already running");
+      recordSkippedSyncStep("Retention step-1 drafts", "Event sync was skipped");
+      recordSkippedSyncStep("LTP step-2 drafts", "Event sync was skipped");
       await appendJobLog(JOB_NIGHTLY, "Step 2: skipped — manual sync in progress");
       logger.info("[scheduler] Step 2 (event sync) skipped — manual event sync already running");
     } else {
       await startJob(JOB_EVENTS);
       await appendJobLog(JOB_EVENTS, `Nightly: incremental event sync (last ${INCREMENTAL_DAYS_EFFECTIVE} days)`);
       try {
-        const syncStats: Record<string, number> = await syncEventAttendance(
+        const syncStats: Record<string, number> = await observeSyncStep("Event/attendance sync", () => syncEventAttendance(
           CLUB_ID,
-          (msg: string) => appendJobLog(JOB_EVENTS, msg),
+          (msg: string) => { recordSyncStepMessage(msg); return appendJobLog(JOB_EVENTS, msg); },
           () => isCancelled(JOB_EVENTS),
           INCREMENTAL_DAYS_EFFECTIVE,
           () => heartbeatJob(JOB_EVENTS)   // Phase 3 §1b — keeps last_heartbeat fresh
-        );
+        ));
         const cancelled = await isCancelled(JOB_EVENTS);
         await finishJob(JOB_EVENTS, cancelled ? "cancelled" : "done", syncStats);
         await appendJobLog(JOB_EVENTS, `Nightly: event sync ${cancelled ? "cancelled" : "finished"}`);
@@ -155,7 +167,7 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
         // Retention generation is isolated from the event sync job result and
         // creates drafts only; a draft-generation failure must not fail sync.
         try {
-          const drafts = await generateRetentionDrafts(CLUB_ID);
+          const drafts = await observeSyncStep("Retention step-1 drafts", () => generateRetentionDrafts(CLUB_ID));
           const summary = `Retention drafts generated — created=${drafts.stats.created}, skipped=${drafts.stats.skipped}, errors=${drafts.errors.length}`;
           await appendJobLog(JOB_NIGHTLY, summary);
           if (drafts.errors.length) logger.warn({ errors: drafts.errors }, "[scheduler] retention draft generation reported item errors");
@@ -166,7 +178,7 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
         // Step 2 is an independent, migration-gated draft-only cohort. It may
         // create only an unscheduled draft and still requires later approval.
         try {
-          const stepTwo = await generateDueLtpStep2Drafts(CLUB_ID);
+          const stepTwo = await observeSyncStep("LTP step-2 drafts", () => generateDueLtpStep2Drafts(CLUB_ID));
           const summary =
             `LTP step-2 drafts generated — created=${stepTwo.results.length}, ` +
             `blocked=${stepTwo.failures.length}`;
@@ -192,40 +204,39 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 3: Incremental confidence recompute for players with recent tagged sessions
+    failureStep = "Confidence recomputation";
     await heartbeatJob(JOB_NIGHTLY); // keep nightly alive across multi-step chain
     await startJob(JOB_CONFIDENCE_NIGHTLY);
     await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Confidence nightly started — window: last ${INCREMENTAL_DAYS_EFFECTIVE} days`);
     try {
-      const cutoff = new Date(Date.now() - INCREMENTAL_DAYS_EFFECTIVE * 24 * 60 * 60 * 1000).toISOString();
-      const { data: recentRows, error: recentErr } = await supabase
-        .from("attendances")
-        .select("player_id")
-        .gte("attended_at", cutoff)
-        .not("player_id", "is", null)
-        .not("level", "is", null);         // only players with level-tagged records
-
-      if (recentErr) throw new Error(recentErr.message);
-
-      const recentPlayerIds = [...new Set((recentRows ?? []).map((r: any) => r.player_id as string))];
-      await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputing confidence for ${recentPlayerIds.length} players`);
-
-      for (const pid of recentPlayerIds) {
-        await computeLevelConfidence(pid);
-      }
-
-      await finishJob(JOB_CONFIDENCE_NIGHTLY, "done", { players_computed: recentPlayerIds.length });
-      await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputed confidence for ${recentPlayerIds.length} players`);
-      await appendJobLog(JOB_NIGHTLY, `Step 3 complete — confidence recomputed for ${recentPlayerIds.length} players`);
+      const confidenceStats = await observeSyncStep("Confidence recomputation", async () => {
+        const cutoff = new Date(Date.now() - INCREMENTAL_DAYS_EFFECTIVE * 24 * 60 * 60 * 1000).toISOString();
+        const { data: recentRows, error: recentErr } = await supabase
+          .from("attendances")
+          .select("player_id")
+          .gte("attended_at", cutoff)
+          .not("player_id", "is", null)
+          .not("level", "is", null);         // only players with level-tagged records
+        if (recentErr) throw new Error(recentErr.message);
+        const recentPlayerIds = [...new Set((recentRows ?? []).map((r: any) => r.player_id as string))];
+        await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputing confidence for ${recentPlayerIds.length} players`);
+        for (const pid of recentPlayerIds) await computeLevelConfidence(pid);
+        return { players_computed: recentPlayerIds.length };
+      });
+      await finishJob(JOB_CONFIDENCE_NIGHTLY, "done", confidenceStats);
+      await appendJobLog(JOB_CONFIDENCE_NIGHTLY, `Recomputed confidence for ${confidenceStats.players_computed} players`);
+      await appendJobLog(JOB_NIGHTLY, `Step 3 complete — confidence recomputed for ${confidenceStats.players_computed} players`);
     } catch (err: any) {
       await finishJob(JOB_CONFIDENCE_NIGHTLY, "error", undefined, err.message);
       await appendJobLog(JOB_NIGHTLY, `Confidence recompute error (non-fatal): ${err.message}`);
     }
 
     // Step 4: Buddy pair graph (non-fatal)
+    failureStep = "Buddy pairs";
     await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 4: updating buddy pair graph");
-      const result = await computeBuddyPairs();
+      const result = await observeSyncStep("Buddy pairs", () => computeBuddyPairs());
       const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
       await appendJobLog(JOB_NIGHTLY, `Step 4 complete — ${statsLine}`);
       if (result.errors?.length) {
@@ -236,6 +247,7 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 5: Churn score recompute (non-fatal, awaited directly)
+    failureStep = "Churn scores";
     //
     // Behavior change from previous fetch-localhost pattern: this now blocks
     // until the entire batch finishes before Step 6 starts. Previously the
@@ -246,7 +258,7 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 5: recomputing churn scores");
-      const result = await runChurnScoreBatch();
+      const result = await observeSyncStep("Churn scores", () => runChurnScoreBatch());
       const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
       await appendJobLog(JOB_NIGHTLY, `Step 5 complete — ${statsLine}`);
       if (result.errors?.length) {
@@ -257,15 +269,18 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Manual data catch-up must not queue outbound milestone messages.
+    failureStep = "Legacy milestones";
     await heartbeatJob(JOB_NIGHTLY);
     if (isRetentionOnlyMode()) {
+      recordSkippedSyncStep("Legacy milestones", "Parked in retention-only mode");
       await appendJobLog(JOB_NIGHTLY, "Step 6: legacy milestone generation parked by RETENTION_ONLY_MODE");
     } else if (incrementalDaysOverride !== undefined) {
+      recordSkippedSyncStep("Legacy milestones", "Skipped for manual catch-up");
       await appendJobLog(JOB_NIGHTLY, "Step 6: milestone messages skipped (manual catch-up)");
     } else {
       try {
         await appendJobLog(JOB_NIGHTLY, "Step 6: checking player milestones");
-        const result = await runMilestoneBatch();
+        const result = await observeSyncStep("Legacy milestones", () => runMilestoneBatch());
         const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
         await appendJobLog(JOB_NIGHTLY, `Step 6 complete — ${statsLine}`);
         if (result.errors?.length) {
@@ -277,24 +292,28 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 7: Monthly recap — only on 1st of month (non-fatal)
+    failureStep = "Legacy monthly recap";
     await heartbeatJob(JOB_NIGHTLY);
     try {
       const now = new Date();
       if (isRetentionOnlyMode()) {
+        recordSkippedSyncStep("Legacy monthly recap", "Parked in retention-only mode");
         await appendJobLog(JOB_NIGHTLY, "Step 7: legacy monthly recap generation parked by RETENTION_ONLY_MODE");
       } else if (incrementalDaysOverride !== undefined) {
+        recordSkippedSyncStep("Legacy monthly recap", "Skipped for manual catch-up");
         await appendJobLog(JOB_NIGHTLY, "Step 7: recap messages skipped (manual catch-up)");
       } else if (now.getDate() === 1) {
         const priorMonth = now.getMonth() === 0 ? 12 : now.getMonth();
         const priorYear  = now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear();
         await appendJobLog(JOB_NIGHTLY, `Step 7: generating monthly recaps for ${priorYear}-${priorMonth}`);
-        const result = await runMonthlyRecapBatch(priorMonth, priorYear);
+        const result = await observeSyncStep("Legacy monthly recap", () => runMonthlyRecapBatch(priorMonth, priorYear));
         const statsLine = Object.entries(result.stats).map(([k, v]) => `${k}: ${v}`).join(", ");
         await appendJobLog(JOB_NIGHTLY, `Step 7 complete — ${statsLine}`);
         if (result.errors?.length) {
           await appendJobLog(JOB_NIGHTLY, `Step 7 had ${result.errors.length} non-fatal errors`);
         }
       } else {
+        recordSkippedSyncStep("Legacy monthly recap", "Not the first day of the month");
         await appendJobLog(JOB_NIGHTLY, "Step 7: monthly recap skipped (not 1st of month)");
       }
     } catch (err: any) {
@@ -302,14 +321,15 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 8a: Incremental event fill sync — fetch capacity for newly-completed sessions
+    failureStep = "Event fill";
     await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 8a: syncing event fill for recently-completed sessions");
-      const fillStats = await syncEventFill(
+      const fillStats = await observeSyncStep("Event fill", () => syncEventFill(
         CLUB_ID,
-        (msg) => appendJobLog(JOB_NIGHTLY, msg),
+        (msg) => { recordSyncStepMessage(msg); return appendJobLog(JOB_NIGHTLY, msg); },
         { mode: "incremental", incrementalDays: INCREMENTAL_DAYS_EFFECTIVE },
-      );
+      ));
       await appendJobLog(
         JOB_NIGHTLY,
         `Step 8a complete — fetched=${fillStats.fetched} ` +
@@ -321,13 +341,14 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 8b: Program ratings recompute (non-fatal, every night)
+    failureStep = "Program ratings";
     await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 8b: recomputing program ratings");
-      const result = await computeProgramRatings(
+      const result = await observeSyncStep("Program ratings", () => computeProgramRatings(
         CLUB_ID,
-        (msg) => appendJobLog(JOB_NIGHTLY, msg),
-      );
+        (msg) => { recordSyncStepMessage(msg); return appendJobLog(JOB_NIGHTLY, msg); },
+      ));
       await appendJobLog(
         JOB_NIGHTLY,
         `Step 8b complete — archetypes: ${result.archetypes_computed}, ` +
@@ -343,12 +364,13 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Step 9: Batch player timing computation (non-fatal)
+    failureStep = "Player timing";
     // Computes attendance_archetype, avg_booking_lead_days, preferred_booking_dow
     // for every player whose timing_computed_at is stale (>22 h) or missing.
     await heartbeatJob(JOB_NIGHTLY);
     try {
       await appendJobLog(JOB_NIGHTLY, "Step 9: batch player timing computation");
-      const timingResult = await batchComputePlayerTiming(CLUB_ID);
+      const timingResult = await observeSyncStep("Player timing", () => batchComputePlayerTiming(CLUB_ID));
       await appendJobLog(
         JOB_NIGHTLY,
         `Step 9 complete — computed=${timingResult.computed} skipped_cached=${timingResult.skipped_cached} ` +
@@ -359,6 +381,7 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     }
 
     // Mark nightly_sync done — persist last_run_day so a same-day restart skips re-fire
+    failureStep = "Nightly completion";
     await finishJob(
       JOB_NIGHTLY,
       "done",
@@ -370,12 +393,13 @@ async function runNightlyChainUnlocked(todayStr?: string, incrementalDaysOverrid
     await resolveOperatorAlert("nightly_failure");
     await resolveOperatorAlert("nightly_start_failure");
   } catch (err: any) {
+    markNightlyFailed(err, failureStep);
     const wasCancelled = err.name === "CancelledError";
     await finishJob(JOB_NIGHTLY, wasCancelled ? "cancelled" : "error", undefined, err.message);
     await appendJobLog(JOB_NIGHTLY, `Nightly chain ${wasCancelled ? "cancelled" : "failed"}: ${err.message}`);
     logger.error({ err }, "[scheduler] Nightly chain ended with error");
     await recordRuntime("nightly", wasCancelled ? "cancelled" : "error");
-    await alertOperator(`nightly:${new Date().toISOString().slice(0, 10)}`, "Nightly sync failed or was cancelled. Check job logs.");
+    await alertOperator(nightlyFailureKey(), nightlyFailureDescription());
   } finally {
     clearInterval(heartbeat);
   }

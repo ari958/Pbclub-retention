@@ -3,6 +3,7 @@ import type { RetryContextEnvelope } from "./retentionApi";
 export function combineRetryContextEnvelopes(envelopes: RetryContextEnvelope[]): RetryContextEnvelope {
   return envelopes.reduce<RetryContextEnvelope>((combined, envelope) => ({
     schema_ready: combined.schema_ready && envelope.schema_ready,
+    run_ids: [...new Set([...(combined.run_ids ?? []), ...(envelope.run_ids ?? []), ...(envelope.run_id ? [envelope.run_id] : [])])],
     results: [...combined.results, ...envelope.results],
     failures: [...(combined.failures ?? []), ...(envelope.failures ?? [])],
     podplay: {
@@ -16,8 +17,13 @@ export function combineRetryContextEnvelopes(envelopes: RetryContextEnvelope[]):
     },
   }), {
     schema_ready: true,
+    run_ids: [],
     results: [],
     failures: [],
     podplay: { total_calls: 0, listing_calls: 0, signup_calls: 0, trigger_calls: 0, coupon_calls: 0, rate_limit_count: 0, retries: [] },
   });
+}
+
+export function envelopeRunIds(e: { run_id?: string | null; run_ids?: string[] }): string[] {
+  return [...new Set([...(e.run_ids ?? []), ...(e.run_id ? [e.run_id] : [])])];
 }

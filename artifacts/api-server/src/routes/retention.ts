@@ -5,6 +5,7 @@ import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
 import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate, retryRetentionContextBatch } from "../lib/retentionEngine";
+import { withGenerationRun } from "../lib/runHistory";
 import {
   ALLOWED_RETENTION_LOOKBACK_DAYS,
   DEFAULT_RETENTION_LOOKBACK_DAYS,
@@ -316,8 +317,10 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
   }
   const requestedLookbackDays = parsed.data.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS;
   try {
-    await requireRetentionSchemaReady();
-    const generated = await generateRetentionDrafts(clubId, requestedLookbackDays);
+    const generated = await withGenerationRun(clubId, "ltp_followup", "Generate", async () => {
+      await requireRetentionSchemaReady();
+      return generateRetentionDrafts(clubId, requestedLookbackDays);
+    });
     const responseStats = {
       ...generated.stats,
       // Keep the existing stats.errors detail array and expose its count separately.
@@ -327,6 +330,7 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
     const missing = generated.errors.find((message) => isRetentionSchemaMissing(new Error(message)));
     if (missing) {
       res.status(503).json({
+        run_id: generated.run_id,
         schema_ready: false,
         lookback_days: generated.lookback_days,
         created: generated.stats.created,
@@ -343,6 +347,7 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
       return;
     }
     res.json({
+      run_id: generated.run_id,
       schema_ready: true,
       lookback_days: generated.lookback_days,
       created: generated.stats.created,
@@ -383,6 +388,7 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
         errors: [error.message],
       };
       res.status(503).json({
+        run_id: error.run_id ?? null,
         schema_ready: false,
         lookback_days: requestedLookbackDays,
         created: 0,
@@ -398,20 +404,23 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
       });
       return;
     }
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: error.message, run_id: error.run_id ?? null });
   }
 });
 
 router.post("/retention/candidates/:id/regenerate", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   try {
-    await requireRetentionSchemaReady();
-    const result = await regenerateRetentionCandidate(clubId, req.params.id as string);
+    const result = await withGenerationRun(clubId, "ltp_followup", "Regenerate", async () => {
+      await requireRetentionSchemaReady();
+      return regenerateRetentionCandidate(clubId, req.params.id as string);
+    });
     return res.json(result);
   } catch (error: any) {
     const schemaMissing = isRetentionSchemaMissing(error) || error.status === 503;
     const stale = /changed since|expected_body|expected_context|expected_updated_at|concurrent/i.test(error.message);
     return res.status(error.status ?? (schemaMissing ? 503 : stale ? 409 : 500)).json({
+      run_id: error.run_id ?? null,
       schema_ready: !schemaMissing,
       error: error.message,
     });
@@ -427,10 +436,12 @@ router.post("/retention/retry-context", requireClub, async (req, res) => {
   const parsed = RetryContextSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Provide 1–50 distinct candidate UUIDs" });
   try {
-    await requireRetentionSchemaReady();
-    return res.json(await retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids));
+    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, "ltp_followup", "Retry context batch", async () => {
+      await requireRetentionSchemaReady();
+      return retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids);
+    }));
   } catch (error: any) {
-    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message });
+    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message, run_id: error.run_id ?? null });
   }
 });
 
@@ -440,10 +451,12 @@ router.post("/retention/candidates/:id/retry-context", requireClub, async (req, 
     return res.status(400).json({ error: "A valid candidate UUID and empty request body are required" });
   }
   try {
-    await requireRetentionSchemaReady();
-    return res.json(await retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids));
+    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, "ltp_followup", "Retry context", async () => {
+      await requireRetentionSchemaReady();
+      return retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids);
+    }));
   } catch (error: any) {
-    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message });
+    return res.status(error.status ?? 500).json({ schema_ready: error.status !== 503, error: error.message, run_id: error.run_id ?? null });
   }
 });
 

@@ -7,6 +7,7 @@ import { ltpTestRpc, requireLtpTestOverride, readLtpTestControl, resetSimulatedL
 import { generateDueLtpStep2Drafts, regenerateRetentionCandidate } from "../lib/retentionEngine";
 import { recheckLtpSequenceDispatch } from "../lib/ltpSequenceLifecycle";
 import type { RetentionCandidate } from "../lib/retentionTypes";
+import { withGenerationRun } from "../lib/runHistory";
 
 const router: IRouter = Router();
 const actionSchema = LtpTestActionBody.extend({ actor: z.string().trim().min(1).max(120) }).strict();
@@ -27,8 +28,10 @@ router.post("/retention/test-tools/candidates/:id", requireClub, async (req, res
   const clubId = (req as ClubScopedRequest).clubId;
   try {
     if (parsed.data.action === "reset_simulated") {
-      await resetSimulatedLtpTestMessage(clubId, id.data, parsed.data.actor);
-      res.json(await regenerateRetentionCandidate(clubId, id.data));
+      res.json(await withGenerationRun(clubId, "ltp_followup", "Test reset and regenerate", async () => {
+        await resetSimulatedLtpTestMessage(clubId, id.data, parsed.data.actor);
+        return regenerateRetentionCandidate(clubId, id.data);
+      }));
       return;
     }
     if (parsed.data.action !== "dispatch_check") {
@@ -67,12 +70,12 @@ router.post("/retention/test-tools/candidates/:id", requireClub, async (req, res
     if (!check.booked) throw new Error("Expected simulated booking was not found; no state changed");
     await ltpTestRpc("exit_booked", clubId, { message_id: candidate.message_id, actor: parsed.data.actor });
     res.json({ blocked: true, sequence_status: "exited_booked", draft_withdrawn: true, sent: false, source: check.booked.source });
-  } catch (error: any) { res.status(error.status ?? 500).json({ error: error.message }); }
+  } catch (error: any) { res.status(error.status ?? 500).json({ error: error.message, run_id: error.run_id ?? null }); }
 });
 router.post("/retention/test-tools/draft-step2", requireClub, async (req, res): Promise<void> => {
   const parsed = idsSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Select 1–50 distinct test step-1 UUIDs" }); return; }
   try { res.json(await generateDueLtpStep2Drafts((req as ClubScopedRequest).clubId, parsed.data.candidate_ids)); }
-  catch (error: any) { res.status(error.status ?? 500).json({ error: error.message }); }
+  catch (error: any) { res.status(error.status ?? 500).json({ error: error.message, run_id: error.run_id ?? null }); }
 });
 export default router;

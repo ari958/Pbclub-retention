@@ -13,6 +13,32 @@ tags:
   - name: retention
     description: Draft-only retention generation and explicit message approvals
 paths:
+  /retention/generation-runs:
+    get:
+      operationId: getGenerationRuns
+      parameters:
+        - $ref: "#/components/parameters/RetentionSlug"
+        - { name: run_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Latest 14 private generation runs, or the selected club-owned run
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GenerationRunsResponse" }
+        "503": { description: Migration 029 is not installed }
+  /sync/nightly/runs:
+    get:
+      operationId: getNightlyRuns
+      parameters:
+        - $ref: "#/components/parameters/RetentionSlug"
+        - { name: run_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Latest 14 club-scoped nightly sync runs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NightlyRunsResponse" }
+        "503": { description: Migration 029 is not installed }
   /players/{id}/sms-status:
     get:
       operationId: getPlayerSmsStatus
@@ -615,6 +641,81 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    RunPlayerOutcome:
+      type: object
+      required: [player_id, player_name, outcome, reason]
+      properties:
+        player_id: { type: ["string", "null"] }
+        player_name: { type: string }
+        outcome: { type: string, enum: [drafted, skipped, error] }
+        reason: { type: string }
+    GenerationRun:
+      type: object
+      required: [id, club_id, playbook_key, trigger, operator, started_at, finished_at, status, evaluated, drafted, skipped, errors, details]
+      properties:
+        id: { type: string, format: uuid }
+        club_id: { type: string, format: uuid }
+        playbook_key: { type: ["string", "null"] }
+        trigger: { type: string }
+        operator: { type: ["string", "null"] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: ["string", "null"], format: date-time }
+        status: { type: ["string", "null"], enum: [success, partial, failed, null] }
+        evaluated: { type: integer }
+        drafted: { type: integer }
+        skipped: { type: integer }
+        errors: { type: integer }
+        details:
+          type: object
+          required: [outcomes]
+          properties:
+            outcomes:
+              type: array
+              items: { $ref: "#/components/schemas/RunPlayerOutcome" }
+    SyncRunStep:
+      type: object
+      required: [name, started_at, finished_at, status, counts, error]
+      properties:
+        name: { type: string }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: ["string", "null"], format: date-time }
+        status: { type: ["string", "null"], enum: [success, partial, failed, skipped, null] }
+        counts: { type: object, additionalProperties: { type: number } }
+        error: { type: ["string", "null"] }
+        generation_run_id: { type: string, format: uuid }
+    NightlyRun:
+      type: object
+      required: [id, club_id, trigger, started_at, finished_at, status, steps]
+      properties:
+        id: { type: string, format: uuid }
+        club_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [scheduled, manual] }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: ["string", "null"], format: date-time }
+        status: { type: ["string", "null"], enum: [success, partial, failed, null] }
+        steps:
+          type: array
+          items: { $ref: "#/components/schemas/SyncRunStep" }
+    GenerationRunsResponse:
+      type: object
+      required: [schema_ready, timezone, scheduled_time, runs]
+      properties:
+        schema_ready: { type: boolean }
+        timezone: { type: string }
+        scheduled_time: { type: ["string", "null"] }
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/GenerationRun" }
+    NightlyRunsResponse:
+      type: object
+      required: [schema_ready, timezone, scheduled_time, runs]
+      properties:
+        schema_ready: { type: boolean }
+        timezone: { type: string }
+        scheduled_time: { type: ["string", "null"] }
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/NightlyRun" }
     PlayerSmsStatus:
       type: object
       required: [status, opted_out, sms_opt_in, latest_optout_event]
