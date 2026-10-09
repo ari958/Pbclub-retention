@@ -54,7 +54,11 @@ test("watchdog detects stale queue and missed/failed nightly sync without alerti
   const now = Date.parse("2026-10-06T15:00:00Z");
   const health = await runtimeHealth();
   assert.deepEqual(operatorAlertReasons(health, now, now), []);
-  assert.ok(operatorAlertReasons({ ...health, last_queue_tick_at: new Date(now - 16 * 60 * 1000).toISOString() }, now).some((r) => r.key === "queue_stale"));
+  const staleTick = { ...health, last_queue_tick_at: new Date(now - 16 * 60 * 1000).toISOString() };
+  assert.ok(operatorAlertReasons(staleTick, now, now - 20 * 60 * 1000).some((r) => r.key === "queue_stale"));
+  // A worker started after the recorded tick (a redeploy) is not stale until 15 minutes after its own start.
+  assert.ok(!operatorAlertReasons(staleTick, now, now - 14 * 60 * 1000).some((r) => r.key === "queue_stale"));
+  assert.ok(operatorAlertReasons(staleTick, now, now - 15 * 60 * 1000).some((r) => r.key === "queue_stale"));
   assert.ok(operatorAlertReasons({ ...health, schedule: { ...health.schedule!, last_started_at: null }, last_nightly_sync: { result: "never", at: null } }, now, now).some((r) => r.key.startsWith("nightly_missing")));
   assert.ok(operatorAlertReasons({ ...health, last_nightly_sync: { result: "error", at: "2026-10-06T09:00:00Z" } }, now, now).some((r) => r.key === "nightly_failure"));
   const afterMidnight = Date.parse("2026-10-07T05:30:00Z");
