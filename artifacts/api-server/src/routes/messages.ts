@@ -286,6 +286,62 @@ router.post("/messages/skip", requireClub, async (req, res) => {
   res.json({ skipped: true });
 });
 
+// ─── POST /api/messages/mark-read ────────────────────────────────────────────
+
+/** Bounded batches so one request can't run unbounded against a large inbox. */
+const MARK_READ_BATCH = 500;
+const MARK_READ_MAX_BATCHES = 10;
+
+router.post("/messages/mark-read", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  let marked = 0;
+
+  // PostgREST cannot safely apply a joined players.club_id predicate to an
+  // UPDATE. Resolve only this club's unread message IDs first, then update
+  // bounded ID batches while rechecking the unread conditions.
+  for (let batch = 0; batch < MARK_READ_MAX_BATCHES; batch++) {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, players!player_id!inner(club_id)")
+      .eq("direction", "inbound")
+      .eq("players.club_id", clubId)
+      .is("read_at", null)
+      .limit(MARK_READ_BATCH);
+    if (error) {
+      res.status(500).json({ error: error.message, marked });
+      return;
+    }
+    if (!data?.length) break;
+    const ids = data.map((row: { id: string }) => row.id);
+    const { data: updated, error: updateError } = await supabase
+      .from("messages")
+      .update({ read_at: new Date().toISOString() })
+      .in("id", ids)
+      .eq("direction", "inbound")
+      .is("read_at", null)
+      .select("id");
+    if (updateError) {
+      res.status(500).json({ error: updateError.message, marked });
+      return;
+    }
+    marked += updated?.length ?? 0;
+    if (data.length < MARK_READ_BATCH) break;
+  }
+
+  const { count, error: countError } = await supabase
+    .from("messages")
+    .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
+    .eq("direction", "inbound")
+    .eq("players.club_id", clubId)
+    .is("read_at", null);
+  if (countError) {
+    res.status(500).json({ error: countError.message, marked });
+    return;
+  }
+
+  res.json({ marked, unread: count ?? 0 });
+});
+
 // ─── POST /api/messages/bulk ─────────────────────────────────────────────────
 
 router.post("/messages/bulk", parkInRetentionOnlyMode("Bulk message sending is parked by RETENTION_ONLY_MODE"), requireClub, async (req, res) => {

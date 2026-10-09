@@ -1,7 +1,7 @@
 import { Link, useLocation } from "react-router-dom";
 import { useEffect, useState, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
-import { useClubStatus } from "@/lib/ClubContext";
+import { clubApiUrl, useClubStatus } from "@/lib/ClubContext";
 import { ClubSwitcher } from "./ClubSwitcher";
 
 // ─── Nav mode ─────────────────────────────────────────────────────────────────
@@ -157,36 +157,10 @@ export function Sidebar({ lastSynced, messageCount = 0 }: SidebarProps) {
     if (messagesPath && clubId && location.pathname === messagesPath && unreadReplies > 0) {
       let active = true;
       const markRead = async () => {
-        // PostgREST cannot safely apply a joined players.club_id predicate to
-        // an UPDATE. Resolve only this club's unread message IDs first, then
-        // update bounded ID batches while rechecking the unread conditions.
-        for (let batch = 0; batch < 10; batch++) {
-          const { data, error } = await supabase
-            .from("messages")
-            .select("id, players!player_id!inner(club_id)")
-            .eq("direction", "inbound")
-            .eq("players.club_id", clubId)
-            .is("read_at", null)
-            .limit(500);
-          if (error || !data?.length || !active) break;
-          const ids = data.map((row) => row.id);
-          const { error: updateError } = await supabase
-            .from("messages")
-            .update({ read_at: new Date().toISOString() })
-            .in("id", ids)
-            .eq("direction", "inbound")
-            .is("read_at", null);
-          if (updateError) break;
-        }
-        if (active) {
-          const { count, error } = await supabase
-            .from("messages")
-            .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
-            .eq("direction", "inbound")
-            .eq("players.club_id", clubId)
-            .is("read_at", null);
-          if (!error && active) setUnreadReplies(count ?? 0);
-        }
+        // The dashboard's anon client is SELECT-only; the write goes through the API.
+        const res = await fetch(clubApiUrl(slug, "/api/messages/mark-read"), { method: "POST" });
+        const body = await res.json().catch(() => ({}));
+        if (active && res.ok && typeof body.unread === "number") setUnreadReplies(body.unread);
       };
       const timer = setTimeout(markRead, 1500);
       return () => {
