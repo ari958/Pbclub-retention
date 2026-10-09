@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { computePlayerTiming } from "./lib/playerTiming.js";
 import { ATTENDANCE_SIGNUP_STATUSES } from "./lib/signupStatus.js";
-import { createAttendanceCouponResolver } from "./lib/attendanceCoupons.js";
+import { createAttendanceCouponResolver, resolveInsertedAttendanceCoupon } from "./lib/attendanceCoupons.js";
 
 let _supabase = null;
 function getSupabase() {
@@ -203,6 +203,7 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
   const podplayBase = `https://${clubRow.platform_subdomain}.podplay.app`;
   const apiKey = clubRow.platform_api_key ?? process.env.PODPLAY_API_KEY;
   const resolveCouponCode = createAttendanceCouponResolver(podplayBase, apiKey);
+  const couponRowsSeen = new Map();
   const clubTimezone = clubRow.timezone ?? DEFAULT_TIMEZONE;
   log(`[sync/events] Using timezone: ${clubTimezone}`);
 
@@ -384,6 +385,19 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
       const programName  = normalizeProgramName(event.name, log);
       const programType  = event.customType ?? event.type ?? null;
       const levelTag     = extractSkillLevel(event.tags);
+      // Use the actual upsert key, not event_id alone: legacy uniqueness is
+      // (player_id, program_name, attended_at). Never overwrite stored coupons.
+      const attendanceKey = `${programName}::${attendedAt}`;
+      const existingCoupons = couponRowsSeen.get(attendanceKey) ?? new Map();
+      for (let offset = 0; !couponRowsSeen.has(attendanceKey); offset += 1000) {
+        const { data, error } = await getSupabase().from("attendances")
+          .select("player_id,coupon_code").eq("club_id", clubId)
+          .eq("program_name", programName).eq("attended_at", attendedAt).range(offset, offset + 999);
+        if (error) throw new Error(`Could not establish new attendance rows: ${error.message}`);
+        for (const existing of data) existingCoupons.set(existing.player_id, existing.coupon_code);
+        if (data.length < 1000) break;
+      }
+      couponRowsSeen.set(attendanceKey, existingCoupons);
 
       for (const signup of signups) {
         const externalId = signup.owner?.id;
@@ -411,14 +425,14 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
           level:        levelTag,
           session_type,
           booked_at:    bookedAt,
-          coupon_code:  await resolveCouponCode(signup),
+          coupon_code:  null,
         };
 
         // Keep higher-priority status; CONFIRMED/CHECKED_IN beats INVALID
         const newPriority = STATUS_PRIORITY[signupStatus] ?? 0;
         const existing = eventDedup.get(player.id);
         if (!existing || newPriority > existing.priority) {
-          eventDedup.set(player.id, { row, priority: newPriority });
+          eventDedup.set(player.id, { row, signup, priority: newPriority });
         }
 
         // Track latest attendance per player (idempotent max — no dedup needed)
@@ -429,7 +443,10 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
       }
 
       // Flush deduped rows into the pending batch
-      for (const { row } of eventDedup.values()) {
+      for (const { row, signup } of eventDedup.values()) {
+        row.coupon_code = await resolveInsertedAttendanceCoupon(resolveCouponCode, signup, row.player_id, existingCoupons);
+        // Duplicate event pages within this same run are existing rows too.
+        existingCoupons.set(row.player_id, row.coupon_code);
         pendingUpserts.push(row);
       }
 
@@ -522,6 +539,10 @@ export async function syncEventAttendance(clubId, log = console.log, isCancelled
     `  Signups fetched: ${stats.signupsFetched} | Matched: ${stats.signupsMatched} | Unmatched: ${stats.signupsUnmatched}\n` +
     `  Attendance records upserted: ${stats.attendancesUpserted} | Win-backs: ${stats.winbacksDetected} | Errors: ${stats.errors}`
   );
+  log(`[sync/events] Coupon lookup calls: ${JSON.stringify(resolveCouponCode.getStats())}`);
+  const couponCalls = resolveCouponCode.getStats();
+  stats.couponOrderCalls = couponCalls.orderCalls;
+  stats.couponResourceCalls = couponCalls.couponCalls;
 
   return stats;
 }

@@ -133,3 +133,17 @@ mtime_ms = 1791404013690
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/986752b7-30c4-495b-a6cb-145976ab635b/f137b957-a1ae-4e03-bf06-11a4eaa6a169"
 storage_version_token = "1791404033850116"
 content_type = "text/html"
+
+[[outputs]]
+id = "EdLn0J5aiG6gS9FCiy3HZ"
+uri = "file://artifacts/api-server/reports/ltp-recovery-dry-run.txt"
+type = "text"
+title = "LTP recovery: exact before and projected after rows"
+description = "Read-only booking/cap evidence, full sequence and candidate snapshots, stored destinations, and unapplied recovery projections for all four players."
+logical_id = "2b3a31fa-c401-4fef-bf83-b134603dc25b"
+content_hash = "sha256:38d518f8f46c24a871a86a3b74257e9981c69b81ff8825c617c77115b1b0df0d"
+size = 40251
+mtime_ms = 1791504426993
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/2b3a31fa-c401-4fef-bf83-b134603dc25b/df652efd-fbbb-48d7-a667-669fba88f601"
+storage_version_token = "1791504427683270"
+content_type = "text/plain"

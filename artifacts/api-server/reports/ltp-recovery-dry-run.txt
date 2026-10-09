@@ -1,0 +1,1057 @@
+LTP RECOVERY — READ-ONLY AUDIT AND UNAPPLIED PROJECTION
+
+Migration 025 has NOT been applied. After rows below are projections, not database observations. All sequence IDs, player IDs, trigger IDs and created_at values remain unchanged; updated_at will be the application transaction timestamp. All message rows and uniqueness/conflict targets remain untouched. Historical candidates are snapshotted before removal. No sends, approvals, playbook changes, or sending-setting changes were performed.
+
+All four players have no booking after LTP in the attendance check or complete live upcoming-signup scan. Ke’s booked exit was test_simulated_booking_at_dispatch, not a genuine booking. All five actual outbound sends were independently read from Twilio stored records.
+
+CONTACT LIMITS
+The test sends are present in contact_ledger, marked is_test=true with player_id=null and intended_player_id populated. Promotion caps key on player_id, so these rows do not enter any of the four players’ buckets. All four last_outbound_at values are null.
+- buildExperimentCandidates: artifacts/api-server/src/routes/experiments.ts:431-434 (7-day cooldown, 2 per 30 days).
+- Programming candidate-building handler: artifacts/api-server/src/routes/programming.ts:1630-1638 (configured cooldown / 30-day cap).
+- Legacy single/bulk message cooldown: artifacts/api-server/src/routes/messages.ts:182-185 and :365-367 (24 hours, disabled in retention-only mode or override testing).
+Migration 025 retains and explicitly flags ledger rows is_test=true/player_id=null; it does not erase a possible subsequent real contact’s cooldown timestamp.
+
+EXACT BEFORE ROWS / PROJECTED AFTER ROWS
+
+[
+  {
+    "player": "Meaghan Wright",
+    "ltp_date": "2026-09-02",
+    "attendance_bookings": [],
+    "upcoming_bookings": [],
+    "before_sequence": {
+      "id": "34f552a1-094d-401c-bfa6-e2a976c8393b",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": "2026-10-02T19:24:16.761+00:00",
+      "step1_message_id": "fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc",
+      "step1_delivery_kind": "test",
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "2026-10-02T19:24:16.934201+00:00"
+    },
+    "before_candidates": [
+      {
+        "id": "4eb753b2-c9ef-4acf-b674-557ada19b5f7",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+        "context": {
+          "promo": {
+            "code": "LTPNEXT25",
+            "offer_text": "25% off your next program"
+          },
+          "stale": true,
+          "errors": [],
+          "reason": null,
+          "trigger": {
+            "date": "2026-09-01",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d"
+          },
+          "variant": "with_program",
+          "ltp_text": {
+            "step": 1,
+            "when": "Sunday, Oct 4 at 2:00pm",
+            "opener": "Hi Meaghan, it's PB Club.",
+            "ltp_date": "Sept 1",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "offer": 0,
+              "opener": 0,
+              "thanks": 0,
+              "next_step": 3
+            },
+            "slot_templates": {
+              "offer": "Use code {promo} for 25% off:",
+              "opener": "Hi {first}, it's PB Club.",
+              "thanks": "Thanks for coming to Learn to Play on {ltp_date}.",
+              "next_step": "Next up for a lot of new players: {program} on {when}."
+            }
+          },
+          "date_phrase": "on Sept 1",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "ok"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "ok"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-02T16%3A02%3A08.704Z&endTime=2026-10-16T16%3A02%3A08.704Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-16T16:02:08.704Z",
+              "window_start": "2026-10-02T16:02:08.704Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 2,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 4
+              },
+              "raw_event_count": 128,
+              "in_window_event_count": 128,
+              "matched_next_program_names": [
+                "30 & 30 Beginner Drills & Guided Play"
+              ],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 124
+            },
+            "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-02T16:03:08.453Z",
+          "next_program": {
+            "date": "2026-10-04",
+            "name": "30 & 30 Beginner Drills & Guided Play",
+            "time": "2:00 PM",
+            "event_id": "01a0f8e0-3f79-7441-9f48-105ab2a78c4c",
+            "signup_url": "https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c",
+            "start_time": "2026-10-04T18:00:00.000Z",
+            "spots_remaining": 4
+          },
+          "send_date_et": "2026-10-02",
+          "lookback_days": 30,
+          "already_booked": false,
+          "coupon_warning": null,
+          "next_program_day": "Sunday",
+          "player_first_name": "Meaghan",
+          "validation_errors": [],
+          "classmates_signed_up": 0
+        },
+        "status": "sent",
+        "message_id": "fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc",
+        "created_at": "2026-10-01T01:52:56.93338+00:00",
+        "updated_at": "2026-10-02T19:24:16.761+00:00",
+        "step": 1,
+        "sequence_id": "34f552a1-094d-401c-bfa6-e2a976c8393b",
+        "sequence_status": "active",
+        "exited_at": null,
+        "exit_reason": null,
+        "booked_event_id": null,
+        "prelaunch_superseded_by": null
+      }
+    ],
+    "linked_message_ids": [
+      "fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc"
+    ],
+    "stored_provider_destinations": [
+      {
+        "message_id": "fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc",
+        "twilio_message_sid": "SMc950bc8f34fe7f9374e93a04f08e855e",
+        "to": "+12013702546"
+      }
+    ],
+    "ledger_rows": [
+      {
+        "id": "e45342d3-7110-4ea8-ba28-3ad09a8514f6",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": null,
+        "source": "queue",
+        "purpose": "promotion",
+        "channel": "sms",
+        "decision_id": null,
+        "sent_at": "2026-10-02T19:24:16.761+00:00",
+        "outcome": null,
+        "created_at": "2026-10-02T19:24:16.78616+00:00",
+        "updated_at": "2026-10-02T19:24:16.78616+00:00",
+        "experiment_id": null,
+        "message_id": "fca8dc6f-1333-4c1e-8cc0-bb9a70e196fc",
+        "is_test": true,
+        "intended_player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9"
+      }
+    ],
+    "after_sequence": {
+      "id": "34f552a1-094d-401c-bfa6-e2a976c8393b",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "e38ec24d-294a-4e4c-b4a7-b39de14cc3e9",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": null,
+      "step1_message_id": null,
+      "step1_delivery_kind": null,
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "transaction_timestamp() — projected SQL value, not yet applied"
+    },
+    "after_candidates": []
+  },
+  {
+    "player": "Ethan Forde",
+    "ltp_date": "2026-09-02",
+    "attendance_bookings": [],
+    "upcoming_bookings": [],
+    "before_sequence": {
+      "id": "965a9fdd-0184-4b70-a17a-1481458fc183",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": "2026-10-02T19:20:23.055+00:00",
+      "step1_message_id": "dc31720d-2f27-4fa8-a889-20ec95791b2f",
+      "step1_delivery_kind": "test",
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "2026-10-02T19:20:23.279078+00:00"
+    },
+    "before_candidates": [
+      {
+        "id": "c10131d1-b6c7-4021-98a2-ca5ea046304c",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+        "context": {
+          "promo": {
+            "code": "LTPNEXT25",
+            "offer_text": "25% off your next program"
+          },
+          "stale": true,
+          "errors": [],
+          "reason": null,
+          "trigger": {
+            "date": "2026-09-01",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d"
+          },
+          "variant": "with_program",
+          "ltp_text": {
+            "step": 1,
+            "when": "Sunday, Oct 4 at 2:00pm",
+            "opener": "Hi Ethan, it's PB Club.",
+            "ltp_date": "Sept 1",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "offer": 1,
+              "opener": 0,
+              "thanks": 3,
+              "next_step": 2
+            },
+            "slot_templates": {
+              "offer": "Here's 25% off with code {promo}:",
+              "opener": "Hi {first}, it's PB Club.",
+              "thanks": "Hope you enjoyed Learn to Play on {ltp_date}.",
+              "next_step": "{program} on {when} is a natural next step."
+            }
+          },
+          "date_phrase": "on Sept 1",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "ok"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "ok"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-02T16%3A02%3A08.704Z&endTime=2026-10-16T16%3A02%3A08.704Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-16T16:02:08.704Z",
+              "window_start": "2026-10-02T16:02:08.704Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 2,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 4
+              },
+              "raw_event_count": 128,
+              "in_window_event_count": 128,
+              "matched_next_program_names": [
+                "30 & 30 Beginner Drills & Guided Play"
+              ],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 124
+            },
+            "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-02T16:03:08.874Z",
+          "next_program": {
+            "date": "2026-10-04",
+            "name": "30 & 30 Beginner Drills & Guided Play",
+            "time": "2:00 PM",
+            "event_id": "01a0f8e0-3f79-7441-9f48-105ab2a78c4c",
+            "signup_url": "https://pbclub.podplay.app/community/events/01a0f8e0-3f79-7441-9f48-105ab2a78c4c",
+            "start_time": "2026-10-04T18:00:00.000Z",
+            "spots_remaining": 4
+          },
+          "send_date_et": "2026-10-02",
+          "lookback_days": 30,
+          "already_booked": false,
+          "coupon_warning": null,
+          "next_program_day": "Sunday",
+          "player_first_name": "Ethan",
+          "validation_errors": [],
+          "classmates_signed_up": 0
+        },
+        "status": "sent",
+        "message_id": "dc31720d-2f27-4fa8-a889-20ec95791b2f",
+        "created_at": "2026-10-01T01:52:57.032268+00:00",
+        "updated_at": "2026-10-02T19:20:23.055+00:00",
+        "step": 1,
+        "sequence_id": "965a9fdd-0184-4b70-a17a-1481458fc183",
+        "sequence_status": "active",
+        "exited_at": null,
+        "exit_reason": null,
+        "booked_event_id": null,
+        "prelaunch_superseded_by": null
+      }
+    ],
+    "linked_message_ids": [
+      "dc31720d-2f27-4fa8-a889-20ec95791b2f"
+    ],
+    "stored_provider_destinations": [
+      {
+        "message_id": "dc31720d-2f27-4fa8-a889-20ec95791b2f",
+        "twilio_message_sid": "SM051963d7b82890ac49cacaef188902b2",
+        "to": "+12013702546"
+      }
+    ],
+    "ledger_rows": [
+      {
+        "id": "8f7c44ac-b36e-4173-bd12-0d6b941a9fe7",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": null,
+        "source": "queue",
+        "purpose": "promotion",
+        "channel": "sms",
+        "decision_id": null,
+        "sent_at": "2026-10-02T19:20:23.055+00:00",
+        "outcome": null,
+        "created_at": "2026-10-02T19:20:23.078165+00:00",
+        "updated_at": "2026-10-02T19:20:23.078165+00:00",
+        "experiment_id": null,
+        "message_id": "dc31720d-2f27-4fa8-a889-20ec95791b2f",
+        "is_test": true,
+        "intended_player_id": "c513c6a3-1424-4eb3-a556-527d99559fef"
+      }
+    ],
+    "after_sequence": {
+      "id": "965a9fdd-0184-4b70-a17a-1481458fc183",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "c513c6a3-1424-4eb3-a556-527d99559fef",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": null,
+      "step1_message_id": null,
+      "step1_delivery_kind": null,
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "transaction_timestamp() — projected SQL value, not yet applied"
+    },
+    "after_candidates": []
+  },
+  {
+    "player": "Ke Shi",
+    "ltp_date": "2026-09-20",
+    "attendance_bookings": [],
+    "upcoming_bookings": [],
+    "before_sequence": {
+      "id": "5ff2ab6a-4c12-4dae-aa56-634b89510659",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+      "sequence_status": "exited_booked",
+      "exited_at": "2026-10-06T12:45:40.572526+00:00",
+      "exit_reason": "test_simulated_booking_at_dispatch",
+      "booked_event_id": "test-simulated-booking",
+      "step1_sent_at": "2026-10-06T12:03:54.813+00:00",
+      "step1_message_id": "36f60a30-5c02-433c-bbed-238077472b7f",
+      "step1_delivery_kind": "test",
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "2026-10-06T12:45:40.572526+00:00"
+    },
+    "before_candidates": [
+      {
+        "id": "afec6e1f-8068-4cc5-aafd-3b95787fadce",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+        "context": {
+          "promo": {
+            "code": "LTPNEXT25",
+            "offer_text": "25% off your next program"
+          },
+          "stale": true,
+          "errors": [],
+          "reason": null,
+          "trigger": {
+            "date": "2026-09-20",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de"
+          },
+          "variant": "with_program",
+          "ltp_text": {
+            "step": 1,
+            "when": "Wednesday, Oct 7 at 7:00pm",
+            "opener": "Hi Ke, it's PB Club.",
+            "ltp_date": "Sept 20",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "offer": 2,
+              "opener": 0,
+              "thanks": 3,
+              "next_step": 2
+            },
+            "slot_templates": {
+              "offer": "Code {promo} takes 25% off:",
+              "opener": "Hi {first}, it's PB Club.",
+              "thanks": "Hope you enjoyed Learn to Play on {ltp_date}.",
+              "next_step": "{program} on {when} is a natural next step."
+            }
+          },
+          "date_phrase": "on Sept 20",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "ok"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "ok"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-06T11%3A05%3A13.481Z&endTime=2026-10-20T11%3A05%3A13.481Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-20T11:05:13.481Z",
+              "window_start": "2026-10-06T11:05:13.481Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 1,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 0
+              },
+              "raw_event_count": 116,
+              "in_window_event_count": 116,
+              "matched_next_program_names": [
+                "30 & 30 Beginner Drills & Guided Play"
+              ],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 116
+            },
+            "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-06T11:06:09.564Z",
+          "next_program": {
+            "date": "2026-10-07",
+            "name": "30 & 30 Beginner Drills & Guided Play",
+            "time": "7:00 PM",
+            "event_id": "01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "signup_url": "https://pbclub.podplay.app/community/events/01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "start_time": "2026-10-07T23:00:00.000Z",
+            "spots_remaining": 4
+          },
+          "send_date_et": "2026-10-06",
+          "lookback_days": 30,
+          "already_booked": false,
+          "coupon_warning": null,
+          "next_program_day": "Wednesday",
+          "player_first_name": "Ke",
+          "validation_errors": [],
+          "classmates_signed_up": 0
+        },
+        "status": "sent",
+        "message_id": "36f60a30-5c02-433c-bbed-238077472b7f",
+        "created_at": "2026-10-01T01:52:58.803154+00:00",
+        "updated_at": "2026-10-06T12:45:40.572526+00:00",
+        "step": 1,
+        "sequence_id": "5ff2ab6a-4c12-4dae-aa56-634b89510659",
+        "sequence_status": "exited_booked",
+        "exited_at": "2026-10-06T12:45:40.572526+00:00",
+        "exit_reason": "test_simulated_booking_at_dispatch",
+        "booked_event_id": "test-simulated-booking",
+        "prelaunch_superseded_by": null
+      },
+      {
+        "id": "05e52ce8-d06b-4a7e-844c-f6f28631aab0",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+        "context": {
+          "promo": null,
+          "stale": true,
+          "errors": [],
+          "reason": "pre_launch_reset",
+          "trigger": {
+            "date": "2026-09-20",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de"
+          },
+          "variant": "with_program",
+          "ltp_text": {
+            "step": 2,
+            "when": "Wednesday, Oct 7 at 7:00pm",
+            "opener": "Hey Ke, PB Club here.",
+            "ltp_date": "Sept 20",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "nudge": 2,
+              "opener": 1,
+              "next_step": 0
+            },
+            "slot_templates": {
+              "nudge": "Thinking about your next session?",
+              "opener": "Hey {first}, PB Club here.",
+              "next_step": "{program} on {when} still has spots."
+            }
+          },
+          "date_phrase": "on Sept 20",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "ok"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "ok"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-06T12%3A40%3A21.701Z&endTime=2026-10-20T12%3A40%3A21.701Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-20T12:40:21.701Z",
+              "window_start": "2026-10-06T12:40:21.701Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 1,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 0
+              },
+              "raw_event_count": 116,
+              "in_window_event_count": 116,
+              "matched_next_program_names": [
+                "30 & 30 Beginner Drills & Guided Play"
+              ],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 116
+            },
+            "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-06T12:41:17.082Z",
+          "next_program": {
+            "date": "2026-10-07",
+            "name": "30 & 30 Beginner Drills & Guided Play",
+            "time": "7:00 PM",
+            "event_id": "01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "signup_url": "https://pbclub.podplay.app/community/events/01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "start_time": "2026-10-07T23:00:00.000Z",
+            "spots_remaining": 4
+          },
+          "send_date_et": "2026-10-06",
+          "lookback_days": 30,
+          "ltp_test_mode": true,
+          "already_booked": false,
+          "coupon_warning": null,
+          "next_program_day": "Wednesday",
+          "player_first_name": "Ke",
+          "validation_errors": [],
+          "classmates_signed_up": 0
+        },
+        "status": "skipped",
+        "message_id": "ca8b9da4-d2ad-4e28-ace6-35d311c5ea5b",
+        "created_at": "2026-10-06T12:41:17.121855+00:00",
+        "updated_at": "2026-10-07T18:00:05.852+00:00",
+        "step": 2,
+        "sequence_id": "5ff2ab6a-4c12-4dae-aa56-634b89510659",
+        "sequence_status": "exited_booked",
+        "exited_at": "2026-10-06T12:45:40.572526+00:00",
+        "exit_reason": "test_simulated_booking_at_dispatch",
+        "booked_event_id": "test-simulated-booking",
+        "prelaunch_superseded_by": null
+      }
+    ],
+    "linked_message_ids": [
+      "36f60a30-5c02-433c-bbed-238077472b7f",
+      "ca8b9da4-d2ad-4e28-ace6-35d311c5ea5b"
+    ],
+    "stored_provider_destinations": [
+      {
+        "message_id": "36f60a30-5c02-433c-bbed-238077472b7f",
+        "twilio_message_sid": "SM1166b95efd83680f36e6bd8019ee0271",
+        "to": "+12013702546"
+      }
+    ],
+    "ledger_rows": [
+      {
+        "id": "bdf44c5a-604e-45b1-b958-8ab13326b006",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": null,
+        "source": "queue",
+        "purpose": "promotion",
+        "channel": "sms",
+        "decision_id": null,
+        "sent_at": "2026-10-06T12:03:54.813+00:00",
+        "outcome": null,
+        "created_at": "2026-10-06T12:03:54.832363+00:00",
+        "updated_at": "2026-10-06T12:03:54.832363+00:00",
+        "experiment_id": null,
+        "message_id": "36f60a30-5c02-433c-bbed-238077472b7f",
+        "is_test": true,
+        "intended_player_id": "82c595cc-96d3-4eb5-b40b-40219932816b"
+      }
+    ],
+    "after_sequence": {
+      "id": "5ff2ab6a-4c12-4dae-aa56-634b89510659",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "82c595cc-96d3-4eb5-b40b-40219932816b",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a0a767-6c3c-7446-b1d9-fc2bceb739de",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": null,
+      "step1_message_id": null,
+      "step1_delivery_kind": null,
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "transaction_timestamp() — projected SQL value, not yet applied"
+    },
+    "after_candidates": []
+  },
+  {
+    "player": "Joe Stephenson",
+    "ltp_date": "2026-09-02",
+    "attendance_bookings": [],
+    "upcoming_bookings": [],
+    "before_sequence": {
+      "id": "b755e667-19a8-4491-a849-4ae34127478d",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "completed",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": "2026-10-06T12:03:57.006+00:00",
+      "step1_message_id": "b4174321-c6a1-48b7-bed8-d81aeb72247f",
+      "step1_delivery_kind": "test",
+      "step2_sent_at": "2026-10-06T21:02:26.495+00:00",
+      "step2_message_id": "5005b574-d615-458b-b206-eaa155749f5f",
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "2026-10-06T21:02:29.358542+00:00"
+    },
+    "before_candidates": [
+      {
+        "id": "b871f8d3-1c6b-42a2-a049-44a38feefc54",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+        "context": {
+          "promo": null,
+          "stale": true,
+          "errors": [],
+          "reason": null,
+          "trigger": {
+            "date": "2026-09-01",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d"
+          },
+          "variant": "no_program",
+          "ltp_text": {
+            "step": 2,
+            "when": null,
+            "opener": "Hi Joe, it's PB Club.",
+            "ltp_date": "Sept 1",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "nudge": 0,
+              "opener": 0,
+              "no_program_cta": 0
+            },
+            "slot_templates": {
+              "nudge": "Hope you're ready to get back out there.",
+              "opener": "Hi {first}, it's PB Club.",
+              "no_program_cta": "Here's what's coming up:"
+            }
+          },
+          "booking_url": "https://pbclub.podplay.app",
+          "date_phrase": "on Sept 1",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "not_applicable"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "no_match"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-06T20%3A55%3A45.229Z&endTime=2026-10-20T20%3A55%3A45.229Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-20T20:55:45.229Z",
+              "window_start": "2026-10-06T20:55:45.229Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 0,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 1
+              },
+              "raw_event_count": 118,
+              "in_window_event_count": 118,
+              "matched_next_program_names": [],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "30 & 30 Beginner Drills & Guided Play",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 117
+            },
+            "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-06T20:56:41.991Z",
+          "next_program": null,
+          "send_date_et": "2026-10-06",
+          "lookback_days": 30,
+          "ltp_test_mode": true,
+          "already_booked": false,
+          "coupon_warning": null,
+          "player_first_name": "Joe",
+          "validation_errors": [],
+          "classmates_signed_up": 0,
+          "forbidden_program_names": [
+            "Learn to Play Clinic",
+            "Beginner 60&60 Clinic",
+            "30 & 30 Beginner Drills & Guided Play",
+            "Path to Advanced Beginner",
+            "Challenge court Intermediate Open Play",
+            "Drill and Stay - Partner REQUIRED",
+            "Half Price Open Play",
+            "3.75+ Off-Peak Open Play",
+            "4.5+ Gated Open Play",
+            "All Level Open Play",
+            "Advanced Beginner 3 and Me: Play With the Pro: Rob Gruber",
+            "3.5+ Gated Open Play",
+            "Advanced Intermediate Coach Led 60 & 60",
+            "Club Rating Tryout 3.25-3.49",
+            "Tor Salve Halvorsen  Konnestad",
+            "Community Open Play",
+            "Advanced Beginner 60&60 Clinic",
+            "4.5+ Gated Run",
+            "Friday Night Feature",
+            "Friday Night Finish",
+            "Intermediate Open Play",
+            "Pickleball Starter Bootcamp",
+            "Pickleball Breakthrough Weekend",
+            "Brian's Private Game -  COURT Contract - Invite ONLY",
+            "Queer Pickleball Open Play",
+            "Honcho League",
+            "4.5+ Gated Games",
+            "3.0+ Intermediate Open Play",
+            "Low Intermediate 60&60 Clinic",
+            "3.25-3.74 Adv. Int. Open Play",
+            "Beg - ADV Beginner+ Open Play",
+            "Beginner+ Open Play",
+            "Path to Advanced Intermediate - 4 Weeks"
+          ]
+        },
+        "status": "sent",
+        "message_id": "5005b574-d615-458b-b206-eaa155749f5f",
+        "created_at": "2026-10-06T12:41:17.121855+00:00",
+        "updated_at": "2026-10-06T21:02:29.358542+00:00",
+        "step": 2,
+        "sequence_id": "b755e667-19a8-4491-a849-4ae34127478d",
+        "sequence_status": "completed",
+        "exited_at": null,
+        "exit_reason": null,
+        "booked_event_id": null,
+        "prelaunch_superseded_by": null
+      },
+      {
+        "id": "5285f595-334b-4e39-bc2e-64885df00913",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+        "playbook_key": "ltp_followup",
+        "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+        "context": {
+          "promo": {
+            "code": "LTPNEXT25",
+            "offer_text": "25% off your next program"
+          },
+          "stale": true,
+          "errors": [],
+          "reason": null,
+          "trigger": {
+            "date": "2026-09-01",
+            "name": "Learn to Play Clinic",
+            "event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d"
+          },
+          "variant": "with_program",
+          "ltp_text": {
+            "step": 1,
+            "when": "Wednesday, Oct 7 at 7:00pm",
+            "opener": "Hi Joe, it's PB Club.",
+            "ltp_date": "Sept 1",
+            "seed_nonce": 0,
+            "slot_indices": {
+              "offer": 0,
+              "opener": 0,
+              "thanks": 1,
+              "next_step": 0
+            },
+            "slot_templates": {
+              "offer": "Use code {promo} for 25% off:",
+              "opener": "Hi {first}, it's PB Club.",
+              "thanks": "Great having you at Learn to Play on {ltp_date}.",
+              "next_step": "A good next step is {program} on {when}."
+            }
+          },
+          "date_phrase": "on Sept 1",
+          "diagnostics": {
+            "lookups": {
+              "classmate": {
+                "errors": [],
+                "status": "ok"
+              },
+              "next_program": {
+                "errors": [],
+                "status": "ok"
+              },
+              "already_booked": {
+                "errors": [],
+                "status": "ok"
+              }
+            },
+            "upcoming": {
+              "requests": [
+                {
+                  "url": "https://pbclub.podplay.app/apis/v2/events?startTime=2026-10-06T11%3A05%3A13.481Z&endTime=2026-10-20T11%3A05%3A13.481Z&page=1&ipp=500",
+                  "page": 1,
+                  "method": "GET"
+                }
+              ],
+              "window_end": "2026-10-20T11:05:13.481Z",
+              "window_start": "2026-10-06T11:05:13.481Z",
+              "filter_causes": {
+                "full_event_ids": [],
+                "matching_event_count": 1,
+                "outside_client_window_count": 0,
+                "missing_total_teams_event_ids": [],
+                "unpublished_or_canceled_count": 0
+              },
+              "raw_event_count": 116,
+              "in_window_event_count": 116,
+              "matched_next_program_names": [
+                "30 & 30 Beginner Drills & Guided Play"
+              ],
+              "unmatched_next_program_names": [
+                "Beginner 60&60 Clinic",
+                "Path to Advanced Beginner"
+              ],
+              "published_in_window_event_count": 116
+            },
+            "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2"
+          },
+          "booked_event": null,
+          "evaluated_at": "2026-10-06T11:06:09.219Z",
+          "next_program": {
+            "date": "2026-10-07",
+            "name": "30 & 30 Beginner Drills & Guided Play",
+            "time": "7:00 PM",
+            "event_id": "01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "signup_url": "https://pbclub.podplay.app/community/events/01a0f8de-51b8-7441-9f3e-e4ee5dfbe3eb",
+            "start_time": "2026-10-07T23:00:00.000Z",
+            "spots_remaining": 4
+          },
+          "send_date_et": "2026-10-06",
+          "lookback_days": 30,
+          "already_booked": false,
+          "coupon_warning": null,
+          "next_program_day": "Wednesday",
+          "player_first_name": "Joe",
+          "validation_errors": [],
+          "classmates_signed_up": 0
+        },
+        "status": "sent",
+        "message_id": "b4174321-c6a1-48b7-bed8-d81aeb72247f",
+        "created_at": "2026-10-01T01:52:56.850489+00:00",
+        "updated_at": "2026-10-06T21:02:29.358542+00:00",
+        "step": 1,
+        "sequence_id": "b755e667-19a8-4491-a849-4ae34127478d",
+        "sequence_status": "completed",
+        "exited_at": null,
+        "exit_reason": null,
+        "booked_event_id": null,
+        "prelaunch_superseded_by": null
+      }
+    ],
+    "linked_message_ids": [
+      "5005b574-d615-458b-b206-eaa155749f5f",
+      "b4174321-c6a1-48b7-bed8-d81aeb72247f"
+    ],
+    "stored_provider_destinations": [
+      {
+        "message_id": "5005b574-d615-458b-b206-eaa155749f5f",
+        "twilio_message_sid": "SM505fa95ee49e37789eeb12ca581da5f9",
+        "to": "+12013702546"
+      },
+      {
+        "message_id": "b4174321-c6a1-48b7-bed8-d81aeb72247f",
+        "twilio_message_sid": "SMbacb212333ea47454d5152f521f83350",
+        "to": "+12013702546"
+      }
+    ],
+    "ledger_rows": [
+      {
+        "id": "02c79f35-ba87-479a-8d5b-d8971e8ad6e6",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": null,
+        "source": "queue",
+        "purpose": "promotion",
+        "channel": "sms",
+        "decision_id": null,
+        "sent_at": "2026-10-06T12:03:57.006+00:00",
+        "outcome": null,
+        "created_at": "2026-10-06T12:03:57.023297+00:00",
+        "updated_at": "2026-10-06T12:03:57.023297+00:00",
+        "experiment_id": null,
+        "message_id": "b4174321-c6a1-48b7-bed8-d81aeb72247f",
+        "is_test": true,
+        "intended_player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2"
+      },
+      {
+        "id": "b6f4a9d2-66ee-4208-915f-bcad877fdf9d",
+        "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+        "player_id": null,
+        "source": "queue",
+        "purpose": "promotion",
+        "channel": "sms",
+        "decision_id": null,
+        "sent_at": "2026-10-06T21:02:26.495+00:00",
+        "outcome": null,
+        "created_at": "2026-10-06T21:02:26.513746+00:00",
+        "updated_at": "2026-10-06T21:02:26.513746+00:00",
+        "experiment_id": null,
+        "message_id": "5005b574-d615-458b-b206-eaa155749f5f",
+        "is_test": true,
+        "intended_player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2"
+      }
+    ],
+    "after_sequence": {
+      "id": "b755e667-19a8-4491-a849-4ae34127478d",
+      "club_id": "c8976e15-e002-4619-bb4b-b1a70f5cd7ab",
+      "player_id": "c1e26321-027c-4ff4-a934-85106fd9a7e2",
+      "playbook_key": "ltp_followup",
+      "trigger_event_id": "01a03f56-ba84-7bb8-8aec-4d5b7bc80d3d",
+      "sequence_status": "active",
+      "exited_at": null,
+      "exit_reason": null,
+      "booked_event_id": null,
+      "step1_sent_at": null,
+      "step1_message_id": null,
+      "step1_delivery_kind": null,
+      "step2_sent_at": null,
+      "step2_message_id": null,
+      "created_at": "2026-10-02T15:59:20.682677+00:00",
+      "updated_at": "transaction_timestamp() — projected SQL value, not yet applied"
+    },
+    "after_candidates": []
+  }
+]

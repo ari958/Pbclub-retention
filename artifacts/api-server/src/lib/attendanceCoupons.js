@@ -9,11 +9,14 @@ export function createAttendanceCouponResolver(podplayBase, apiKey, {
 } = {}) {
   const orders = new Map();
   const coupons = new Map();
+  const stats = { orderCalls: 0, couponCalls: 0 };
   async function read(path) {
     await sleep(400);
+    stats[path.startsWith("/orders/") ? "orderCalls" : "couponCalls"]++;
     let response = await fetchImpl(`${podplayBase}/apis/v2${path}`, { headers: { "x-api-key": apiKey } });
     if (response.status === 429) {
       await sleep(3000);
+      stats[path.startsWith("/orders/") ? "orderCalls" : "couponCalls"]++;
       response = await fetchImpl(`${podplayBase}/apis/v2${path}`, { headers: { "x-api-key": apiKey } });
     }
     // A lookup failure is not evidence that there was no coupon.
@@ -25,7 +28,7 @@ export function createAttendanceCouponResolver(podplayBase, apiKey, {
     if (!cache.has(id)) cache.set(id, read(path));
     return cache.get(id);
   };
-  return async function resolveCoupon(signup) {
+  const resolveCoupon = async function (signup) {
     const legacy = code(signup.couponCode);
     if (legacy) return legacy;
     let coupon = signup.coupon;
@@ -44,4 +47,12 @@ export function createAttendanceCouponResolver(podplayBase, apiKey, {
     if (!resolved) throw new Error("PodPlay coupon resource has no code");
     return resolved;
   };
+  resolveCoupon.getStats = () => ({ ...stats });
+  return resolveCoupon;
+}
+
+/** Existing upsert rows retain their stored value, including an explicit null. */
+export async function resolveInsertedAttendanceCoupon(resolve, signup, playerId, existing) {
+  if (existing.has(playerId)) return existing.get(playerId);
+  return resolve(signup);
 }

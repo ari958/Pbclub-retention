@@ -13,7 +13,10 @@ const actionSchema = LtpTestActionBody.extend({ actor: z.string().trim().min(1).
 const idsSchema = DraftLtpTestStep2Body.strict()
   .refine(({ candidate_ids }) => new Set(candidate_ids).size === candidate_ids.length);
 
-router.use("/retention/test-tools", (_req, res, next) => {
+router.use("/retention/test-tools", (req, res, next) => {
+  // Backdate's wrapper logs refusals and resolves the sequence even with the
+  // override absent. Other tools retain the existing early override gate.
+  if (req.method === "POST" && req.body?.action === "backdate") { next(); return; }
   try { requireLtpTestOverride(); next(); }
   catch (error: any) { res.status(403).json({ error: error.message }); }
 });

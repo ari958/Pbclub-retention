@@ -1,0 +1,33 @@
+Goal: four independent steps. Each step has its own stop condition. A blocked step does not stop the others. No sends, no approvals, no sending-setting or playbook changes. Don’t apply the current draft 024; replace it as described below.
+
+1. Audit label (apply). Rewrite migration 024 to contain only the not_started branch for playbook_outcomes_audit, placed before no_booking. Keep the column order, security_invoker=true, and the service-role-only grants. It’s view-only, so apply it. Report the audit outcome counts before and after, and confirm playbook_outcomes is still 3 rows.
+
+2. Stranded players (dry run, then stop).
+
+2a. Read-only check first. For Ethan Forde, Meaghan Wright, Ke Shi, and Joe Stephenson, report:
+
+their LTP date
+any booking since then (attendances and live PodPlay upcoming signups)
+whether their test sends appear in contact_ledger or any frequency-cap or cooldown check. Name the function and line that enforces the cap.
+
+Players who have booked need no recovery; report them and skip the rest of step 2 for them.
+
+2b. Write migration 025 and stop before applying it. It should:
+
+Create retention_test_history: an additive table holding a full JSON snapshot of each test sequence row, its candidate rows, and the linked message IDs and destinations, plus archived_at and a reason. Use the standard RLS pattern and grants.
+For each unbooked player, archive the snapshot, then reset the live sequence in place: clear step send times and message links, set sequence_status back to active, and reset or remove the step candidates. The normal pipeline then drafts a fresh step 1 into Approvals.
+Exclude the archived test sends from frequency caps and cooldowns. Prefer flagging their ledger rows over deleting them.
+Leave uniqueness rules, conflict targets, and messages rows untouched.
+Update playbook_outcomes_audit so is_test history comes from retention_test_history.
+
+Paste the exact before and after rows for each player, then stop.
+
+3. Test-clock guard (implement). In ltpTestTools.ts:40 and the SQL branch in 015_ltp_test_tools.sql:143, refuse to backdate unless SMS_TEST_OVERRIDE_TO is set and every sent message in the sequence went to the override number, verified from stored destinations. Log every use and every refusal, with the sequence id and the operator. Add a test for the refusal path.
+
+4. Coupon lookup cost (implement).
+
+Cache coupon id → code in memory for the duration of a sync run.
+Fetch /orders/{id} only for signups being inserted for the first time that have an order.id.
+Report the added PodPlay calls per sync before and after, using last night’s run as the baseline.
+
+5. Verify. Run tsc --noEmit and the focused tests. Report a STATUS line per step: CLOSED / PARTIAL / BLOCKED / DEFERRED.

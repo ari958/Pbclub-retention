@@ -115,7 +115,14 @@ CREATE OR REPLACE FUNCTION public.retention_ltp_test_rpc(
 DECLARE c public.retention_candidates%ROWTYPE; s public.retention_sequences%ROWTYPE;
   t public.retention_ltp_test_controls%ROWTYPE; m public.messages%ROWTYPE;
   original timestamptz; effective timestamptz; actor text; result jsonb; item jsonb;
+  audit_sequence uuid; override_digits text; sent_count integer;
 BEGIN
+  IF p_operation='backdate' THEN
+    actor:=btrim(p_payload->>'actor');
+    SELECT sequence_id INTO audit_sequence FROM public.retention_candidates
+      WHERE id=(p_payload->>'candidate_id')::uuid AND club_id=p_club_id;
+    RAISE LOG 'LTP backdate attempt sequence=% operator=%',audit_sequence,actor;
+  END IF;
   IF p_override_enabled IS DISTINCT FROM true THEN
     RAISE EXCEPTION 'SMS_TEST_OVERRIDE_TO is required' USING ERRCODE='42501';
   END IF;
@@ -141,6 +148,39 @@ BEGIN
       FROM public.retention_playbooks WHERE key='ltp_followup'));
     IF effective IS NULL THEN RAISE EXCEPTION 'Step-2 gap is missing'; END IF;
     IF p_operation='backdate' THEN
+      -- Trusted service wrapper reads each destination from Twilio's stored
+      -- outbound record. Check complete SID-bound evidence under row locks.
+      audit_sequence:=s.id;
+      override_digits:=regexp_replace(COALESCE(p_payload->>'override_to',''),'[^0-9]','','g');
+      IF length(override_digits)=10 THEN override_digits:='1'||override_digits; END IF;
+      IF override_digits !~ '^[0-9]{11,15}$'
+        OR p_payload->>'destination_evidence_source' IS DISTINCT FROM 'twilio_stored'
+        OR jsonb_typeof(p_payload->'verified_destinations') IS DISTINCT FROM 'array' THEN
+        RAISE EXCEPTION 'Stored override destinations are required' USING ERRCODE='42501';
+      END IF;
+      IF (s.step1_sent_at IS NOT NULL AND s.step1_message_id IS NULL)
+        OR (s.step2_sent_at IS NOT NULL AND s.step2_message_id IS NULL) THEN
+        RAISE EXCEPTION 'A sent step has no message evidence' USING ERRCODE='42501';
+      END IF;
+      PERFORM 1 FROM public.messages sm WHERE sm.id IN (s.step1_message_id,s.step2_message_id)
+        OR sm.id IN (SELECT message_id FROM public.retention_candidates WHERE sequence_id=s.id AND club_id=p_club_id)
+        FOR UPDATE;
+      SELECT count(*) INTO sent_count FROM public.messages sm
+        WHERE (sm.id IN (s.step1_message_id,s.step2_message_id)
+          OR sm.id IN (SELECT message_id FROM public.retention_candidates WHERE sequence_id=s.id AND club_id=p_club_id))
+          AND (sm.status='sent' OR sm.id=s.step1_message_id OR (s.step2_sent_at IS NOT NULL AND sm.id=s.step2_message_id));
+      IF sent_count=0 OR jsonb_array_length(p_payload->'verified_destinations')<>sent_count
+        OR EXISTS(SELECT 1 FROM public.messages sm
+          WHERE (sm.id IN (s.step1_message_id,s.step2_message_id)
+            OR sm.id IN (SELECT message_id FROM public.retention_candidates WHERE sequence_id=s.id AND club_id=p_club_id))
+            AND (sm.status='sent' OR sm.id=s.step1_message_id OR (s.step2_sent_at IS NOT NULL AND sm.id=s.step2_message_id))
+            AND (sm.status IS DISTINCT FROM 'sent' OR sm.sent_at IS NULL OR sm.twilio_message_sid IS NULL
+              OR NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p_payload->'verified_destinations') evidence
+                WHERE evidence->>'message_id'=sm.id::text
+                  AND evidence->>'twilio_message_sid'=sm.twilio_message_sid
+                  AND regexp_replace(COALESCE(evidence->>'to',''),'[^0-9]','','g')=override_digits))) THEN
+        RAISE EXCEPTION 'Every sent message must match the stored override destination' USING ERRCODE='42501';
+      END IF;
       IF EXISTS(SELECT 1 FROM public.retention_candidates WHERE sequence_id=s.id AND step=2) THEN
         RAISE EXCEPTION 'Step 2 already exists; cannot change eligibility';
       END IF;
@@ -159,6 +199,7 @@ BEGIN
     SELECT * INTO t FROM public.retention_ltp_test_controls WHERE sequence_id=s.id;
     INSERT INTO public.retention_ltp_test_audit(club_id,candidate_id,actor,action,original_sent_at,effective_sent_at)
       VALUES(p_club_id,c.id,actor,p_operation,t.original_sent_at,t.effective_sent_at) RETURNING to_jsonb(retention_ltp_test_audit.*) INTO result;
+    IF p_operation='backdate' THEN RAISE LOG 'LTP backdate used sequence=% operator=%',s.id,actor; END IF;
     RETURN result;
   ELSIF p_operation='due' THEN
     IF jsonb_array_length(p_payload->'candidate_ids') NOT BETWEEN 1 AND 50 THEN RAISE EXCEPTION 'Select 1-50 step-1 candidates'; END IF;
@@ -225,6 +266,11 @@ BEGIN
   ELSE
     RAISE EXCEPTION 'Unsupported test operation';
   END IF;
+EXCEPTION WHEN OTHERS THEN
+  IF p_operation='backdate' THEN
+    RAISE LOG 'LTP backdate refused sequence=% operator=% sqlstate=%',audit_sequence,actor,SQLSTATE;
+  END IF;
+  RAISE;
 END $$;
 REVOKE ALL ON FUNCTION public.retention_ltp_test_effective_time(uuid) FROM PUBLIC,anon,authenticated,service_role;
 REVOKE ALL ON FUNCTION public.retention_ltp_test_rpc(uuid,text,jsonb,boolean) FROM PUBLIC,anon,authenticated;

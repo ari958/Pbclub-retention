@@ -30,3 +30,5 @@
 - [Template ownership](template-ownership-policy.md) — legacy global message templates belong to PB Club; preserve their content and other clubs' existing ownership.
 - [Operator alert incidents](operator-alert-incidents.md) — one global worker; API/watchdog share incident identities; preclaim alerts and reconcile ambiguous provider outcomes.
 - [Inbound SMS policy](inbound-sms-policy.md) — retain unknown/STOP receipts privately; ambiguous phone matches stay unlinked; tenant comes from the assigned webhook endpoint.
+- [LTP test recovery](ltp-test-recovery-policy.md) — archive test evidence, reset the same live root, preserve uniqueness/messages; test clocks require actual stored destination proof.
+- [Coupon call measurement](coupon-call-measurement.md) — historical upsert totals and current live signups do not establish exact past HTTP cost; use recorded run counters.

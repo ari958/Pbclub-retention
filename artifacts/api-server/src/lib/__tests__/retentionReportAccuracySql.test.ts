@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { operatorPostgresFixture } from "./fixtures/operatorPostgres";
 
 const migration = readFileSync(new URL("../../../migrations/023_retention_report_accuracy_views.sql", import.meta.url), "utf8");
+const labelMigration = readFileSync(new URL("../../../migrations/024_retention_test_history_and_unsent_audit.sql", import.meta.url), "utf8");
 const id = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 test("view-only accuracy migration: windows, boundary, booking, tests, unsent, privacy and reapplication", () => {
@@ -11,6 +12,7 @@ test("view-only accuracy migration: windows, boundary, booking, tests, unsent, p
   try {
     assert.doesNotMatch(migration, /\b(?:UPDATE|DELETE|INSERT|CREATE\s+(?:TABLE|FUNCTION)|ALTER\s+TABLE)\b/i);
     db.sql(`
+      UPDATE clubs SET slug='pb-club' WHERE id='${id(1)}';
       CREATE TABLE players(id uuid PRIMARY KEY,club_id uuid,name text);
       CREATE TABLE conversations(id uuid,club_id uuid,player_id uuid);
       CREATE TABLE messages(id uuid PRIMARY KEY,player_id uuid,conversation_id uuid,body text,direction text,
@@ -60,6 +62,15 @@ test("view-only accuracy migration: windows, boundary, booking, tests, unsent, p
       INSERT INTO retention_ltp_test_controls VALUES('${id(1)}','${id(13)}');`);
     assert.equal(db.sql("SELECT count(*) FROM playbook_outcomes"), "0");
     assert.equal(db.sql("SELECT count(*) FROM playbook_outcomes_audit WHERE is_test"), "4");
+    const beforeView = db.sql("SELECT pg_get_viewdef('playbook_outcomes'::regclass)");
+    assert.equal(db.sql("SELECT outcome FROM playbook_outcomes_audit WHERE step1_sent_at IS NULL"), "no_booking");
+    assert.doesNotMatch(labelMigration, /\b(?:UPDATE|DELETE|INSERT|CREATE\s+(?:TABLE|FUNCTION)|ALTER\s+TABLE)\b/i);
+    db.sql(labelMigration);
+    assert.equal(db.sql("SELECT outcome FROM playbook_outcomes_audit WHERE step1_sent_at IS NULL"), "not_started");
+    assert.equal(db.sql("SELECT pg_get_viewdef('playbook_outcomes'::regclass)"), beforeView);
+    assert.equal(db.sql("SELECT count(*) FROM playbook_outcomes"), "0");
+    db.sql(labelMigration);
+    assert.equal(db.sql("SELECT outcome FROM playbook_outcomes_audit WHERE step1_sent_at IS NULL"), "not_started");
     assert.equal(db.sql("SELECT count(*) FROM retention_sequences"), "5", "nothing deleted or rewritten by views");
     assert.equal(db.sql("SELECT has_table_privilege('anon','playbook_outcomes_audit','SELECT') OR has_table_privilege('authenticated','playbook_outcomes','SELECT')"), "f");
     assert.match(db.sql("SET ROLE service_role; SELECT count(*) FROM playbook_outcomes_audit; RESET ROLE;"), /\b5\b/);

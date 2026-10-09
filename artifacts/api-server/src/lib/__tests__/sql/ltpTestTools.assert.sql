@@ -21,6 +21,9 @@ INSERT INTO public.retention_candidates(id,club_id,player_id,playbook_key,trigge
  ('00000000-0000-4000-8000-000000000008','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','ltp_followup','trigger-test','{"trigger":{"date":"2026-09-20"}}','sent','00000000-0000-4000-8000-000000000004',1,'00000000-0000-4000-8000-000000000006'),
  ('00000000-0000-4000-8000-000000000009','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000003','ltp_followup','trigger-real','{"trigger":{"date":"2026-09-20"}}','sent','00000000-0000-4000-8000-000000000005',1,'00000000-0000-4000-8000-000000000007');
 CREATE TEMP TABLE unchanged_messages AS SELECT * FROM public.messages;
+UPDATE public.messages SET twilio_message_sid='SMfixture' WHERE id='00000000-0000-4000-8000-000000000004';
+DROP TABLE unchanged_messages;
+CREATE TEMP TABLE unchanged_messages AS SELECT * FROM public.messages;
 DO $test$
 DECLARE club uuid:='00000000-0000-4000-8000-000000000001';
   step1 uuid:='00000000-0000-4000-8000-000000000008'; result jsonb; refused boolean:=false;
@@ -33,7 +36,21 @@ BEGIN
     '{"candidate_id":"00000000-0000-4000-8000-000000000009","actor":"Fixture operator"}',true);
   EXCEPTION WHEN OTHERS THEN refused:=true; END;
   PERFORM public.fixture_assert(refused,'real step-1 send cannot be backdated');
-  result:=public.retention_ltp_test_rpc(club,'backdate',jsonb_build_object('candidate_id',step1,'actor','Fixture operator'),true);
+  refused:=false;
+  BEGIN PERFORM public.retention_ltp_test_rpc(club,'backdate',jsonb_build_object('candidate_id',step1,'actor','Fixture operator'),true);
+  EXCEPTION WHEN insufficient_privilege THEN refused:=true; END;
+  PERFORM public.fixture_assert(refused,'test flags alone do not prove override destination');
+  refused:=false;
+  BEGIN PERFORM public.retention_ltp_test_rpc(club,'backdate',jsonb_build_object('candidate_id',step1,
+    'actor','Fixture operator','override_to','+12015550100','destination_evidence_source','twilio_stored',
+    'verified_destinations',jsonb_build_array(jsonb_build_object(
+      'message_id','00000000-0000-4000-8000-000000000004','twilio_message_sid','SMfixture','to','+12015550101'))),true);
+  EXCEPTION WHEN insufficient_privilege THEN refused:=true; END;
+  PERFORM public.fixture_assert(refused,'wrong stored destination refused');
+  result:=public.retention_ltp_test_rpc(club,'backdate',jsonb_build_object('candidate_id',step1,
+    'actor','Fixture operator','override_to','+12015550100','destination_evidence_source','twilio_stored',
+    'verified_destinations',jsonb_build_array(jsonb_build_object(
+      'message_id','00000000-0000-4000-8000-000000000004','twilio_message_sid','SMfixture','to','+12015550100'))),true);
   PERFORM public.fixture_assert(result->>'action'='backdate','backdate writes an audit entry');
   PERFORM public.fixture_assert((result->>'original_sent_at')::timestamptz-(result->>'effective_sent_at')::timestamptz=interval '7 days','effective timestamp backdated exactly seven days');
   result:=public.retention_ltp_test_rpc(club,'due',jsonb_build_object('candidate_ids',jsonb_build_array(step1)),true);

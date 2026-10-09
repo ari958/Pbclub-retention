@@ -1,12 +1,7 @@
--- BLOCKED DRAFT: do NOT apply this file.
+-- Apply in the EXISTING external Supabase SQL Editor. VIEW CHANGES ONLY.
 -- Migration 023 is already applied. Do not rerun 022 or 023.
--- The requested fresh live sequences require schema changes beyond the audit
--- label. Per the user's stop condition, no external changes or recovery writes
--- have been made. Review the proposal below before completing this migration.
+-- Capture the SELECT counts below before and after applying this file.
 BEGIN;
-DO $$ BEGIN
-  RAISE EXCEPTION '024 is blocked pending approval of test-history schema changes and compatible recovery writers; nothing has been applied';
-END $$;
 
 -- Step 1: preserve the existing column order and sent-only production cohort.
 -- Do not replace public.playbook_outcomes: its definition remains unchanged.
@@ -82,67 +77,8 @@ LEFT JOIN LATERAL (
 REVOKE ALL ON public.playbook_outcomes_audit FROM PUBLIC,anon,authenticated;
 GRANT SELECT ON public.playbook_outcomes_audit TO service_role;
 
-/*
-STEP 2 SCHEMA PROPOSAL — NOT APPROVED OR EXECUTABLE.
-
-Problem:
-  retention_sequences UNIQUE(club_id,player_id,playbook_key) prevents a fresh
-  sequence while the original test sequence is retained.
-  retention_candidates_player_playbook_step_unique currently applies WHERE
-  prelaunch_superseded_by IS NULL; the existing prelaunch replacement mechanism
-  alone cannot preserve a separate original test sequence and create a new root.
-
-Proposed additive history marker (original IDs, playbook keys, sent timestamps,
-message references, delivery evidence, and test controls remain intact):
-
-  ALTER TABLE public.retention_sequences
-    ADD COLUMN test_history_archived_at timestamptz;
-  ALTER TABLE public.retention_candidates
-    ADD COLUMN test_history_archived_at timestamptz;
-
-Replace ONLY the sequence UNIQUE constraint over exactly
-(club_id,player_id,playbook_key), resolving its installed name through
-pg_constraint/pg_attribute, with:
-
-  CREATE UNIQUE INDEX retention_sequences_current_player_playbook_unique
-    ON public.retention_sequences(club_id,player_id,playbook_key)
-    WHERE test_history_archived_at IS NULL;
-
-Replace ONLY the current player/playbook/step index:
-
-  DROP INDEX public.retention_candidates_player_playbook_step_unique;
-  CREATE UNIQUE INDEX retention_candidates_player_playbook_step_unique
-    ON public.retention_candidates(player_id,playbook_key,step)
-    WHERE prelaunch_superseded_by IS NULL AND test_history_archived_at IS NULL;
-
-Keep the sequence/step uniqueness index unchanged: a new sequence has a
-different ID, so it does not collide with its historical sequence's steps.
-
-REQUIRED BEFORE THIS PROPOSAL CAN BE APPLIED:
-  - Update all sequence/candidate ON CONFLICT targets to match the partial
-    predicates; otherwise PostgreSQL rejects existing enrolment writers.
-  - Update current-sequence/candidate lookups, due jobs, approval and dispatch
-    eligibility to exclude archived history. Preserve audit view joins/history.
-  - Implement a locked, transactional recovery operation that verifies ALL
-    original provider destinations, current booking evidence, and tenant scope.
-    Only verified test histories may be archived; never real sends. Recheck
-    booking eligibility before recovery; booked players are not re-enrolled.
-  - Atomically archive the original test root/candidates and create the fresh
-    live root through the normal draft pipeline, preserving capacity, matching,
-    coupon validation and validator checks. No approvals or dispatch.
-  - Preserve test-history classification and prohibit historical approvals/
-    dispatch, without changing original messages or the old playbook key.
-  - Exercise rollback, retry, uniqueness and concurrent recovery in isolated
-    PostgreSQL fixtures. Do not run this draft against external Supabase.
-
-No history is marked and no data is changed merely by proposing this schema.
-A fresh unsent live sequence is not_started in playbook_outcomes_audit; it is
-absent from sent-only playbook_outcomes until step 1 is genuinely sent.
-*/
-
 COMMIT;
 
--- Capture these SELECTs before and after a later approved, completed migration.
 SELECT outcome,count(*) AS sequences
 FROM public.playbook_outcomes_audit
 WHERE playbook_key='ltp_followup' AND club_id=(
