@@ -1,5 +1,11 @@
 # Production deployment preparation
 
+> **2026-10-09: hosting moved to Railway.** Replit-specific parts of this document
+> (Reserved VM, `artifact.toml`, the dashboard gateway on port 23183, two
+> services) are historical. Current hosting and the cutover runbook are in
+> `RUNBOOK.md` under "Hosting". The checks, migrations and operating rules
+> below still apply.
+
 ## Status and boundaries
 
 Prepared for **Reserved VM (`deploymentTarget = "vm"`), one VM instance**. Autoscale is not acceptable for this app.

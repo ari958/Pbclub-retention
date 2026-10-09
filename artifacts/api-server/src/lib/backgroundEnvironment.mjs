@@ -1,8 +1,8 @@
 // Pure configuration policy shared by runtime and the offline publishing gate.
 // Importing this module must never initialize workers or external clients.
 // Hard kill switch. SCHEDULER_ENABLED is set ONLY as a secret on the one live
-// deployment, never in .replit or artifact.toml, so a remix, fork or second
-// deployment inherits RUN_BACKGROUND_JOBS=true but stays off. Default: off.
+// deployment, never in any committed config, so a fork, staging copy or second
+// deployment that copies RUN_BACKGROUND_JOBS=true still stays off. Default: off.
 export function schedulerDesignatedForEnvironment(env) {
   return env.NODE_ENV === "production" && env.SCHEDULER_ENABLED === "true";
 }

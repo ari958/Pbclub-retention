@@ -1,95 +1,37 @@
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
-import { fileURLToPath } from "node:url";
 import { test, type TestContext } from "node:test";
 import express from "express";
 import { operatorRouter, requireOperator, requireSameOrigin } from "../operatorAuth";
 
 // Do not import the API app/index: those wire up database/provider clients and workers.
-// The only upstream is a loopback fixture using the real operator middleware.
+// The fixture is a loopback app using the real operator middleware.
 process.env.NODE_ENV = "test";
 process.env.OPERATOR_PASSWORD = "offline-gateway-fixture-password";
 process.env.RUN_BACKGROUND_JOBS = "false";
 process.env.SMS_LIVE = "false";
 delete process.env.PUBLIC_API_URL;
 
-const root = fileURLToPath(new URL("../../../../../", import.meta.url));
-const config = await readFile(new URL("../../../../dashboard/.replit-artifact/artifact.toml", import.meta.url), "utf8");
+const railway = JSON.parse(await readFile(new URL("../../../../../railway.json", import.meta.url), "utf8"));
+const healthPath: string = railway.deploy.healthcheckPath;
 
-function configSection(name: string): string {
-  const sections = config.split(/^\[([^\]\n]+)\]\s*$/m);
-  const index = sections.indexOf(name);
-  assert.notEqual(index, -1, `Missing artifact section [${name}]`);
-  return sections[index + 1];
-}
-
-const production = configSection("services.production");
-const command: string[] = JSON.parse(production.match(/^run\s*=\s*(\[.*\])\s*$/m)?.[1] ?? "null");
-const startup = configSection("services.production.health.startup");
-const healthPath = JSON.parse(startup.match(/^path\s*=\s*(".*")\s*$/m)?.[1] ?? "null");
-
-async function startGateway(t: TestContext, apiPort: number): Promise<string> {
-  // Observe the real entrypoint's ephemeral listener via a test-only preload.
-  // This avoids fixed ports, reservation races, and changing production code for tests.
-  const observer = `import http from "node:http";
-    const listen = http.Server.prototype.listen;
-    http.Server.prototype.listen = function (...args) {
-      this.once("listening", () => process.send({ port: this.address().port }));
-      return listen.apply(this, args);
-    };`;
-  assert.deepEqual(command, ["node", "artifacts/dashboard/production-gateway.mjs"]);
-  const child = spawn(process.execPath, [
-    "--import", `data:text/javascript,${encodeURIComponent(observer)}`, ...command.slice(1),
-  ], {
-    cwd: root,
-    // Deliberately do not inherit workspace credentials or provider settings.
-    env: { NODE_ENV: "test", PORT: "0", API_PORT: String(apiPort),
-      RUN_BACKGROUND_JOBS: "false", SMS_LIVE: "false" },
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-  });
-  let output = "";
-  child.stdout!.on("data", (chunk) => { output += chunk; });
-  child.stderr!.on("data", (chunk) => { output += chunk; });
-  t.after(async () => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise<void>((resolve) => {
-      child.once("exit", () => resolve());
-      child.kill("SIGKILL");
-    });
-  });
-  const port = await new Promise<number>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`Gateway did not listen: ${output}`)), 5_000);
-    const finish = (error?: Error, value?: number) => {
-      clearTimeout(timer);
-      if (error) reject(error);
-      else resolve(value!);
-    };
-    child.once("error", (error) => finish(error));
-    child.once("exit", (code) => finish(new Error(`Gateway exited (${code}): ${output}`)));
-    child.once("message", (message) => {
-      const bound = (message as { port: number }).port;
-      if (!Number.isInteger(bound) || bound <= 0) finish(new Error("Invalid gateway listener"));
-      else finish(undefined, bound);
-    });
-  });
-  return `http://127.0.0.1:${port}`;
-}
-
-test("production startup probe uses public API health, not protected HTML", () => {
+test("production deploy config: single service, public API health, one replica", () => {
   assert.equal(healthPath, "/api/healthz");
-  assert.deepEqual(command, ["node", "artifacts/dashboard/production-gateway.mjs"]);
+  assert.equal(railway.deploy.startCommand, "node --enable-source-maps artifacts/api-server/dist/index.mjs");
+  assert.equal(railway.build.buildCommand, "node artifacts/api-server/production-build.mjs");
+  // Two replicas would contend for the scheduler lease; one is elected, the other idles.
+  assert.equal(railway.deploy.numReplicas, 1);
 });
 
-test("production gateway readiness and operator protection (offline)", { timeout: 20_000 }, async (t) => {
+test("operator protection on the production entry (offline)", { timeout: 20_000 }, async (t: TestContext) => {
   let healthStatus = 200;
-  let disconnectHealth = false;
   const healthy = { status: "ok", db_reachable: true, sms_live: false, paused: false };
   const degraded = { status: "degraded", db_reachable: false, sms_live: false, paused: null };
   const requests: Array<{ method: string; url: string; cookie?: string }> = [];
   const app = express();
+  app.set("trust proxy", 1);
   app.use((req, _res, next) => {
     requests.push({ method: req.method, url: req.url, cookie: req.headers.cookie });
     next();
@@ -103,29 +45,23 @@ test("production gateway readiness and operator protection (offline)", { timeout
   });
   app.use(requireSameOrigin);
   app.get("/api/healthz", (_req, res) => {
-    if (disconnectHealth) {
-      res.destroy();
-      return;
-    }
     res.setHeader("Cache-Control", "no-store");
     res.status(healthStatus).json(healthStatus === 200 ? healthy : degraded);
   });
   app.get("/dashboard/assets/app.js", (_req, res) => res.type("js").send("/* protected fixture */"));
   app.get("/dashboard/{*page}", (_req, res) => res.send("protected dashboard fixture"));
-  const upstream = http.createServer(app);
-  await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
-  const closeUpstream = () => new Promise<void>((resolve, reject) => {
-    if (!upstream.listening) return resolve();
-    upstream.close((error) => error ? reject(error) : resolve());
-    upstream.closeAllConnections();
-  });
-  t.after(closeUpstream);
-  const base = await startGateway(t, (upstream.address() as AddressInfo).port);
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+    server.closeAllConnections();
+  }));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const request = (path: string, init: RequestInit = {}) => fetch(`${base}${path}`, {
     redirect: "manual", signal: AbortSignal.timeout(3_000), ...init,
   });
 
-  await t.test("anonymous startup GET and HEAD succeed through the gateway", async () => {
+  await t.test("anonymous startup GET and HEAD succeed on the health check", async () => {
     const response = await request(healthPath);
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
@@ -158,7 +94,7 @@ test("production gateway readiness and operator protection (offline)", { timeout
     assert.equal((await request("/api/operator/login")).status, 200);
   });
 
-  await t.test("login cookie, protected assets, and logout are forwarded without weakening auth", async () => {
+  await t.test("login cookie, protected assets, and logout keep auth intact", async () => {
     const login = await request("/api/operator/login", {
       method: "POST",
       body: new URLSearchParams({ password: "offline-gateway-fixture-password", label: "Offline fixture" }),
@@ -171,13 +107,12 @@ test("production gateway readiness and operator protection (offline)", { timeout
     const asset = await request("/dashboard/assets/app.js?version=fixture", { headers: { cookie } });
     assert.equal(asset.status, 200);
     assert.equal(await asset.text(), "/* protected fixture */");
-    assert.deepEqual(requests.at(-1), { method: "GET", url: "/dashboard/assets/app.js?version=fixture", cookie });
     assert.equal((await request("/dashboard/c/fixture/dashboard", { headers: { cookie } })).status, 200);
     assert.equal((await request("/api/operator/logout", { method: "POST", headers: { cookie } })).status, 303);
     assert.equal((await request("/dashboard/assets/app.js", { headers: { cookie } })).status, 401);
   });
 
-  await t.test("degraded and failed upstream health never become successful readiness", async () => {
+  await t.test("degraded health never becomes successful readiness", async () => {
     for (const status of [503, 500, 502]) {
       healthStatus = status;
       const response = await request(healthPath);
@@ -188,28 +123,6 @@ test("production gateway readiness and operator protection (offline)", { timeout
       assert.equal((await request("/dashboard/assets/app.js")).status, 401);
     }
     healthStatus = 200;
-    const recovered = await request(healthPath);
-    assert.equal(recovered.status, 200);
-    assert.deepEqual(await recovered.json(), healthy);
-  });
-
-  await t.test("disconnected upstream health fails closed, then recovers", async () => {
-    disconnectHealth = true;
-    const response = await request(healthPath);
-    assert.equal(response.status, 503);
-    assert.equal(response.ok, false);
-    assert.equal(await response.text(), "API unavailable");
-    disconnectHealth = false;
-    assert.equal((await request(healthPath)).status, 200);
-  });
-
-  await t.test("unavailable API cannot pass readiness or expose dashboard fallback content", async () => {
-    await closeUpstream();
-    for (const path of [healthPath, "/dashboard/", "/dashboard/assets/app.js"]) {
-      const response = await request(path);
-      assert.equal(response.status, 503, path);
-      assert.equal(response.ok, false);
-      assert.equal(await response.text(), "API unavailable");
-    }
+    assert.deepEqual(await (await request(healthPath)).json(), healthy);
   });
 });

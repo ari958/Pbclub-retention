@@ -12,11 +12,11 @@ If anything in this file disagrees with the code, the code wins. Say so and prop
 
 ## ⚠️ Production is live. Read this before running anything.
 
-Real SMS goes to real PB Club players. Production runs on a Replit Reserved VM (`retention-agent-ari205.replit.app`). The Learn to Play follow-up flow went live 2026-10-08.
+Real SMS goes to real PB Club players. Production is one Railway service deployed from `main` (`railway.json`; cutover from Replit in progress, see `RUNBOOK.md` "Hosting"). The Learn to Play follow-up flow went live 2026-10-08.
 
 **Hard rules for any non-production environment:**
 - `SMS_LIVE=false`. Never set it to true outside production. A server with `SMS_LIVE=true` and `NODE_ENV` other than `production` refuses to start (`backgroundEnvironment.mjs`, `nonProductionLiveSmsError`).
-- The scheduler must be OFF. It runs only when `NODE_ENV=production`, `RUN_BACKGROUND_JOBS=true` **and** `SCHEDULER_ENABLED=true` (`backgroundEnvironment.mjs`). Live texts also need `SCHEDULER_ENABLED=true`. `SCHEDULER_ENABLED` is a Secret on the one live deployment only. Never commit it or set it anywhere else: `artifact.toml` hard-codes `NODE_ENV=production` and `RUN_BACKGROUND_JOBS=true` for every deployment, so it is the only thing keeping a remix or second deployment quiet.
+- The scheduler must be OFF. It runs only when `NODE_ENV=production`, `RUN_BACKGROUND_JOBS=true` **and** `SCHEDULER_ENABLED=true` (`backgroundEnvironment.mjs`). Live texts also need `SCHEDULER_ENABLED=true`. `SCHEDULER_ENABLED` is a variable on the one live service only. Never commit it or set it anywhere else: it is the only thing keeping a staging copy or second service with copied env vars quiet.
 - Two instances on the **same** Supabase project can't both run the scheduler: a database lease elects one leader (`backgroundWorker.ts`, `backgroundLock.ts`). That lease does nothing for an instance pointed at a **different** database (a copy of prod data plus real Twilio credentials would text players). Hence the kill switch.
 - Never run batch jobs (`nightly_sync`, churn, milestones, recaps, post-session feedback) against the production Supabase project from dev unless explicitly told to.
 - Never send to a real player number from dev. Ari's own number is a registered player record and is the only acceptable test recipient.
@@ -42,8 +42,9 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 - Install: `pnpm install`
 - Dev server (API): `pnpm --filter @workspace/api-server run dev`. Bundles with esbuild, then runs `dist/index.mjs` with `NODE_ENV=development`, so background jobs can't start. Needs `PORT`, `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. Exits on boot if the default club can't be resolved.
 - Dev server (dashboard): `pnpm --filter @workspace/dashboard run dev`. Needs `PORT`, `BASE_PATH` (`/dashboard/`) and `DEFAULT_CLUB_SLUG`. Proxies `/api` to `localhost:${API_PORT:-8080}`.
+- Production build (what Railway runs): `node artifacts/api-server/production-build.mjs`. Validates env, runs a read-only Supabase preflight (needs real credentials), then builds dashboard and API. Start: `node --enable-source-maps artifacts/api-server/dist/index.mjs`; the API serves the dashboard at `/dashboard`.
 - Typecheck: `pnpm run typecheck`. Runs `tsc --build` on `lib/*`, then `tsc -p tsconfig.json --noEmit` in each artifact and in `scripts`. Run it before declaring any change done.
-- Build: `pnpm run build`. Typechecks, then builds every package. Needs `PORT`, `BASE_PATH` and `DEFAULT_CLUB_SLUG` set (the mockup-sandbox and dashboard vite configs throw without them).
+- Build: `pnpm run build`. Typechecks, then builds every package. Needs `PORT`, `BASE_PATH` and `DEFAULT_CLUB_SLUG` set (the dashboard vite config throws without them).
 - Tests (api-server, `node:test` via tsx). Always run them with `SMS_LIVE=false RUN_BACKGROUND_JOBS=false NODE_ENV=test` and `SMS_TEST_OVERRIDE_TO` unset.
   - `pnpm --filter @workspace/api-server run test:publishing-health`: offline, but `SUPABASE_URL` must be set to something (a dummy works) or the client constructor throws.
   - `pnpm --filter @workspace/api-server run test:production-preflight`: offline.

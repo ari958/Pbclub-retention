@@ -30,8 +30,8 @@ test("password is required and must meet the production runtime's 16-character m
 
 test("published and custom HTTPS origins, with optional trailing slash, are valid", () => {
   for (const url of [
-    "https://fixture.replit.app",
-    "https://fixture.replit.app/",
+    "https://fixture.up.railway.app",
+    "https://fixture.up.railway.app/",
     "https://production.example.com",
     "https://production.example.com/",
   ]) assert.deepEqual(validateProductionEnvironment({ ...valid(), PUBLIC_API_URL: url }), []);
@@ -193,10 +193,10 @@ test("actual CLI rejects malformed destinations and absent transport before any 
 test("invalid, development, non-origin, and credential-bearing URLs fail safely", () => {
   for (const url of [
     undefined, "", "not-a-url", "https://", "http://production.example.com",
-    "https:////production.example.com", "https://replit.dev", "https://fixture.replit.dev",
-    "https://fixture.replit.dev./", "https://replit.dev./", "https://localhost./", "https://./",
+    "https:////production.example.com", "ftp://production.example.com",
+    "https://localhost./", "https://./",
     "https://production.example.com\\", "https://\\production.example.com",
-    "https://FIXTURE.REPLIT.DEV/", "https://localhost", "https://fixture.localhost",
+    "https://localhost", "https://fixture.localhost",
     "https://127.0.0.1", "https://[::1]", "https://0.0.0.0",
     "https://user:private-url-password@production.example.com",
     "https://production.example.com/api", "https://production.example.com?private=query",

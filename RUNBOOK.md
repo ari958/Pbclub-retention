@@ -83,11 +83,11 @@ scheduler, queue poller, watchdog and every live SMS send require all of:
 - `SCHEDULER_ENABLED=true` (exact string)
 - `RUN_BACKGROUND_JOBS=true` for background jobs; `SMS_LIVE=true` for texts
 
-Set `SCHEDULER_ENABLED` **only as a Secret on the live deployment**. Never put it
-in `.replit`, `artifact.toml` or any committed file: those are inherited by every
-remix, fork and second deployment, which is exactly what this switch exists to
-stop. When moving to Railway, set it on the Railway service and delete it from
-Replit **before** the Railway service starts, so two schedulers never run.
+Set `SCHEDULER_ENABLED` **only as a variable on the live service**. Never put it
+in any committed file: committed config is inherited by every fork, staging copy
+and second service, which is exactly what this switch exists to stop. Two
+services on the same Supabase project cannot both run the scheduler (database
+lease), but set it on one service at a time anyway.
 
 To check: the `Server listening` boot log shows `scheduler_designated` and the
 effective `sms_live`. A production instance without the secret logs a warning,
@@ -100,6 +100,67 @@ Code: `artifacts/api-server/src/lib/backgroundEnvironment.mjs`
 
 ---
 
+## Hosting (Railway, one service)
+
+Deployed from GitHub `main` on push. `railway.json` sets the build
+(`node artifacts/api-server/production-build.mjs`), the start command, the
+health check (`/api/healthz`) and **one replica**. The API process serves the
+dashboard at `/dashboard`; there is no second service. Pre-launch items 1-4
+above predate this and refer to the old Replit setup; the rules still hold.
+
+### Service variables
+
+Copy values from the previous host's secrets. All are read at runtime; the
+ones marked (build) are also needed during the build.
+
+| Variable | Value / note |
+|---|---|
+| `NODE_ENV` | `production` |
+| `PORT` | Railway sets this; leave unset |
+| `PUBLIC_API_URL` | `https://<service domain>` (build: validated) |
+| `RUN_BACKGROUND_JOBS` | `true` (build: validated) |
+| `SMS_LIVE` | `true` |
+| `SCHEDULER_ENABLED` | `true`, set **last**, during cutover (see below) |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | (build: preflight) |
+| `SUPABASE_ANON_KEY` | (build: compiled into the dashboard) |
+| `OPERATOR_PASSWORD` | 16+ characters (build: validated) |
+| `ALERT_OPERATOR_TO` | E.164 (build: validated) |
+| `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER` | (build: validated) |
+| `TWILIO_MESSAGING_SERVICE_SID` | only if a messaging service is used |
+| `ANTHROPIC_API_KEY` | the only Anthropic key read |
+| `PODPLAY_API_KEY` | |
+| `DEFAULT_CLUB_SLUG` | `pb-club` (build) |
+| `RETENTION_ONLY_MODE` | `true` |
+| `REQUIRE_MARKETING_CONSENT` | `false` |
+| `VITE_NAV_MODE` | `retention` (build) |
+| `SMS_TEST_OVERRIDE_TO` | unset, except during an operator test |
+
+### Cutover from Replit (do once, after 7:30pm ET)
+
+The database lease makes this safe: the new service stays on standby until the
+old one stops, so the scheduler never runs twice.
+
+1. Create the service from `main` with every variable above **except**
+   `SCHEDULER_ENABLED`. It boots as API + dashboard only. Log in, check
+   `/api/healthz` returns `background_jobs: false`, press nothing.
+2. Outside the texting window, in this order:
+   - Twilio console: point the inbound SMS webhook at
+     `https://<service domain>/api/messages/webhook/inbound`. Status callbacks
+     follow `PUBLIC_API_URL` automatically.
+   - Railway: set `SCHEDULER_ENABLED=true`. Logs show "Background worker
+     standby: another process holds the global lease".
+   - Replit: stop the deployment. Within ~2 minutes Railway logs "Background
+     worker elected".
+   - `/api/healthz` shows `background_jobs: true`, `sms_live: true`. Set
+     `SMS_TEST_OVERRIDE_TO`, send one operator test from Settings, unset it.
+3. Next morning: confirm the nightly run completed, then delete the Replit
+   deployment and archive the workspace. It is no longer a dev environment.
+
+Delivery receipts for texts sent by Replit in its final minutes post to the old
+URL and are lost; doing step 2 after 7:30pm makes that set empty.
+
+---
+
 ## Changelog
 
 - **2026-10-09**: Added the `SCHEDULER_ENABLED` kill switch (above). Routed the
@@ -107,6 +168,10 @@ Code: `artifacts/api-server/src/lib/backgroundEnvironment.mjs`
   client no longer writes. Milestone and monthly-recap generation now use the
   shared `AGENT_MODEL` (`anthropicConfig.ts`) instead of a hard-coded
   `claude-sonnet-4-5`. Rewrote `CLAUDE.md` against the code.
+- **2026-10-09**: Removed Replit: `.replit`, artifact configs, the dashboard
+  proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
+  plugins. Added `railway.json`, pinned Node 22. Production is one Railway
+  service; see "Hosting" below for the cutover.
 - **2026-10-09**: Operator test messages moved to the new private table
   `operator_test_messages` (migration 030). They never write `messages` or
   `contact_ledger`, whose live constraints rejected them.

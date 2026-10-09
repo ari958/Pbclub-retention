@@ -11,7 +11,7 @@ import {
 const live = { NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true", SMS_LIVE: "true", SCHEDULER_ENABLED: "true" };
 
 test("SCHEDULER_ENABLED defaults off: production config alone starts nothing and sends nothing", () => {
-  // Exactly what artifact.toml + .replit [userenv.production] give every deployment.
+  // What a copied set of production env vars gives any second deployment.
   const inherited = { NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true", SMS_LIVE: "true" };
   assert.equal(schedulerDesignatedForEnvironment(inherited), false);
   assert.equal(backgroundJobsEnabledForEnvironment(inherited), false);

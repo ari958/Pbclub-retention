@@ -25,7 +25,7 @@ if (liveSmsError) throw new Error(liveSmsError);
 if (process.env.NODE_ENV === "production") {
   if (!process.env.OPERATOR_PASSWORD || process.env.OPERATOR_PASSWORD.length < 16) throw new Error("Production requires OPERATOR_PASSWORD with at least 16 characters");
   const publicUrl = process.env.PUBLIC_API_URL;
-  if (!publicUrl || !publicUrl.startsWith("https://") || new URL(publicUrl).hostname.endsWith(".replit.dev")) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin, not the workspace URL");
+  if (!publicUrl || !publicUrl.startsWith("https://") || /^(localhost|127\.|\[::1\])/.test(new URL(publicUrl).hostname)) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin");
   const workerErrors = productionWorkerConfigurationErrors(process.env);
   if (workerErrors.length) throw new Error(workerErrors.join("\n"));
 }
