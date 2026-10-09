@@ -1,8 +1,8 @@
--- DRY-RUN PROPOSAL ONLY. DO NOT APPLY without renewed live booking checks.
+-- WRITE-ONLY PROPOSAL. DO NOT APPLY without renewed live booking checks.
 -- Leave uniqueness, conflict targets, and message rows completely untouched.
 -- This transaction refuses recovery unless an operator supplies a fresh
 -- live-check timestamp and identity in the same SQL session. No draft/send RPC
--- is called: normal pipeline drafting remains a separate, approval-only step.
+-- is called: these four override-contaminated roots are terminally closed.
 BEGIN;
 CREATE TABLE IF NOT EXISTS public.retention_test_history (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -25,6 +25,73 @@ CREATE TABLE IF NOT EXISTS public.retention_test_history (
 ALTER TABLE public.retention_test_history ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.retention_test_history FROM PUBLIC,anon,authenticated;
 GRANT ALL ON public.retention_test_history TO service_role;
+
+-- Both statuses are TEXT with dedicated CHECK constraints in migration 013,
+-- not enums. Preserve every existing value and all identity/uniqueness checks.
+ALTER TABLE public.retention_sequences
+  DROP CONSTRAINT IF EXISTS retention_sequences_sequence_status_check;
+ALTER TABLE public.retention_sequences
+  ADD CONSTRAINT retention_sequences_sequence_status_check CHECK (
+    sequence_status IN ('active','paused_reply','exited_booked','exited_opt_out','completed','exited_test')
+  );
+ALTER TABLE public.retention_candidates
+  DROP CONSTRAINT IF EXISTS retention_candidates_sequence_status_check;
+ALTER TABLE public.retention_candidates
+  ADD CONSTRAINT retention_candidates_sequence_status_check CHECK (
+    sequence_status IN ('active','paused_reply','exited_booked','exited_opt_out','completed','exited_test')
+  );
+
+-- Existing transition RPCs do not know exited_test and could otherwise turn
+-- it into exited_booked/completed. Protect the terminal state at the write
+-- boundary without replacing RPCs or changing other sequences' behavior.
+CREATE OR REPLACE FUNCTION public.retention_preserve_test_terminal_root()
+RETURNS trigger LANGUAGE plpgsql SET search_path=public,pg_temp AS $$
+BEGIN
+  IF OLD.sequence_status='exited_test' AND (
+    NEW.sequence_status IS DISTINCT FROM 'exited_test'
+    OR NEW.exit_reason IS DISTINCT FROM 'test_override_sends'
+    OR NEW.booked_event_id IS NOT NULL
+    OR NEW.exited_at IS DISTINCT FROM OLD.exited_at
+    OR ROW(NEW.club_id,NEW.player_id,NEW.playbook_key,NEW.trigger_event_id,
+      NEW.step1_sent_at,NEW.step2_sent_at,NEW.step1_message_id,NEW.step2_message_id,NEW.step1_delivery_kind)
+      IS DISTINCT FROM ROW(OLD.club_id,OLD.player_id,OLD.playbook_key,OLD.trigger_event_id,
+      OLD.step1_sent_at,OLD.step2_sent_at,OLD.step1_message_id,OLD.step2_message_id,OLD.step1_delivery_kind)
+  ) THEN
+    RAISE EXCEPTION 'Override-test sequence is terminal; cannot reactivate or mark booked'
+      USING ERRCODE='42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.retention_preserve_test_terminal_root() FROM PUBLIC,anon,authenticated,service_role;
+DROP TRIGGER IF EXISTS retention_preserve_test_terminal_root ON public.retention_sequences;
+CREATE TRIGGER retention_preserve_test_terminal_root
+  BEFORE UPDATE ON public.retention_sequences
+  FOR EACH ROW EXECUTE FUNCTION public.retention_preserve_test_terminal_root();
+
+CREATE OR REPLACE FUNCTION public.retention_preserve_test_terminal_candidate()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public,pg_temp AS $$
+BEGIN
+  IF EXISTS(SELECT 1 FROM public.retention_sequences s WHERE s.id=NEW.sequence_id AND s.sequence_status='exited_test')
+    AND (NEW.status IS DISTINCT FROM 'skipped' OR NEW.sequence_status IS DISTINCT FROM 'exited_test'
+      OR NEW.exit_reason IS DISTINCT FROM 'test_override_sends' OR NEW.booked_event_id IS NOT NULL
+      OR NEW.exited_at IS NULL
+      OR COALESCE(NEW.context->'already_booked','false'::jsonb) IS DISTINCT FROM 'false'::jsonb
+      OR COALESCE(NEW.context->'booked_event','null'::jsonb) IS DISTINCT FROM 'null'::jsonb) THEN
+    RAISE EXCEPTION 'Override-test candidates cannot become dispatchable or booked'
+      USING ERRCODE='42501';
+  END IF;
+  IF TG_OP='UPDATE' AND OLD.sequence_status='exited_test'
+    AND ROW(NEW.sequence_id,NEW.club_id,NEW.player_id,NEW.playbook_key,NEW.step,NEW.message_id,NEW.exited_at)
+      IS DISTINCT FROM ROW(OLD.sequence_id,OLD.club_id,OLD.player_id,OLD.playbook_key,OLD.step,OLD.message_id,OLD.exited_at) THEN
+    RAISE EXCEPTION 'Override-test candidate identity and closure are immutable' USING ERRCODE='42501';
+  END IF;
+  RETURN NEW;
+END $$;
+REVOKE ALL ON FUNCTION public.retention_preserve_test_terminal_candidate() FROM PUBLIC,anon,authenticated,service_role;
+DROP TRIGGER IF EXISTS retention_preserve_test_terminal_candidate ON public.retention_candidates;
+CREATE TRIGGER retention_preserve_test_terminal_candidate
+  BEFORE INSERT OR UPDATE ON public.retention_candidates
+  FOR EACH ROW EXECUTE FUNCTION public.retention_preserve_test_terminal_candidate();
 
 -- The provider destinations below were independently fetched read-only.
 -- Never infer them from is_test or from a player's current phone.
@@ -54,10 +121,15 @@ BEGIN
     SELECT * INTO s FROM public.retention_sequences WHERE id=(entry->>'sequence_id')::uuid
       AND club_id=(SELECT id FROM public.clubs WHERE slug='pb-club') AND playbook_key='ltp_followup' FOR UPDATE;
     IF NOT FOUND THEN RAISE EXCEPTION 'Recovery sequence not found'; END IF;
-    -- Reapplication is a no-op for a root that was already recovered.
+    -- Reapplication is a no-op for a root already terminally closed.
     IF EXISTS(SELECT 1 FROM public.retention_test_history
       WHERE sequence_id=s.id AND original_step1_message_id=(entry->>'step1')::uuid)
-      AND s.step1_sent_at IS NULL AND s.step1_message_id IS NULL THEN CONTINUE; END IF;
+      AND s.sequence_status='exited_test' AND s.exit_reason='test_override_sends'
+      AND s.booked_event_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM public.retention_candidates c WHERE c.sequence_id=s.id
+        AND (c.sequence_status IS DISTINCT FROM 'exited_test' OR c.status IS DISTINCT FROM 'skipped'
+          OR c.exit_reason IS DISTINCT FROM 'test_override_sends' OR c.booked_event_id IS NOT NULL))
+      THEN CONTINUE; END IF;
     IF s.step1_message_id IS DISTINCT FROM (entry->>'step1')::uuid
       OR s.step1_sent_at IS NULL OR s.step1_delivery_kind IS DISTINCT FROM 'test' THEN
       RAISE EXCEPTION 'Recovery identity or original test evidence changed';
@@ -104,14 +176,19 @@ BEGIN
       WHERE club_id=s.club_id AND message_id=ANY(linked_ids);
     DELETE FROM public.retention_capacity_reservations WHERE sequence_id=s.id;
     DELETE FROM public.retention_ltp_test_controls WHERE sequence_id=s.id;
-    DELETE FROM public.retention_candidates WHERE sequence_id=s.id;
-    UPDATE public.retention_sequences SET step1_sent_at=NULL,step2_sent_at=NULL,
-      step1_message_id=NULL,step2_message_id=NULL,step1_delivery_kind=NULL,
-      sequence_status='active',exited_at=NULL,exit_reason=NULL,booked_event_id=NULL,updated_at=now()
+    -- Preserve actual send times/links/kind: they are immutable test evidence
+    -- and keep the unchanged live outcomes view's is_test classification true.
+    UPDATE public.retention_sequences SET sequence_status='exited_test',
+      exited_at=now(),exit_reason='test_override_sends',booked_event_id=NULL,updated_at=now()
       WHERE id=s.id;
+    UPDATE public.retention_candidates SET status='skipped',sequence_status='exited_test',
+      exited_at=now(),exit_reason='test_override_sends',booked_event_id=NULL,
+      context=COALESCE(context,'{}'::jsonb) || jsonb_build_object(
+        'already_booked',false,'booked_event',NULL,'reason','test_override_sends'),updated_at=now()
+      WHERE sequence_id=s.id;
     -- Players' last_outbound_at is intentionally untouched: it is null for all
     -- four audited players, and a concurrent real contact must never be cleared.
-    RAISE LOG 'LTP test history archived/reset sequence=% operator=%',s.id,actor;
+    RAISE LOG 'LTP test history archived/closed sequence=% operator=%',s.id,actor;
   END LOOP;
 END $recovery$;
 

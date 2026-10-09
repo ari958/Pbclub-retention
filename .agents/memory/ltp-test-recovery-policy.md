@@ -3,11 +3,11 @@ name: LTP test recovery policy
 description: User-selected recovery semantics and destination proof for override-only LTP test sends.
 ---
 
-Recover an unbooked test recipient by archiving the complete original test sequence/candidate history and resetting the same live sequence in place. Preserve uniqueness rules, conflict targets, and message rows. Keep historical test contact out of caps without deleting its evidence.
+For the four stranded override-test recipients, archive the complete original history and terminally close the existing sequences as `exited_test` with reason `test_override_sends`. Do not reset or redraft them. Retain blocked step candidates, uniqueness rules, conflict targets, message rows, and test-contact evidence.
 
-**Why:** The user explicitly chose additive test-history archival plus an in-place reset so the normal approval-only pipeline can draft a fresh step one without loosening lifetime identity rules.
+**Why:** The user replaced the reset proposal with terminal closure after confirming the old LTP dates would not qualify for normal step-one generation.
 
-**How to apply:** First check attendance and complete live upcoming signups. Skip recovery for genuinely booked players; distinguish a test-simulated booking from a real one. Keep the archive marked as test history without marking the reset live root as test solely because it has an archive. A recovery proposal is not authorization to apply it, draft, approve, or send.
+**How to apply:** Preserve the archive and audit definition exactly as requested. Clear simulated booked-exit fields on live roots and candidates, not on immutable archived snapshots. Keep actual test send evidence. A written closure proposal is not authorization to apply it, draft, approve, or send.
 
 Test-clock changes require the configured override and proof that every actual sent message went to that override. Current player phones and test flags are not destination evidence.
 

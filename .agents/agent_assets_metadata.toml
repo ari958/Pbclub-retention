@@ -147,3 +147,17 @@ mtime_ms = 1791504426993
 storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/2b3a31fa-c401-4fef-bf83-b134603dc25b/df652efd-fbbb-48d7-a667-669fba88f601"
 storage_version_token = "1791504427683270"
 content_type = "text/plain"
+
+[[outputs]]
+id = "rwYvpP2hx0_kfC7RlYUWJ"
+uri = "file://artifacts/api-server/reports/ltp-terminal-closure-dry-run.txt"
+type = "text"
+title = "Terminal test closure: before and projected after rows"
+description = "Fresh read-only before rows and complete unapplied sequence/candidate closure projections for Ethan, Meaghan, Ke and Joe."
+logical_id = "7e9205e3-ad2f-4d1f-9d12-be7c664863a0"
+content_hash = "sha256:4251068aed483f5abf42318f6b14f5189baf8ee8574bebc0f95c5cd1065a288a"
+size = 61438
+mtime_ms = 1791505209356
+storage_uri = "gcs://replit-rams-assets-janeway/rams/assets/repl:83f9f448-559b-4e96-84c2-91a058e1c635/7e9205e3-ad2f-4d1f-9d12-be7c664863a0/78578f8f-022a-40c9-9a8a-c9bccb71d9e6"
+storage_version_token = "1791505210003851"
+content_type = "text/plain"
