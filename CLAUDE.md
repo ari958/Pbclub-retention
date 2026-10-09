@@ -71,7 +71,8 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 - Server writes use the service-role key, which bypasses RLS. The Twilio webhooks (including `session_feedback`) write through the API server, not as anon.
 
 **messages table**
-- Every member message insert must set `player_id`. Exception: the operator test message (`src/lib/operatorTestMessage.ts`) writes `player_id: null`. Whether the live column allows NULL is unverified (no DDL in the repo); see RUNBOOK open items.
+- Every insert must set `player_id`: the live column is NOT NULL (verified against production 2026-10-09). `src/lib/operatorTestMessage.ts` violates this and is broken; see RUNBOOK open items.
+- `contact_ledger` live CHECKs (verified 2026-10-09): `channel` in (sms, email); `purpose` in (promotion, cancellation, other); `outcome` in (booked, opted_out, no_response) or NULL. The live table matches `migrations/007_contact_ledger.sql`, not `artifacts/api-server/migrations/007_experiments.sql`. Don't write other values.
 - Queued (unsent) messages must explicitly set `sent_at: null`. The default is `now()`.
 
 **Single source of truth**

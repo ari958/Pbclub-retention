@@ -124,14 +124,20 @@ message row and pass its `messageId` before it is switched on.
 - Feedback reply "thanks" auto-reply: `src/routes/messages.ts` (`sendViaTwilio(From, thanksMsg)`)
 - Experiment dispatch: `src/routes/experiments.ts` (`sendViaTwilio(freshPlayer.phone, messageBody)`)
 
-### Operator test message: verify the live schema before first use
+### Operator test message is broken against the live schema (confirmed 2026-10-09)
 
-`sendOperatorTestMessage` writes `messages.player_id = NULL` and a
-`contact_ledger` row with `purpose='operator_test'` and a JSON `outcome`. The
-repo has no DDL that settles whether the live schema accepts these (see the
-2026-10-09 audit). It has only been exercised against mocks. If a constraint
-rejects it, the send fails closed (no text is sent). Run the read-only checks in
-that audit before relying on it.
+Production schema query results (2026-10-09): `messages.player_id` is NOT NULL.
+`contact_ledger` CHECKs allow `purpose` in (promotion, cancellation, other) and
+`outcome` in (booked, opted_out, no_response).
+
+`sendOperatorTestMessage` (`src/lib/operatorTestMessage.ts`) inserts a
+`messages` row with `player_id: null`, so it fails at that first insert with
+"Cannot record operator test". Twilio is never called, so no text is sent. If
+that insert passed, its `contact_ledger` row (`purpose='operator_test'`, JSON
+`outcome`) would also be rejected. Its history lookup reads that JSON `outcome`
+too. Fix this before relying on the Settings "Send operator test message"
+button. Approved member sends are unaffected: they write `purpose='promotion'`
+with no `outcome`.
 
 ### Pre-existing test failures (not caused by 2026-10-09 changes)
 
