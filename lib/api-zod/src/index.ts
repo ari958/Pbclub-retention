@@ -3,6 +3,7 @@ export * from "./generated/types";
 // Orval names both path-parameter validators and query-parameter interfaces
 // OperationParams. Resolve the dual wildcard exports explicitly, keeping both.
 export {
+  GetPlayerSmsStatusParams,
   LtpTestActionParams,
   LtpTestActionBody,
   DraftLtpTestStep2Body,
@@ -16,6 +17,7 @@ export {
   UpdateRetentionLtpPhraseConfigParams,
 } from "./generated/api";
 export type {
+  GetPlayerSmsStatusParams as GetPlayerSmsStatusQuery,
   LtpTestActionParams as LtpTestActionQuery,
   LtpTestActionBody as LtpTestActionInput,
   DraftLtpTestStep2Body as DraftLtpTestStep2Input,

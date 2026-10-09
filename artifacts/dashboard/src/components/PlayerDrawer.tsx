@@ -5,6 +5,7 @@ import { relativeTime, formatDate, getEngagementState, toTitleCase, STATE_COLORS
 import type { ProgressionStatus } from "@/lib/types";
 import { useClub, clubApiUrl } from "@/lib/ClubContext";
 import { RETENTION } from "@/lib/navMode";
+import { PlayerSmsStatus } from "./PlayerSmsStatus";
 
 interface FullPlayer {
   id: string;
@@ -187,6 +188,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
   }, [playerId]);
 
   useEffect(() => {
+    let cancelled = false;
     if (!playerId) {
       setPlayer(null);
       setAttendance([]);
@@ -195,6 +197,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       setBuddies([]);
       return;
     }
+    setPlayer(null);
     setLoadingData(true);
 
     const BASE_SELECT = RETENTION
@@ -231,6 +234,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
           .returns<FullPlayer>();
         playerData = fallback.data as unknown as FullPlayer | null;
       }
+      if (cancelled) return;
       if (playerData) {
         const p = playerData;
         setPlayer(p);
@@ -240,7 +244,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       }
       if (aRes.data) setAttendance(aRes.data as Attendance[]);
       if (cRes.data) setConversations(cRes.data as ConversationRow[]);
-    }).finally(() => setLoadingData(false));
+    }).finally(() => { if (!cancelled) setLoadingData(false); });
 
     if (!RETENTION) {
       // Fetch confidence data via API
@@ -263,6 +267,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
       .then((data) => setBuddies(data.buddies ?? []))
       .catch(() => setBuddies([]))
       .finally(() => setBuddiesLoading(false));
+    return () => { cancelled = true; };
   }, [playerId, club.slug]);
 
   // Taxonomy depends on clubId — waits until club is known before fetching
@@ -591,6 +596,7 @@ export function PlayerDrawer({ playerId, clubId, onClose, onDataChanged }: Playe
             <Section title="Profile">
               <ProfileRow label="Last visit" value={relativeTime(player.last_visit_date)} />
               <ProfileRow label="Phone" value={player.phone ?? "—"} />
+              <PlayerSmsStatus key={`${club.slug}:${playerId}`} playerId={player.id} slug={club.slug} timezone={club.timezone} />
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, gap: 12 }}>
                 <span style={{ fontSize: 12, color: "var(--text-tertiary)", flexShrink: 0 }}>Skill level</span>
                 {player.skill_level ? (

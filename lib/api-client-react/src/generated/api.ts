@@ -24,6 +24,7 @@ import type {
   DraftLtpTestStep2Params,
   EditRetentionDraftParams,
   GenerateRetentionDraftsParams,
+  GetPlayerSmsStatusParams,
   GetRetentionReportsParams,
   HealthStatus,
   ListRetentionApprovalsParams,
@@ -34,6 +35,7 @@ import type {
   OperatorSession200,
   OperatorTestResult,
   OperatorTestState,
+  PlayerSmsStatus,
   RegenerateRetentionDraft409,
   RegenerateRetentionDraftParams,
   RegenerateRetentionLtpBatch400,
@@ -78,6 +80,119 @@ type AwaitedInput<T> = PromiseLike<T> | T;
 type Awaited<O> = O extends AwaitedInput<infer T> ? T : never;
 
 type SecondParameter<T extends (...args: never) => unknown> = Parameters<T>[1];
+
+/**
+ * @summary Read current SMS flags and the latest recorded opt-out event
+ */
+export const getGetPlayerSmsStatusUrl = (
+  id: string,
+  params?: GetPlayerSmsStatusParams,
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? "null" : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/api/players/${id}/sms-status?${stringifiedParams}`
+    : `/api/players/${id}/sms-status`;
+};
+
+export const getPlayerSmsStatus = async (
+  id: string,
+  params?: GetPlayerSmsStatusParams,
+  options?: RequestInit,
+): Promise<PlayerSmsStatus> => {
+  return customFetch<PlayerSmsStatus>(getGetPlayerSmsStatusUrl(id, params), {
+    ...options,
+    method: "GET",
+  });
+};
+
+export const getGetPlayerSmsStatusQueryKey = (
+  id: string,
+  params?: GetPlayerSmsStatusParams,
+) => {
+  return [
+    `/api/players/${id}/sms-status`,
+    ...(params ? [params] : []),
+  ] as const;
+};
+
+export const getGetPlayerSmsStatusQueryOptions = <
+  TData = Awaited<ReturnType<typeof getPlayerSmsStatus>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: GetPlayerSmsStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPlayerSmsStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+) => {
+  const { query: queryOptions, request: requestOptions } = options ?? {};
+
+  const queryKey =
+    queryOptions?.queryKey ?? getGetPlayerSmsStatusQueryKey(id, params);
+
+  const queryFn: QueryFunction<
+    Awaited<ReturnType<typeof getPlayerSmsStatus>>
+  > = ({ signal }) =>
+    getPlayerSmsStatus(id, params, { signal, ...requestOptions });
+
+  return {
+    queryKey,
+    queryFn,
+    enabled: !!id,
+    ...queryOptions,
+  } as UseQueryOptions<
+    Awaited<ReturnType<typeof getPlayerSmsStatus>>,
+    TError,
+    TData
+  > & { queryKey: QueryKey };
+};
+
+export type GetPlayerSmsStatusQueryResult = NonNullable<
+  Awaited<ReturnType<typeof getPlayerSmsStatus>>
+>;
+export type GetPlayerSmsStatusQueryError = ErrorType<void>;
+
+/**
+ * @summary Read current SMS flags and the latest recorded opt-out event
+ */
+
+export function useGetPlayerSmsStatus<
+  TData = Awaited<ReturnType<typeof getPlayerSmsStatus>>,
+  TError = ErrorType<void>,
+>(
+  id: string,
+  params?: GetPlayerSmsStatusParams,
+  options?: {
+    query?: UseQueryOptions<
+      Awaited<ReturnType<typeof getPlayerSmsStatus>>,
+      TError,
+      TData
+    >;
+    request?: SecondParameter<typeof customFetch>;
+  },
+): UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+  const queryOptions = getGetPlayerSmsStatusQueryOptions(id, params, options);
+
+  const query = useQuery(queryOptions) as UseQueryResult<TData, TError> & {
+    queryKey: QueryKey;
+  };
+
+  return { ...query, queryKey: queryOptions.queryKey };
+}
 
 /**
  * @summary Read club-scoped retention outcomes and opt-outs

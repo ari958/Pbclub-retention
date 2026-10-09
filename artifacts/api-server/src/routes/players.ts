@@ -5,8 +5,31 @@ import { assembleProfile } from "../assembleProfile.js";
 import { computeLevelConfidence } from "../lib/levelConfidence";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { getPlayerSmsStatus, getWinbackStats } from "../lib/playerReadouts";
+import { GetPlayerSmsStatusParams, GetPlayerSmsStatusResponse } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+// Operator-authenticated by the API middleware; private event rows never need
+// browser/anon grants. This endpoint is read-only.
+router.get("/players/:id/sms-status", requireClub, async (req, res): Promise<void> => {
+  const parsed = GetPlayerSmsStatusParams.safeParse(req.params);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid player ID" });
+    return;
+  }
+  try {
+    const data = await getPlayerSmsStatus(parsed.data.id, (req as ClubScopedRequest).clubId);
+    if (!data) {
+      res.status(404).json({ error: "Player not found" });
+      return;
+    }
+    res.json(GetPlayerSmsStatusResponse.parse(data));
+  } catch (error) {
+    req.log.error({ error }, "Failed to fetch player SMS status");
+    res.status(500).json({ error: "SMS status unavailable" });
+  }
+});
 
 // ─── Cross-tenant guard ───────────────────────────────────────────────────────
 
@@ -364,44 +387,10 @@ router.patch("/players/:id", requireClub, async (req, res) => {
 router.get("/players/winback-stats", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString();
-
-    const [conversionsRes, totalSentRes] = await Promise.all([
-      supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("club_id", clubId)
-        .eq("direction", "outbound")
-        .eq("status", "sent")
-        .not("converted_at", "is", null)
-        .gte("created_at", thirtyDaysAgo),
-      supabase
-        .from("messages")
-        .select("id", { count: "exact", head: true })
-        .eq("club_id", clubId)
-        .eq("direction", "outbound")
-        .eq("status", "sent")
-        .gte("created_at", thirtyDaysAgo),
-    ]);
-
-    const converted = conversionsRes.count ?? 0;
-    const totalSent = totalSentRes.count ?? 0;
-    const conversionRate =
-      totalSent > 0 ? Math.round((converted / totalSent) * 100) : null;
-
-    res.json({
-      period_days: 30,
-      messages_sent: totalSent,
-      conversions: converted,
-      conversion_rate_pct: conversionRate,
-    });
-  } catch (_err: unknown) {
-    res.json({
-      period_days: 30,
-      messages_sent: 0,
-      conversions: 0,
-      conversion_rate_pct: null,
-    });
+    res.json(await getWinbackStats(clubId));
+  } catch (error: unknown) {
+    req.log.error({ error }, "Failed to fetch winback statistics");
+    res.status(500).json({ error: "Winback statistics unavailable" });
   }
 });
 

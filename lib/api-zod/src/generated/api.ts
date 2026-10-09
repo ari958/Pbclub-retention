@@ -8,6 +8,34 @@
 import * as zod from "zod";
 
 /**
+ * @summary Read current SMS flags and the latest recorded opt-out event
+ */
+export const GetPlayerSmsStatusParams = zod.object({
+  id: zod.coerce.string().uuid(),
+});
+
+export const GetPlayerSmsStatusQueryParams = zod.object({
+  slug: zod.coerce
+    .string()
+    .optional()
+    .describe("Club slug; supply either clubId or slug"),
+});
+
+export const GetPlayerSmsStatusResponse = zod.object({
+  status: zod.enum(["active", "opted_out", "unknown"]),
+  opted_out: zod.boolean().nullable(),
+  sms_opt_in: zod.boolean().nullable(),
+  latest_optout_event: zod.union([
+    zod.object({
+      occurred_at: zod.coerce.date().nullable(),
+      source: zod.enum(["stop_reply", "carrier_21610", "manual"]),
+      twilio_optout_type: zod.string().nullable(),
+    }),
+    zod.null(),
+  ]),
+});
+
+/**
  * @summary Read club-scoped retention outcomes and opt-outs
  */
 export const getRetentionReportsQueryPlaybookKeyMax = 120;

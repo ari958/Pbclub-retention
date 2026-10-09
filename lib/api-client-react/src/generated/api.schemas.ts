@@ -5,6 +5,41 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type PlayerSmsStatusStatus =
+  (typeof PlayerSmsStatusStatus)[keyof typeof PlayerSmsStatusStatus];
+
+export const PlayerSmsStatusStatus = {
+  active: "active",
+  opted_out: "opted_out",
+  unknown: "unknown",
+} as const;
+
+export type PlayerSmsOptoutEventSource =
+  (typeof PlayerSmsOptoutEventSource)[keyof typeof PlayerSmsOptoutEventSource];
+
+export const PlayerSmsOptoutEventSource = {
+  stop_reply: "stop_reply",
+  carrier_21610: "carrier_21610",
+  manual: "manual",
+} as const;
+
+export interface PlayerSmsOptoutEvent {
+  /** @nullable */
+  occurred_at: string | null;
+  source: PlayerSmsOptoutEventSource;
+  /** @nullable */
+  twilio_optout_type: string | null;
+}
+
+export interface PlayerSmsStatus {
+  status: PlayerSmsStatusStatus;
+  /** @nullable */
+  opted_out: boolean | null;
+  /** @nullable */
+  sms_opt_in: boolean | null;
+  latest_optout_event: PlayerSmsOptoutEvent | null;
+}
+
 export type RetentionReportsResponsePeriod =
   (typeof RetentionReportsResponsePeriod)[keyof typeof RetentionReportsResponsePeriod];
 
@@ -793,6 +828,13 @@ export const RetentionApprovalStatusParameter = {
   needs_context: "needs_context",
   manual_edit: "manual_edit",
 } as const;
+
+export type GetPlayerSmsStatusParams = {
+  /**
+   * Club slug; supply either clubId or slug
+   */
+  slug?: RetentionSlugParameter;
+};
 
 export type GetRetentionReportsParams = {
   /**

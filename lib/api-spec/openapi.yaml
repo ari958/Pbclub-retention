@@ -13,6 +13,26 @@ tags:
   - name: retention
     description: Draft-only retention generation and explicit message approvals
 paths:
+  /players/{id}/sms-status:
+    get:
+      operationId: getPlayerSmsStatus
+      summary: Read current SMS flags and the latest recorded opt-out event
+      parameters:
+        - $ref: "#/components/parameters/RetentionSlug"
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Operator-only, club-scoped SMS status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PlayerSmsStatus" }
+        "400": { description: Invalid player ID }
+        "401": { description: Operator authentication required }
+        "404": { description: Player not found in the selected club }
+        "500": { description: SMS status unavailable }
   /retention/reports:
     get:
       operationId: getRetentionReports
@@ -595,6 +615,24 @@ components:
       required: true
       schema: {type: string, format: uuid}
   schemas:
+    PlayerSmsStatus:
+      type: object
+      required: [status, opted_out, sms_opt_in, latest_optout_event]
+      properties:
+        status: { type: string, enum: [active, opted_out, unknown] }
+        opted_out: { type: ["boolean", "null"] }
+        sms_opt_in: { type: ["boolean", "null"] }
+        latest_optout_event:
+          oneOf:
+            - $ref: "#/components/schemas/PlayerSmsOptoutEvent"
+            - { type: "null" }
+    PlayerSmsOptoutEvent:
+      type: object
+      required: [occurred_at, source, twilio_optout_type]
+      properties:
+        occurred_at: { type: ["string", "null"], format: date-time }
+        source: { type: string, enum: [stop_reply, carrier_21610, manual] }
+        twilio_optout_type: { type: ["string", "null"] }
     RetentionReportsResponse:
       type: object
       additionalProperties: false
