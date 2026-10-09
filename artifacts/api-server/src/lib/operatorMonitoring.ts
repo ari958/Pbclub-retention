@@ -122,7 +122,11 @@ export async function runtimeHealth() {
 
 export function operatorAlertReasons(health: Awaited<ReturnType<typeof runtimeHealth>>, now = Date.now(), workerStartedAt = startedAt) {
     const reasons: Array<{ key: string; text: string }> = [];
-    const lastTick = health.last_queue_tick_at ? Date.parse(health.last_queue_tick_at) : workerStartedAt;
+    // A fresh worker gets its own grace period: it may wait up to 2 minutes for
+    // the previous worker's lease and up to 5 more for its first tick, and the
+    // previous tick in the database must not count against it.
+    const recordedTick = health.last_queue_tick_at ? Date.parse(health.last_queue_tick_at) : 0;
+    const lastTick = Math.max(recordedTick, workerStartedAt);
     if (now - lastTick >= 15 * 60 * 1000) reasons.push({ key: "queue_stale", text: "No completed queue tick for 15+ minutes. Check the worker." });
     if (health.last_nightly_sync.result === "error" || health.last_nightly_sync.result === "cancelled") {
       reasons.push({ key: "nightly_failure", text: "Nightly sync failed or was cancelled. Check job logs." });
