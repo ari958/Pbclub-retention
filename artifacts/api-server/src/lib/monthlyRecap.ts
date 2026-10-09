@@ -4,6 +4,7 @@ import { startJob, finishJob, appendJobLog } from "./jobStore";
 import { logger } from "./logger";
 import type { BatchResult } from "./milestoneCheck";
 import { isRetentionOnlyMode } from "./retentionPolicy";
+import { AGENT_MODEL } from "./anthropicConfig";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -175,7 +176,7 @@ Make it feel warm and personal. Reference their court partners by first name and
   // 6. Call Anthropic
   let messageBody = "";
   const completion = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
+    model: AGENT_MODEL,
     max_tokens: 300,
     system: systemMsg,
     messages: [{ role: "user", content: userMsg }],

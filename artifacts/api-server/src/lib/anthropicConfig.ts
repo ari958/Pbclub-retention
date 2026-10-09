@@ -1,5 +1,6 @@
 /**
- * Single source of truth for the Anthropic model used by the agent route.
+ * Single source of truth for the Anthropic model used for every generated
+ * message: the agent route, retention text, milestones and monthly recaps.
  *
  * Override at boot via ANTHROPIC_AGENT_MODEL env var.
  * Defaults to Sonnet 4.6 — the right pick for short structured outreach SMS
