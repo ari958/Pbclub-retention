@@ -1,10 +1,10 @@
 # CLAUDE.md — PB Club Retention Agent (Pulse)
 
 Read this first in every session. Deeper detail lives in:
-- `RUNBOOK.md` — audit changelog, open items, debugging scenarios
-- `SUPABASE_SCHEMA_EXPORT.md` — tables, FKs, RLS, indexes
+- `RUNBOOK.md` — audit changelog, open items, debugging scenarios, kill switch
+- Migrations are the schema source of truth: `artifacts/api-server/migrations/` (numbered, current), plus older files in `migrations/` and `supabase/migrations/`. There is no schema export.
 - `PODPLAY_API_REFERENCE.md` — PodPlay API v2 offline reference
-- Level-confidence skill (`pb-club-level-confidence/SKILL.md`) — read before touching `level_confidence`, `session_feedback`, `level_taxonomy`, `level_history`, `coach_assigned_level`, or `dupr_rating`
+- Level-confidence skill (installed skill `anthropic-skills:pb-club-level-confidence`, not a repo file) — load before touching `level_confidence`, `session_feedback`, `level_taxonomy`, `level_history`, `coach_assigned_level`, or `dupr_rating`
 
 If anything in this file disagrees with the code, the code wins. Say so and propose a fix to this file.
 
@@ -15,8 +15,9 @@ If anything in this file disagrees with the code, the code wins. Say so and prop
 Real SMS goes to real PB Club players. Production runs on a Replit Reserved VM (`retention-agent-ari205.replit.app`). The Learn to Play follow-up flow went live 2026-10-08.
 
 **Hard rules for any non-production environment:**
-- `SMS_LIVE=false`. Never set it to true outside production.
-- The scheduler must be OFF. The per-day idempotency guard does **not** protect against two instances running at once. A second scheduler means players get double-texted.
+- `SMS_LIVE=false`. Never set it to true outside production. A server with `SMS_LIVE=true` and `NODE_ENV` other than `production` refuses to start (`backgroundEnvironment.mjs`, `nonProductionLiveSmsError`).
+- The scheduler must be OFF. It runs only when `NODE_ENV=production`, `RUN_BACKGROUND_JOBS=true` **and** `SCHEDULER_ENABLED=true` (`backgroundEnvironment.mjs`). Live texts also need `SCHEDULER_ENABLED=true`. `SCHEDULER_ENABLED` is a Secret on the one live deployment only. Never commit it or set it anywhere else: `artifact.toml` hard-codes `NODE_ENV=production` and `RUN_BACKGROUND_JOBS=true` for every deployment, so it is the only thing keeping a remix or second deployment quiet.
+- Two instances on the **same** Supabase project can't both run the scheduler: a database lease elects one leader (`backgroundWorker.ts`, `backgroundLock.ts`). That lease does nothing for an instance pointed at a **different** database (a copy of prod data plus real Twilio credentials would text players). Hence the kill switch.
 - Never run batch jobs (`nightly_sync`, churn, milestones, recaps, post-session feedback) against the production Supabase project from dev unless explicitly told to.
 - Never send to a real player number from dev. Ari's own number is a registered player record and is the only acceptable test recipient.
 - Anything that mutates live data, schedules sends, or touches PodPlay write endpoints: **dry-run first, show the result, wait for confirmation.**
@@ -30,7 +31,7 @@ Real SMS goes to real PB Club players. Production runs on a Replit Reserved VM (
 - Supabase (Postgres), project `knblhxfwvebxntoshiqm`
 - PodPlay API v2 — `https://pbclub.podplay.app/apis/v2`, auth via `x-api-key` header (not bearer, despite the spec)
 - Twilio SMS — sending number `+12015281834`
-- Anthropic — Sonnet for message generation (Opus hallucinated player context in an A/B eval; stay on Sonnet)
+- Anthropic — Sonnet for all message generation via `AGENT_MODEL` in `artifacts/api-server/src/lib/anthropicConfig.ts` (default `claude-sonnet-4-6`, override with `ANTHROPIC_AGENT_MODEL`). Retention text, the agent route, milestones and monthly recaps all use it; don't hard-code model IDs elsewhere. `/agent` also accepts a per-request `_model` override. Opus hallucinated player context in an A/B eval (`src/scripts/compareAgentModels.ts`); stay on Sonnet.
 
 Architecture is multi-tenant (`clubs.slug`, `ClubContext`, `/c/:slug/*` routes), but the product runs single-club (PB Club, slug `pb-club`, id `c8976e15-e002-4619-bb4b-b1a70f5cd7ab`).
 
@@ -54,9 +55,9 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 ## Architectural rules (each one caused a real bug)
 
 **Supabase clients**
-- Dashboard uses the anon key and is **SELECT-only**. All dashboard writes go through `/api/*` endpoints. Anon writes return HTTP 200 with empty arrays and persist nothing.
-- API server `.ts` files import the shared singleton from `lib/supabaseClient.ts`. No inline `createClient` in `.ts` files.
-- Legacy `.js` files (`syncEventAttendance.js`, `importAllPlayers.js`, `assembleProfile.js`) create their own client with `SUPABASE_SERVICE_ROLE_KEY`.
+- Dashboard uses the anon key (`artifacts/dashboard/src/lib/supabase.ts`) and is **SELECT-only**. All dashboard writes go through `/api/*` endpoints with `fetch(clubApiUrl(slug, "/api/..."))` (e.g. `POST /api/messages/mark-read`, `/api/messages/skip`). Anon writes return HTTP 200 with empty arrays and persist nothing.
+- API server `.ts` files import the shared singleton from `artifacts/api-server/src/lib/supabaseClient.ts`. No inline `createClient` in server `.ts` files. Known exceptions, all standalone scripts on the service-role key: `src/scripts/dryRunCatalog.ts`, `patchKeywords.ts`, `compareAgentModels.ts`.
+- Legacy `.js` files in `artifacts/api-server/src/` (`syncEventAttendance.js`, `syncPlayerAttendance.js`, `importAllPlayers.js`, `importPhoneNumbers.js`, `assembleProfile.js`, `dedupeAttendances.js`, `fetchAvailablePrograms.js`, `scripts/importSmsConsent.js`) create their own client with `SUPABASE_SERVICE_ROLE_KEY`.
 - Never fall back to the anon key on the server (`?? process.env.SUPABASE_ANON_KEY` is banned).
 
 **supabase-js behavior**
@@ -64,11 +65,13 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 - Default 1,000-row limit. Any query over players or attendances must paginate.
 
 **RLS**
-- Every table: `service_role_all_<table>` + `anon_read_<table>`. Only `session_feedback` allows anon INSERT (Twilio webhook).
-- After any migration: `GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon; GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;`
+- Grant per table, never schema-wide. **Never run `GRANT ... ON ALL TABLES IN SCHEMA public TO anon`**: it undoes the deliberate blocks below.
+- Sensitive tables (approvals, operator runtime and alerts, inbound SMS, reports) deliberately block anon: `REVOKE ALL ... FROM anon` with service-role-only access. Copy the pattern in `artifacts/api-server/migrations/010_retention_approvals.sql`, `017_operator_runtime.sql`, `020_operator_alert_incidents.sql` and `021_sms_inbound_receipts.sql`.
+- Tables the dashboard reads get an explicit `GRANT SELECT ON TABLE <name> TO anon` plus a read policy. Older tables use `service_role_all_<table>` / `anon_read_<table>` (e.g. `004_programming_tables.sql`), but naming isn't uniform (`007_contact_ledger.sql`, `008_sms_consent.sql`). Read the table's migration before changing its policies.
+- Server writes use the service-role key, which bypasses RLS. The Twilio webhooks (including `session_feedback`) write through the API server, not as anon.
 
 **messages table**
-- Every insert must set `player_id` (NOT NULL).
+- Every member message insert must set `player_id`. Exception: the operator test message (`src/lib/operatorTestMessage.ts`) writes `player_id: null`. Whether the live column allows NULL is unverified (no DDL in the repo); see RUNBOOK open items.
 - Queued (unsent) messages must explicitly set `sent_at: null`. The default is `now()`.
 
 **Single source of truth**
@@ -112,6 +115,6 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 - **Audit before fixing.** Read the relevant code and report what's actually there before changing anything. Runbook items have gone stale before (4 of 5 in the June sweep were already fixed).
 - For multi-item tasks, keep items independent and report a per-item status: `CLOSED` / `PARTIAL` / `DEFERRED` / `REVERTED`, with one line of evidence (file:line, query result).
 - Stop and ask on anything ambiguous, anything irreversible, and anything touching live sends or production data.
-- `tsc --noEmit` must pass before calling a change done.
+- `pnpm run typecheck` (repo root) must pass before calling a change done.
 - Explain findings in plain English from a club owner's point of view, not just engineering terms.
-- After significant work, update `RUNBOOK.md` (changelog plus open items) and `SUPABASE_SCHEMA_EXPORT.md` if the schema changed.
+- After significant work, update `RUNBOOK.md` (changelog plus open items). Schema changes go in a new numbered migration under `artifacts/api-server/migrations/`.
