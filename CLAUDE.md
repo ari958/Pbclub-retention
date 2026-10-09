@@ -12,7 +12,7 @@ If anything in this file disagrees with the code, the code wins. Say so and prop
 
 ## ⚠️ Production is live. Read this before running anything.
 
-Real SMS goes to real PB Club players. Production is one Railway service deployed from `main` (`railway.json`; cutover from Replit in progress, see `RUNBOOK.md` "Hosting"). The Learn to Play follow-up flow went live 2026-10-08.
+Real SMS goes to real PB Club players. Production is one Railway service, `pbclub-retention-production.up.railway.app`, deployed from `main` on every merge (`railway.json`; see `RUNBOOK.md` "Hosting"). Replit is gone. The Learn to Play follow-up flow went live 2026-10-08.
 
 **Hard rules for any non-production environment:**
 - `SMS_LIVE=false`. Never set it to true outside production. A server with `SMS_LIVE=true` and `NODE_ENV` other than `production` refuses to start (`backgroundEnvironment.mjs`, `nonProductionLiveSmsError`).
