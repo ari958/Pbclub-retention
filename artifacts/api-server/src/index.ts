@@ -4,11 +4,11 @@ import { startScheduler } from "./lib/scheduler";
 import { startQueuePoller } from "./lib/queuePoller";
 import { supabase } from "./lib/supabaseClient";
 import { getDefaultClubSlug, resolveClubSlug } from "./lib/clubResolver";
-import { backgroundJobsEnabled, backgroundJobsConfigured } from "./lib/backgroundPolicy";
+import { backgroundJobsEnabled, backgroundJobsConfigured, smsLiveEnabled } from "./lib/backgroundPolicy";
 import { startBackgroundWorker } from "./lib/backgroundWorker";
 import { workerIdentity } from "./lib/workerIdentity";
 import { checkSchemaReadiness } from "../schema-readiness.mjs";
-import { productionWorkerConfigurationErrors } from "./lib/backgroundEnvironment.mjs";
+import { nonProductionLiveSmsError, productionWorkerConfigurationErrors, schedulerDesignatedForEnvironment } from "./lib/backgroundEnvironment.mjs";
 import { startOperatorWatchdog } from "./lib/operatorMonitoring";
 
 const rawPort = process.env["PORT"];
@@ -20,10 +20,12 @@ if (!rawPort) {
 }
 
 const port = Number(rawPort);
+const liveSmsError = nonProductionLiveSmsError(process.env);
+if (liveSmsError) throw new Error(liveSmsError);
 if (process.env.NODE_ENV === "production") {
   if (!process.env.OPERATOR_PASSWORD || process.env.OPERATOR_PASSWORD.length < 16) throw new Error("Production requires OPERATOR_PASSWORD with at least 16 characters");
   const publicUrl = process.env.PUBLIC_API_URL;
-  if (!publicUrl || !publicUrl.startsWith("https://") || new URL(publicUrl).hostname.endsWith(".replit.dev")) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin, not the workspace URL");
+  if (!publicUrl || !publicUrl.startsWith("https://") || /^(localhost|127\.|\[::1\])/.test(new URL(publicUrl).hostname)) throw new Error("Production requires PUBLIC_API_URL set to the published HTTPS origin");
   const workerErrors = productionWorkerConfigurationErrors(process.env);
   if (workerErrors.length) throw new Error(workerErrors.join("\n"));
 }
@@ -122,10 +124,15 @@ app.listen(port, async (err) => {
 
   logger.info({ port, environment: process.env.NODE_ENV ?? "development",
     RUN_BACKGROUND_JOBS: process.env.RUN_BACKGROUND_JOBS ?? "false", background_jobs_enabled: backgroundJobsEnabled(),
-    sms_live: process.env.SMS_LIVE === "true",
+    SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED ?? "false", scheduler_designated: schedulerDesignatedForEnvironment(process.env),
+    SMS_LIVE: process.env.SMS_LIVE ?? "false", sms_live: smsLiveEnabled(),
     override_set: !!process.env.SMS_TEST_OVERRIDE_TO?.trim(),
     operator_login_configured: !!process.env.OPERATOR_PASSWORD,
     process_started_at: new Date().toISOString() }, "Server listening");
+  if (process.env.NODE_ENV === "production" && !schedulerDesignatedForEnvironment(process.env)
+    && (process.env.RUN_BACKGROUND_JOBS === "true" || process.env.SMS_LIVE === "true")) {
+    logger.warn("SCHEDULER_ENABLED is not \"true\": this instance will not run the scheduler or send live texts. Set it as a deployment secret on the live instance only.");
+  }
 
   try {
     const defaultSlug = getDefaultClubSlug();

@@ -1,7 +1,7 @@
 import twilio from "twilio";
 import { supabase } from "./supabaseClient";
 import { logger } from "./logger";
-import { backgroundJobsEnabled } from "./backgroundPolicy";
+import { backgroundJobsEnabled, smsLiveEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
 import { getDefaultClubSlug, resolveClubSlug } from "./clubResolver";
 import { workerIdentity } from "./workerIdentity";
@@ -112,7 +112,7 @@ export async function runtimeHealth() {
       result: nightly.error ? "unknown" : nightly.data?.status ?? sync?.result ?? "never",
       at: nightly.data?.finished_at ?? nightly.data?.started_at ?? sync?.updated_at ?? null,
     },
-    sms_live: process.env.SMS_LIVE === "true",
+    sms_live: smsLiveEnabled(),
     paused: club.error || !club.data ? null : club.data.sms_kill_switch !== false,
     alerts_configured: !!process.env.ALERT_OPERATOR_TO,
     // Schedule is used internally by the watchdog, not included in public health.

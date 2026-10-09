@@ -14,7 +14,7 @@ import { verifyRetentionCandidateDispatch } from "./retentionDispatch";
 import { buildLtpBookingSnapshot, createQueueBookingOptions, type LtpBookingSnapshot } from "./ltpBookingSnapshot";
 import { DispatchAudit } from "./dispatchAudit";
 import type { LtpBookingBatchOptions } from "./ltpSequenceLifecycle";
-import { backgroundJobsEnabled } from "./backgroundPolicy";
+import { backgroundJobsEnabled, smsLiveEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
 import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
 
@@ -47,7 +47,7 @@ export async function runQueueTick(): Promise<QueueTickStats> {
     const value = await runQueueTickUnlocked();
     await recordRuntime("queue", value.failed ? "error" : "ok");
     if (value.failed) await alertOperator(`queue-failure:${new Date().toISOString().slice(0, 13)}`, "A queue dispatch failed. Check dispatch logs before retrying.");
-    else if (process.env.SMS_LIVE === "true" && value.sent > 0) await resolveOperatorAlert("queue_failure");
+    else if (smsLiveEnabled() && value.sent > 0) await resolveOperatorAlert("queue_failure");
     return value;
   });
   return result.value ?? empty;
@@ -62,7 +62,7 @@ async function runQueueTickUnlocked(): Promise<QueueTickStats> {
     failed: 0,
   };
   // Off means hold, not simulate. Do not roll schedules or read providers.
-  if (process.env.SMS_LIVE !== "true") {
+  if (!smsLiveEnabled()) {
     logger.info({ sms_live: false }, "[queue] live sending off — approved messages held untouched");
     return stats;
   }
@@ -95,7 +95,7 @@ async function runQueueTickUnlocked(): Promise<QueueTickStats> {
   // Authorize and exclude paused clubs before doing costly provider reads.
   const ready: Array<{ row: any; ltp: boolean }> = [];
   for (const row of messages) {
-    if (process.env.SMS_LIVE !== "true") return stats;
+    if (!smsLiveEnabled()) return stats;
     const audit = new DispatchAudit(row.id);
     try {
       audit.begin("retention_candidate_queue");
@@ -150,7 +150,7 @@ async function runQueueTickUnlocked(): Promise<QueueTickStats> {
   }
 
   for (const { row, ltp } of ready) {
-    if (process.env.SMS_LIVE !== "true") break;
+    if (!smsLiveEnabled()) break;
     stats.processed++;
     const id = row.id as string;
     const player_id = row.player_id as string;

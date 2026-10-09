@@ -27,6 +27,7 @@ import { computeWarmScore } from "../lib/warmScore";
 import { sendViaTwilio } from "../lib/twilio";
 import { isRetentionOnlyMode } from "../lib/retentionPolicy";
 import { logger } from "../lib/logger";
+import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
 const router = Router();
 
@@ -1283,7 +1284,7 @@ router.post("/experiments/:id/send", requireClub, async (req, res) => {
 
     // ── Kill switch (3d) — check once at batch start; also checked per-message ──
     const overrideTo  = (process.env.SMS_TEST_OVERRIDE_TO ?? "").trim();
-    const smsLive     = process.env.SMS_LIVE === "true";
+    const smsLive     = smsLiveEnabled();
     const killRow     = await supabase.from("clubs").select("sms_kill_switch, name").eq("id", clubId).maybeSingle();
     const killSwitch  = !!(killRow.data as any)?.sms_kill_switch;
     if (!dryRun && killSwitch) {

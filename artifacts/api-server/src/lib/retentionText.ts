@@ -505,15 +505,9 @@ export async function writeRetentionText(
   if (playbook.key === "ltp_followup") {
     throw new Error("Learn to Play texts must use the code-only sequence phrase builder, not LLM generation");
   }
-  const apiKey = process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY
-    ?? process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("Claude credentials are not configured (AI_INTEGRATIONS_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY)");
-  const client = new Anthropic({
-    apiKey,
-    ...(process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL
-      ? { baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL }
-      : {}),
-  });
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) throw new Error("Claude credentials are not configured (ANTHROPIC_API_KEY)");
+  const client = new Anthropic({ apiKey });
   const schema = {
     type: "object" as const,
     properties: { body: { type: "string" } },

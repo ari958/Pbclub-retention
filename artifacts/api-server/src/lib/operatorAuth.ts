@@ -78,8 +78,7 @@ const loginLimiter = rateLimit({
 });
 operatorRouter.get("/login", (_req, res) => {
   res.setHeader("Cache-Control", "no-store");
-  const frameAncestors = process.env.NODE_ENV === "development" ? "'self' https://replit.com https://*.replit.com" : "'self'";
-  res.setHeader("Content-Security-Policy", `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors ${frameAncestors}`);
+  res.setHeader("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'self'");
   res.type("html").send(`<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width">
   <title>PB Club operator login</title><style>body{margin:0;background:#111827;color:#f9fafb;font:16px system-ui;display:grid;min-height:100vh;place-items:center}main{width:min(360px,85vw)}label,input,button{display:block;width:100%;box-sizing:border-box}input,button{padding:12px;margin:8px 0 22px;border-radius:6px}button{background:#e8a838;border:0;color:#111827;font-weight:700}p{color:#b8c2d1;line-height:1.5}</style>
   <main><h1>Operator login</h1><p>Sign in to manage PB Club. Login does not approve messages or change sending settings.</p>

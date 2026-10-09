@@ -2,7 +2,6 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
-import runtimeErrorOverlay from "@replit/vite-plugin-runtime-error-modal";
 import { operatorGate } from "./operatorGate";
 
 const rawPort = process.env.PORT;
@@ -47,7 +46,6 @@ export default defineConfig({
     operatorGate(),
     react(),
     tailwindcss(),
-    runtimeErrorOverlay(),
   ],
   resolve: {
     alias: {
@@ -70,12 +68,10 @@ export default defineConfig({
       strict: true,
     },
     proxy: (() => {
-      // Replit's reverse proxy does NOT strip the base-path prefix before
-      // forwarding to Vite, so the browser fetch "/dashboard/api/..." arrives
-      // at Vite as "/dashboard/api/..." — the bare "/api" rule never matches.
-      // We match the full prefixed path and rewrite it down to "/api/..." for
-      // the API server.  Also keep "/api" so direct (non-prefixed) calls work
-      // in local dev without a base path.
+      // The browser fetches "/dashboard/api/..." (the base path is kept), so
+      // match the full prefixed path and rewrite it down to "/api/..." for the
+      // API server. Also keep "/api" so direct (non-prefixed) calls work in
+      // local dev without a base path.
       const base = basePath.replace(/\/$/, ""); // e.g. "/dashboard"
       const apiPrefix = `${base}/api`;          // e.g. "/dashboard/api"
       const apiTarget = `http://localhost:${process.env.API_PORT ?? 8080}`;

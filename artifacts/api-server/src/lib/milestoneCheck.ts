@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import { startJob, finishJob, appendJobLog } from "./jobStore";
 import { logger } from "./logger";
 import { isRetentionOnlyMode } from "./retentionPolicy";
+import { AGENT_MODEL } from "./anthropicConfig";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -182,7 +183,7 @@ export async function checkPlayerMilestones(
 
 async function callAnthropic(userPrompt: string): Promise<string> {
   const completion = await anthropic.messages.create({
-    model: "claude-sonnet-4-5",
+    model: AGENT_MODEL,
     max_tokens: 300,
     system: "You are a warm, encouraging retention agent for PB Club. Write a milestone celebration SMS. Keep it genuine and brief — under 160 characters ideally. Sound like a coach who noticed something impressive, not a marketing bot. Output only the message text.",
     messages: [{ role: "user", content: userPrompt }],

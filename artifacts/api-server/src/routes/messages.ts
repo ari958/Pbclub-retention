@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { OPERATOR_TEST_TEXT } from "../lib/operatorTestMessage";
+import { recordOperatorTestReceipt } from "../lib/operatorTestMessage";
 import { alertOperator } from "../lib/operatorMonitoring";
 import { z } from "zod";
 import { supabase } from "../lib/supabaseClient";
@@ -24,6 +24,7 @@ import {
   confirmLtpRecipientDelivery,
   SmsOptOutPersistenceError,
 } from "../lib/ltpSequenceLifecycle";
+import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
 const router: IRouter = Router();
 
@@ -179,7 +180,7 @@ router.post("/messages/send", requireClub, async (req, res) => {
   }
 
   // Guard: cooldown
-  if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
+  if (!isRetentionOnlyMode() && smsLiveEnabled() && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
     const elapsed = Date.now() - new Date(player.last_outbound_at).getTime();
     if (elapsed < COOLDOWN_MS) {
       const remainingMins = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
@@ -285,6 +286,62 @@ router.post("/messages/skip", requireClub, async (req, res) => {
   res.json({ skipped: true });
 });
 
+// ─── POST /api/messages/mark-read ────────────────────────────────────────────
+
+/** Bounded batches so one request can't run unbounded against a large inbox. */
+const MARK_READ_BATCH = 500;
+const MARK_READ_MAX_BATCHES = 10;
+
+router.post("/messages/mark-read", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  let marked = 0;
+
+  // PostgREST cannot safely apply a joined players.club_id predicate to an
+  // UPDATE. Resolve only this club's unread message IDs first, then update
+  // bounded ID batches while rechecking the unread conditions.
+  for (let batch = 0; batch < MARK_READ_MAX_BATCHES; batch++) {
+    const { data, error } = await supabase
+      .from("messages")
+      .select("id, players!player_id!inner(club_id)")
+      .eq("direction", "inbound")
+      .eq("players.club_id", clubId)
+      .is("read_at", null)
+      .limit(MARK_READ_BATCH);
+    if (error) {
+      res.status(500).json({ error: error.message, marked });
+      return;
+    }
+    if (!data?.length) break;
+    const ids = data.map((row: { id: string }) => row.id);
+    const { data: updated, error: updateError } = await supabase
+      .from("messages")
+      .update({ read_at: new Date().toISOString() })
+      .in("id", ids)
+      .eq("direction", "inbound")
+      .is("read_at", null)
+      .select("id");
+    if (updateError) {
+      res.status(500).json({ error: updateError.message, marked });
+      return;
+    }
+    marked += updated?.length ?? 0;
+    if (data.length < MARK_READ_BATCH) break;
+  }
+
+  const { count, error: countError } = await supabase
+    .from("messages")
+    .select("id, players!player_id!inner(club_id)", { count: "exact", head: true })
+    .eq("direction", "inbound")
+    .eq("players.club_id", clubId)
+    .is("read_at", null);
+  if (countError) {
+    res.status(500).json({ error: countError.message, marked });
+    return;
+  }
+
+  res.json({ marked, unread: count ?? 0 });
+});
+
 // ─── POST /api/messages/bulk ─────────────────────────────────────────────────
 
 router.post("/messages/bulk", parkInRetentionOnlyMode("Bulk message sending is parked by RETENTION_ONLY_MODE"), requireClub, async (req, res) => {
@@ -362,7 +419,7 @@ router.post("/messages/bulk", parkInRetentionOnlyMode("Bulk message sending is p
 
   for (const player of eligible) {
     // Cooldown check
-    if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
+    if (!isRetentionOnlyMode() && smsLiveEnabled() && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
       const elapsed = now - new Date(player.last_outbound_at).getTime();
       if (elapsed < COOLDOWN_MS) {
         skipped_cooldown++;
@@ -518,6 +575,27 @@ router.post("/messages/webhook/status", async (req, res) => {
       .or("player_id.not.is.null,conversation_id.not.is.null");
     return claimToken === undefined ? query.is("dispatch_token", null) : query.eq("dispatch_token", claimToken);
   };
+  // Operator tests live in operator_test_messages (migration 030), never in
+  // messages: no player, milestone or opt-out handling applies to them.
+  const operatorId = req.query.operator_test_id;
+  if (operatorId !== undefined) {
+    if (memberCorrelation || typeof operatorId !== "string" || !uuid.test(operatorId)) {
+      res.status(400).send("Invalid operator test correlation");
+      return;
+    }
+    const receipt = await recordOperatorTestReceipt(operatorId, messageSid, MessageStatus, ErrorCode, ErrorMessage);
+    if (receipt.error) {
+      req.log.error({ err: receipt.error.message, MessageSid }, "Could not persist operator test delivery status");
+      res.status(503).send("Could not persist delivery status; retry required");
+      return;
+    }
+    if (!receipt.matched) req.log.warn({ MessageSid }, "Signed operator test receipt matched no recorded test");
+    if (MessageStatus === "failed" || MessageStatus === "undelivered") {
+      void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
+    }
+    res.status(204).send();
+    return;
+  }
   try {
     const result = await bindMemberClaim(supabase
       .from("messages")
@@ -537,19 +615,6 @@ router.post("/messages/webhook/status", async (req, res) => {
         statusError = { message: "Signed member receipt did not match its approved dispatch claim" };
       }
     }
-    const operatorId = req.query.operator_test_id;
-    if (!statusError && !affected?.length && typeof operatorId === "string"
-      && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(operatorId)) {
-      // Signed callback may beat persistence of the SID. Match only this fixed, claimed operator test.
-      const early = await supabase.from("messages")
-        .update({ ...update, twilio_message_sid: messageSid })
-        .eq("id", operatorId).eq("retention_delivery_kind", "test").eq("body", OPERATOR_TEST_TEXT)
-        .is("player_id", null).is("conversation_id", null).is("twilio_message_sid", null)
-        .not("dispatch_token", "is", null)
-        .select("id,player_id,conversation_id,retention_delivery_kind");
-      affected = early.data;
-      statusError = early.error;
-    }
   } catch (error) {
     statusError = { message: error instanceof Error ? error.message : String(error) };
   }
@@ -557,15 +622,12 @@ router.post("/messages/webhook/status", async (req, res) => {
     req.log.error({ err: statusError.message, MessageSid }, "Could not persist Twilio delivery status");
   }
 
-  const operatorTestReceipt = Array.isArray(affected) && affected.length > 0
-    && affected.every(message => message.retention_delivery_kind === "test" && !message.player_id && !message.conversation_id);
   // Real 21610 failures receive one context-rich opt-out alert below instead
   // of an additional generic delivery failure alert.
-  if ((MessageStatus === "failed" || MessageStatus === "undelivered")
-    && (!isTwilio21610(ErrorCode) || operatorTestReceipt)) {
+  if ((MessageStatus === "failed" || MessageStatus === "undelivered") && !isTwilio21610(ErrorCode)) {
     void alertOperator(`delivery-failed:${MessageSid}`, `Twilio reported an SMS as ${MessageStatus}. Check message logs.`);
   }
-  if (isTwilio21610(ErrorCode) && !operatorTestReceipt) {
+  if (isTwilio21610(ErrorCode)) {
     let messages = Array.isArray(affected) ? affected : affected ? [affected] : [];
     if (!messages.length) {
       const { data: linked, error: lookupError } = await bindMemberClaim(supabase

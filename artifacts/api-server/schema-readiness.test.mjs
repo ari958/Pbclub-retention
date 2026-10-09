@@ -25,7 +25,7 @@ function transport({ doc = metadata(), statusFor = () => 200 } = {}) {
 
 test("external production configuration required; no managed/dev DB fallback or unsafe origins", async () => {
   for (const url of [undefined, "", "http://offline-project.supabase.co", "https://localhost",
-    "https://project.replit.dev", "postgres://private:credential@db", "https://offline-project.supabase.co/rest/v1",
+    "https://project.example.dev", "postgres://private:credential@db", "https://offline-project.supabase.co/rest/v1",
     "https://private:credential@offline-project.supabase.co", "https://offline-project.supabase.co?token=secret",
     "https://offline-project.supabase.co#secret", "https://offline-project.supabase.co:443",
     "https://offline-project.supabase.co\\", " https://offline-project.supabase.co"]) {

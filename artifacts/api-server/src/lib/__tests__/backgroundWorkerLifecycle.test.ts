@@ -95,7 +95,8 @@ test("isolated production worker lifecycle through startup failures, crashes, su
           [...(suspension ? [process.execPath] : []), application ? applicationBundle : bundle], {
           // Allowlist, not a copy of process.env: no shared credentials or URLs.
           env: {
-            PATH: process.env.PATH, NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true",
+            // Models the designated live instance, so the kill switch is on.
+            PATH: process.env.PATH, NODE_ENV: "production", RUN_BACKGROUND_JOBS: "true", SCHEDULER_ENABLED: "true",
             SMS_LIVE: "false", WORKER_FIXTURE_SOCKET: fixture.root, FIXTURE_RELEASE: release,
             ...(application ? {
               PORT: "1", PUBLIC_API_URL: "https://fixture.invalid",

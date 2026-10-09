@@ -25,6 +25,7 @@ import {
 } from "../lib/retentionApprovals";
 import ltpSequenceRouter, { requireLtpSequenceSchemaReady } from "./ltpSequence";
 import { observeKillSwitch } from "../lib/operatorMonitoring";
+import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
 const router: IRouter = Router();
 router.use(ltpSequenceRouter);
@@ -49,7 +50,7 @@ async function retentionMode(clubId: string) {
   return {
     retention_only: isRetentionOnlyMode(),
     require_marketing_consent: requiresMarketingConsent(),
-    sms_live: process.env.SMS_LIVE === "true",
+    sms_live: smsLiveEnabled(),
     test_override_configured: !!process.env.SMS_TEST_OVERRIDE_TO?.trim(),
     kill_switch: error || !club ? null : club.sms_kill_switch === true,
     kill_switch_warning: error

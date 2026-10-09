@@ -25,7 +25,6 @@ export function validateProductionEnvironment(env) {
         && !url.username && !url.password
         && url.pathname === "/"
         && !value.includes("?") && !value.includes("#")
-        && host !== "replit.dev" && !host.endsWith(".replit.dev")
         && host !== "localhost" && !host.endsWith(".localhost")
         && !host.startsWith("127.") && host !== "[::1]" && host !== "0.0.0.0";
     } catch {

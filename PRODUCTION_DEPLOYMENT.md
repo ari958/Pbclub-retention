@@ -1,5 +1,11 @@
 # Production deployment preparation
 
+> **2026-10-09: hosting moved to Railway.** Replit-specific parts of this document
+> (Reserved VM, `artifact.toml`, the dashboard gateway on port 23183, two
+> services) are historical. Current hosting and the cutover runbook are in
+> `RUNBOOK.md` under "Hosting". The checks, migrations and operating rules
+> below still apply.
+
 ## Status and boundaries
 
 Prepared for **Reserved VM (`deploymentTarget = "vm"`), one VM instance**. Autoscale is not acceptable for this app.
@@ -238,7 +244,7 @@ No grants were revoked as part of this preparation.
 - Stale historical provenance is now a blocker before approval and dispatch, not merely a warning. Drafts expire five days after generation. A verified context rebuild renews that lifetime, but text edits and status changes do not. Existing contexts without a generation timestamp fall back to candidate creation time.
 - Backdate/reset test tools still require the explicit test override. Real-player STOP persists opt-out and exits the active LTP sequence; persistence failure returns a retryable error rather than acknowledging success.
 - Settings now includes **Send operator test message**, available only with `SMS_TEST_OVERRIDE_TO`. The recipient cannot be supplied by the caller, and the only body is `PB Club production test. No action needed.` It uses the same final live/kill-switch/window/Twilio transport as approved sends, without creating a player, candidate, sequence, or approval.
-- Operator tests persist a test-flagged message and ledger audit containing the session-derived actor. SID and receipt status are displayed and refreshed. Signed callbacks can identify an operator test before its SID bookkeeping finishes, and the provider's queued response cannot overwrite an earlier receipt. Receipt persistence errors request a retry.
+- Operator tests persist a row in the private `operator_test_messages` table (migration 030) containing the session-derived actor; they write no `messages` or `contact_ledger` row (changed 2026-10-09: the live schema rejected those rows). SID and receipt status are displayed and refreshed. Signed callbacks can identify an operator test before its SID bookkeeping finishes, and the provider's queued response cannot overwrite an earlier receipt. Receipt persistence errors request a retry.
 - **77 focused backend tests pass**, including unset override refusal, live-off and send-window refusal, kill-switch checks before and immediately before transport, test bookkeeping, receipt ordering, freshness, test-tool gates, and LTP opt-out regressions. API type check and combined production dashboard/API build pass.
 - The authenticated Settings card passed an isolated, write-blocking browser check with intercepted GET/POST responses: override unavailable/available, exact body, empty payload, mocked SID, queued-to-delivered polling, reload persistence, and readable kill-switch refusal. No operator-test request was forwarded to a provider.
 - The full dashboard type check still has 114 pre-existing legacy UI errors, including undeclared Radix/lucide dependencies and existing typing issues. There are no errors in the new operator-test component. This check is not being reported as passing.
