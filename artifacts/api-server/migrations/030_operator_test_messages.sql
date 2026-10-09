@@ -31,11 +31,16 @@ CREATE INDEX IF NOT EXISTS operator_test_messages_club_time
 -- Private operator audit. Access only through the operator-authenticated API.
 ALTER TABLE public.operator_test_messages ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.operator_test_messages FROM PUBLIC, anon, authenticated;
+-- Supabase's default privileges grant service_role ALL (including DELETE and
+-- TRUNCATE) on every new table. The API never deletes test history, so take
+-- that back before granting the exact set. Found when applying in production.
+REVOKE ALL ON public.operator_test_messages FROM service_role;
 GRANT SELECT, INSERT, UPDATE ON public.operator_test_messages TO service_role;
 COMMIT;
 
--- Read-only check after applying. Expect 11 columns, rls_enabled = true, and
--- no rows for anon or authenticated (the owner role and service_role remain):
+-- Read-only check after applying. Expect 11 columns, rls_enabled = true, no
+-- rows for anon or authenticated, and service_role with exactly
+-- INSERT,SELECT,UPDATE (the owner role keeps full privileges):
 -- SELECT count(*) FROM information_schema.columns
 --  WHERE table_schema='public' AND table_name='operator_test_messages';
 -- SELECT relrowsecurity AS rls_enabled FROM pg_class WHERE oid='public.operator_test_messages'::regclass;

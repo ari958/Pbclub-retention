@@ -129,13 +129,15 @@ message row and pass its `messageId` before it is switched on.
 
 ### Operator test message: apply migration 030 before deploying the fix
 
-**Status:** fixed on the branch; migration 030 not yet applied in production.
+**Status:** migration 030 applied in production 2026-10-09 (11 columns, RLS
+on, `service_role` narrowed to INSERT/SELECT/UPDATE). Deploy the branch, then
+press "Send operator test message" once with `SMS_TEST_OVERRIDE_TO` set.
 
-1. Run `artifacts/api-server/migrations/030_operator_test_messages.sql` in the
-   Supabase SQL editor (additive: one new private table), then the read-only
-   checks at the bottom of that file.
-2. Deploy. Until 030 is applied, the Settings card reports "install migration
-   030" and sends nothing.
+Applying it showed Supabase default privileges grant `service_role` ALL
+(including DELETE and TRUNCATE) on every new table, beyond what a migration
+grants. 030 now revokes that first. Earlier operator tables (017, 020, 029)
+were not re-checked; their migrations grant without revoking, so they most
+likely carry the same extra privileges. Audit before changing.
 
 Background, kept for the record:
 

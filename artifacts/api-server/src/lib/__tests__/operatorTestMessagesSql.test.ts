@@ -25,6 +25,12 @@ test("migration 030 is additive, reapplicable, private and constrained (real Pos
     for (const privilege of ["SELECT", "INSERT", "UPDATE"]) {
       assert.equal(sql(`SELECT has_table_privilege('service_role','public.operator_test_messages','${privilege}')`), "t");
     }
+    // Production had default privileges granting service_role ALL; the migration must take DELETE/TRUNCATE back.
+    sql("ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role");
+    sql("DROP TABLE public.operator_test_messages"); apply();
+    for (const privilege of ["DELETE", "TRUNCATE"]) {
+      assert.equal(sql(`SELECT has_table_privilege('service_role','public.operator_test_messages','${privilege}')`), "f", privilege);
+    }
     // Supabase's service_role has BYPASSRLS; like 017/020/029, this table relies
     // on it (RLS on, no policies), so mirror that before writing as service_role.
     sql("ALTER ROLE service_role BYPASSRLS");
