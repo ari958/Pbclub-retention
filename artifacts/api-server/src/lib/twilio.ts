@@ -18,6 +18,7 @@ import {
 } from "./ltpSequenceLifecycle";
 import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
 import { alertOperator } from "./operatorMonitoring";
+import { smsLiveEnabled } from "./backgroundPolicy";
 
 export function getTwilioClient() {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
@@ -64,7 +65,8 @@ const ltpBatchOptionsForDispatch = (): LtpBookingBatchOptions =>
   testLtpBatchOptionsFactory ? testLtpBatchOptionsFactory() : {};
 
 /**
- * Send an SMS via Twilio only when SMS_LIVE is true; otherwise hold untouched.
+ * Send an SMS via Twilio only when smsLiveEnabled() (SMS_LIVE plus the
+ * SCHEDULER_ENABLED kill switch); otherwise hold untouched.
  *
  * Every dispatch is bound to an approved, immutable message row. A successful
  * claim is deliberately retained after errors: a caller must reconcile an
@@ -224,7 +226,7 @@ export async function assertSmsKillSwitchOff(clubId: string): Promise<void> {
 }
 
 async function assertFinalTransportAllowed(clubId: string, audit: DispatchAudit): Promise<void> {
-  if (process.env.SMS_LIVE !== "true") throw new SmsPolicyBlockedError("Live sending is off; dispatch held");
+  if (!smsLiveEnabled()) throw new SmsPolicyBlockedError("Live sending is off; dispatch held");
   audit.begin("kill_switch_final");
   await assertSmsKillSwitchOff(clubId);
   audit.begin("send_window_final");
@@ -268,7 +270,7 @@ async function sendApprovedMessage(
     throw new Error("SMS dispatch requires an approved messageId context");
   }
   audit.begin("live_sending");
-  const smsLive = process.env.SMS_LIVE === "true";
+  const smsLive = smsLiveEnabled();
   audit.end(smsLive ? "pass" : "blocked", { sms_live: smsLive, held: !smsLive });
   if (!smsLive) throw new SmsPolicyBlockedError("Live sending is off; approved message held untouched");
 
@@ -390,7 +392,7 @@ async function sendApprovedMessage(
     ? (testClientFactory ? testClientFactory() : getTwilioClient())
     : null;
 
-  if (process.env.SMS_LIVE !== "true") throw new SmsPolicyBlockedError("Live sending is off; approved message held untouched");
+  if (!smsLiveEnabled()) throw new SmsPolicyBlockedError("Live sending is off; approved message held untouched");
   const claimToken = randomUUID();
   const claimedAt = currentTime().toISOString();
   let claimed: any;

@@ -1,12 +1,41 @@
 // Pure configuration policy shared by runtime and the offline publishing gate.
 // Importing this module must never initialize workers or external clients.
-export function backgroundJobsEnabledForEnvironment(env, enabledInTests = false) {
+// Hard kill switch. SCHEDULER_ENABLED is set ONLY as a secret on the one live
+// deployment, never in .replit or artifact.toml, so a remix, fork or second
+// deployment inherits RUN_BACKGROUND_JOBS=true but stays off. Default: off.
+export function schedulerDesignatedForEnvironment(env) {
+  return env.NODE_ENV === "production" && env.SCHEDULER_ENABLED === "true";
+}
+
+// What the deployment config asks for, before the kill switch is applied.
+function backgroundJobsRequested(env, enabledInTests) {
   return env.RUN_BACKGROUND_JOBS === "true"
     && (env.NODE_ENV === "production" || (env.NODE_ENV === "test" && enabledInTests));
 }
 
+export function backgroundJobsEnabledForEnvironment(env, enabledInTests = false) {
+  return backgroundJobsRequested(env, enabledInTests)
+    && (env.NODE_ENV !== "production" || schedulerDesignatedForEnvironment(env));
+}
+
+// Live SMS needs SMS_LIVE=true AND the production kill switch. NODE_ENV=test is
+// exempt so offline suites can exercise the send path with injected transports;
+// a real server can never run that way (see nonProductionLiveSmsError).
+export function liveSmsAllowedForEnvironment(env) {
+  return env.SMS_LIVE === "true"
+    && (env.NODE_ENV === "test" || schedulerDesignatedForEnvironment(env));
+}
+
+// Boot refusal: SMS_LIVE=true is only ever valid on a production instance.
+export function nonProductionLiveSmsError(env) {
+  if (env.SMS_LIVE !== "true" || env.NODE_ENV === "production") return null;
+  return `SMS_LIVE=true is only allowed when NODE_ENV=production (got ${env.NODE_ENV ?? "unset"}); refusing to start`;
+}
+
 export function productionWorkerConfigurationErrors(env) {
-  if (env.NODE_ENV !== "production" || !backgroundJobsEnabledForEnvironment(env)) return [];
+  // Validate whenever production asks for workers, designated or not, so a
+  // misconfigured deployment fails at build instead of silently idling.
+  if (env.NODE_ENV !== "production" || !backgroundJobsRequested(env, false)) return [];
 
   const errors = [];
   const destination = env.ALERT_OPERATOR_TO;

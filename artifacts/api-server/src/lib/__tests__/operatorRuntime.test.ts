@@ -93,15 +93,25 @@ test("RUN_BACKGROUND_JOBS is opt-in and requires exact true", () => {
     assert.equal(backgroundJobsEnabled(), false);
   }
   process.env.RUN_BACKGROUND_JOBS = "true";
-  setBackgroundWorkerLeader(false);
-  assert.equal(backgroundJobsEnabled(), false, "configured standby must not start jobs");
-  setBackgroundWorkerLeader(true);
-  assert.equal(backgroundJobsEnabled(), true);
-  process.env.NODE_ENV = "development";
-  assert.equal(backgroundJobsEnabled(), false);
-  process.env.NODE_ENV = nodeEnv;
-  setBackgroundWorkerLeader(false);
-  process.env.RUN_BACKGROUND_JOBS = "false";
+  const scheduler = process.env.SCHEDULER_ENABLED;
+  try {
+    setBackgroundWorkerLeader(true);
+    delete process.env.SCHEDULER_ENABLED;
+    assert.equal(backgroundJobsEnabled(), false, "production without the SCHEDULER_ENABLED kill switch stays off");
+    process.env.SCHEDULER_ENABLED = "true";
+    setBackgroundWorkerLeader(false);
+    assert.equal(backgroundJobsEnabled(), false, "configured standby must not start jobs");
+    setBackgroundWorkerLeader(true);
+    assert.equal(backgroundJobsEnabled(), true);
+    process.env.NODE_ENV = "development";
+    assert.equal(backgroundJobsEnabled(), false);
+  } finally {
+    process.env.NODE_ENV = nodeEnv;
+    if (scheduler === undefined) delete process.env.SCHEDULER_ENABLED;
+    else process.env.SCHEDULER_ENABLED = scheduler;
+    setBackgroundWorkerLeader(false);
+    process.env.RUN_BACKGROUND_JOBS = "false";
+  }
 });
 test("job lock refuses overlap, releases after errors, and fails closed on unavailable RPC", async () => {
   let held = false;

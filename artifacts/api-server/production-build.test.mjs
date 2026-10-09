@@ -52,19 +52,25 @@ test("publishing requires an alert destination only for exact true worker opt-in
 });
 
 test("runtime worker policy preserves environment gating and explicit test-only override", () => {
-  const original = { NODE_ENV: process.env.NODE_ENV, RUN_BACKGROUND_JOBS: process.env.RUN_BACKGROUND_JOBS };
+  const original = { NODE_ENV: process.env.NODE_ENV, RUN_BACKGROUND_JOBS: process.env.RUN_BACKGROUND_JOBS,
+    SCHEDULER_ENABLED: process.env.SCHEDULER_ENABLED };
   try {
     for (const nodeEnv of [undefined, "development", "test", "production"]) {
       for (const flag of [undefined, "false", "TRUE", "1", "true"]) {
         for (const testOverride of [false, true]) {
+         for (const scheduler of [undefined, "false", "true"]) {
           process.env.NODE_ENV = "test";
           setBackgroundJobsEnabledForTests(testOverride);
           if (nodeEnv === undefined) delete process.env.NODE_ENV;
           else process.env.NODE_ENV = nodeEnv;
           if (flag === undefined) delete process.env.RUN_BACKGROUND_JOBS;
           else process.env.RUN_BACKGROUND_JOBS = flag;
-          const env = { ...alertTransport(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag };
-          const enabled = flag === "true" && (nodeEnv === "production" || (nodeEnv === "test" && testOverride));
+          if (scheduler === undefined) delete process.env.SCHEDULER_ENABLED;
+          else process.env.SCHEDULER_ENABLED = scheduler;
+          const env = { ...alertTransport(), NODE_ENV: nodeEnv, RUN_BACKGROUND_JOBS: flag, SCHEDULER_ENABLED: scheduler };
+          // Production additionally needs the SCHEDULER_ENABLED kill switch.
+          const enabled = flag === "true"
+            && ((nodeEnv === "production" && scheduler === "true") || (nodeEnv === "test" && testOverride));
           assert.equal(backgroundJobsEnabledForEnvironment(env, testOverride), enabled);
           assert.equal(backgroundJobsConfigured(), enabled);
           setBackgroundWorkerLeader(false);
@@ -74,6 +80,7 @@ test("runtime worker policy preserves environment gating and explicit test-only 
           assert.deepEqual(productionWorkerConfigurationErrors(env),
             nodeEnv === "production" && flag === "true"
               ? ["Production background jobs require ALERT_OPERATOR_TO"] : []);
+         }
         }
       }
     }
@@ -83,7 +90,7 @@ test("runtime worker policy preserves environment gating and explicit test-only 
     setBackgroundWorkerLeader(false);
     process.env.NODE_ENV = "test";
     setBackgroundJobsEnabledForTests(false);
-    for (const key of ["NODE_ENV", "RUN_BACKGROUND_JOBS"]) {
+    for (const key of ["NODE_ENV", "RUN_BACKGROUND_JOBS", "SCHEDULER_ENABLED"]) {
       if (original[key] === undefined) delete process.env[key];
       else process.env[key] = original[key];
     }

@@ -3,6 +3,7 @@ import { supabase } from "./supabaseClient";
 import { DispatchAudit } from "./dispatchAudit";
 import { assertSmsKillSwitchOff, submitProductionSms, SmsPolicyBlockedError, getSmsTransportTime } from "./twilio";
 import { isInsideSendWindow } from "./playerTiming";
+import { smsLiveEnabled } from "./backgroundPolicy";
 
 export const OPERATOR_TEST_TEXT = "PB Club production test. No action needed.";
 export function operatorTestAvailable() { return !!process.env.SMS_TEST_OVERRIDE_TO?.trim(); }
@@ -17,7 +18,7 @@ const requireOverride = () => {
 // No candidate, player, sequence, or approval is created by this explicit operator action.
 export async function sendOperatorTestMessage(clubId: string, actor: string) {
   const to = requireOverride();
-  if (process.env.SMS_LIVE !== "true") throw new SmsPolicyBlockedError("Live sending is off; operator test blocked");
+  if (!smsLiveEnabled()) throw new SmsPolicyBlockedError("Live sending is off; operator test blocked");
   await assertSmsKillSwitchOff(clubId);
   if (!isInsideSendWindow(getSmsTransportTime())) throw new SmsPolicyBlockedError("Outside the TCPA send window");
   const id = randomUUID();

@@ -24,6 +24,7 @@ import {
   confirmLtpRecipientDelivery,
   SmsOptOutPersistenceError,
 } from "../lib/ltpSequenceLifecycle";
+import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
 const router: IRouter = Router();
 
@@ -179,7 +180,7 @@ router.post("/messages/send", requireClub, async (req, res) => {
   }
 
   // Guard: cooldown
-  if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
+  if (!isRetentionOnlyMode() && smsLiveEnabled() && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
     const elapsed = Date.now() - new Date(player.last_outbound_at).getTime();
     if (elapsed < COOLDOWN_MS) {
       const remainingMins = Math.ceil((COOLDOWN_MS - elapsed) / 60000);
@@ -362,7 +363,7 @@ router.post("/messages/bulk", parkInRetentionOnlyMode("Bulk message sending is p
 
   for (const player of eligible) {
     // Cooldown check
-    if (!isRetentionOnlyMode() && process.env.SMS_LIVE === "true" && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
+    if (!isRetentionOnlyMode() && smsLiveEnabled() && !process.env.SMS_TEST_OVERRIDE_TO?.trim() && player.last_outbound_at) {
       const elapsed = now - new Date(player.last_outbound_at).getTime();
       if (elapsed < COOLDOWN_MS) {
         skipped_cooldown++;
