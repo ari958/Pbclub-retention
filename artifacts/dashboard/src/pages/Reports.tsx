@@ -4,6 +4,7 @@ import { getGetRetentionReportsQueryKey, useGetRetentionReports } from "@workspa
 import type { RetentionPlaybookOutcome, RetentionSmsOptout } from "@workspace/api-client-react";
 import { Sidebar } from "@/components/Sidebar";
 import { useClub } from "@/lib/ClubContext";
+import { displaySequenceStatus } from "@/lib/sequenceStatus";
 import "./Reports.css";
 
 type Period = "30d" | "90d" | "all";
@@ -40,9 +41,7 @@ function Funnel({ step, outcomes }: { step: 1 | 2; outcomes: RetentionPlaybookOu
   </section>;
 }
 
-function displayStatus(status: string) {
-  return status.replaceAll("_", " ");
-}
+const displayStatus = displaySequenceStatus;
 
 export default function Reports() {
   const club = useClub();

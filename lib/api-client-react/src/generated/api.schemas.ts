@@ -428,6 +428,7 @@ export const RetentionCandidateSequenceStatus = {
   exited_booked: "exited_booked",
   exited_opt_out: "exited_opt_out",
   completed: "completed",
+  exited_test: "exited_test",
 } as const;
 
 export type RetentionCandidatePlayer = {
@@ -601,6 +602,7 @@ export const RetentionGeneratedDraftSequenceStatus = {
   exited_booked: "exited_booked",
   exited_opt_out: "exited_opt_out",
   completed: "completed",
+  exited_test: "exited_test",
 } as const;
 
 export interface RetentionGeneratedDraft {

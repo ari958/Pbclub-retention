@@ -3,6 +3,12 @@ name: Retention SQL verification
 description: Why source-contract tests alone are insufficient for transactional retention migrations.
 ---
 
+Signed webhook tests should execute native receipt, opt-out, transition, and alert SQL in a disposable database with fake transports. Give the test process a local worker lease rather than bypassing alert-election guards.
+
+**Why:** Mocked RPC success conceals missing transition prerequisites and alert ownership failures. Scraping another test's SQL template also mixes schema and interpolated seed data.
+
+**How to apply:** Own a dedicated fixture schema, include every column referenced by native functions, and verify event/alert replay counts and cleanup. Never use shared databases or real SMS transports.
+
 Compile and exercise transactional retention migrations in an isolated PostgreSQL fixture before handing them to the operator. Source-contract checks and TypeScript checks do not prove PL/pgSQL compilation or safe backfill ordering.
 
 **Why:** A migration passed its source-contract tests while still containing a SQL syntax error. Executing it against fake historical rows caught the error and made it possible to verify preservation of approval evidence, capacity replacement, and delivery classification before application.

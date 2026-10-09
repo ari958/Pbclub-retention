@@ -932,7 +932,7 @@ components:
         sequence_id: {type: [string, "null"], format: uuid}
         sequence_status:
           type: [string, "null"]
-          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, null]
+          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, exited_test, null]
         exited_at: {type: [string, "null"]}
         exit_reason: {type: [string, "null"]}
         booked_event_id: {type: [string, "null"]}
@@ -1093,7 +1093,7 @@ components:
         step: {type: integer, enum: [1, 2]}
         sequence_status:
           type: [string, "null"]
-          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, null]
+          enum: [active, paused_reply, exited_booked, exited_opt_out, completed, exited_test, null]
         validation_errors:
           type: array
           items: {type: string}

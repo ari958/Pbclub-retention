@@ -54,7 +54,7 @@ export interface Candidate {
   };
   step?: 1 | 2;
   sequence_id?: string | null;
-  sequence_status?: "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | null;
+  sequence_status?: "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | "exited_test" | null;
   exited_at?: string | null;
   exit_reason?: string | null;
   booked_event_id?: string | null;

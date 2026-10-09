@@ -566,6 +566,7 @@ export const ListRetentionApprovalsResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),
@@ -1079,6 +1080,7 @@ export const GenerateRetentionDraftsResponse = zod.object({
             zod.literal("exited_booked"),
             zod.literal("exited_opt_out"),
             zod.literal("completed"),
+            zod.literal("exited_test"),
             zod.literal(null),
           ])
           .nullish(),
@@ -1143,6 +1145,7 @@ export const UpdateRetentionKillSwitchResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),
@@ -1379,6 +1382,7 @@ export const EditRetentionDraftResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),
@@ -1624,6 +1628,7 @@ export const ApproveRetentionDraftResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),
@@ -3372,6 +3377,7 @@ export const SkipRetentionDraftResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),
@@ -3610,6 +3616,7 @@ export const ApproveRetentionPlaybookDraftsResponse = zod.object({
           zod.literal("exited_booked"),
           zod.literal("exited_opt_out"),
           zod.literal("completed"),
+          zod.literal("exited_test"),
           zod.literal(null),
         ])
         .nullish(),

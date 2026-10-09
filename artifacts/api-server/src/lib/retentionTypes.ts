@@ -13,7 +13,7 @@ export interface RetentionPlaybook {
   ltp_sequence_config?: LtpSequenceConfig;
 }
 
-export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed";
+export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | "exited_test";
 export type RetentionSequenceStep = 1 | 2;
 
 export interface LtpSequenceStep1Slots {

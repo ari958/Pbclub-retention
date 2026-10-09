@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { canApprove } from "@/lib/approvalGuards";
 import type { Candidate } from "@/lib/retentionApi";
+import { displaySequenceStatus } from "@/lib/sequenceStatus";
 import { approvalVariantPresentation } from "@/lib/approvalVariant";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
 import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpSessionWhen, formatLtpTriggerFact, isLtpCandidate } from "@/lib/ltpPhraseSlots";
@@ -107,7 +108,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
               Step {step}
             </span>
             <span data-testid={`badge-ltp-sequence-${c.id}`} style={{ fontFamily: mono, fontSize: 10, padding: "1px 6px", borderRadius: 3, background: D.inner, color: sequenceStatusColor, border: `1px solid ${D.border}` }}>
-              {c.sequence_status ?? "sequence unavailable"}
+              {displaySequenceStatus(c.sequence_status)}
             </span>
           </>
         )}
@@ -260,7 +261,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         )}
         {ltpCandidate && c.status === "drafted" && sequenceSchemaReady && !approvableLtp && !legacyLtpDraft && !sessionChanged && (
           <span role="note" data-testid={`notice-ltp-approval-blocked-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
-            This LTP draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${c.sequence_status ?? "unavailable"}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
+            This LTP draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${displaySequenceStatus(c.sequence_status)}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
             Rebuild the active step-one cohort and review the refreshed text before approving.
           </span>
         )}
