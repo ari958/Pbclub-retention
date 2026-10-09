@@ -135,10 +135,20 @@ ones marked (build) are also needed during the build.
 | `VITE_NAV_MODE` | `retention` (build) |
 | `SMS_TEST_OVERRIDE_TO` | unset, except during an operator test |
 
-### Cutover from Replit (do once, after 7:30pm ET)
+### Every redeploy
 
-The database lease makes this safe: the new service stays on standby until the
-old one stops, so the scheduler never runs twice.
+Any merge to `main` or variable change restarts the process. The new process
+waits for the old one's scheduler lease to expire (up to 2 minutes), during
+which `/api/healthz` reports `background_jobs: false`. Normal; nothing is lost.
+
+### Cutover from Replit (done 2026-10-09)
+
+Completed 2026-10-09 ~14:45 ET: Twilio inbound webhook repointed,
+`SCHEDULER_ENABLED=true` set on Railway, Replit unpublished, Railway elected
+leader, one operator test delivered, test override removed. The club kill
+switch was paused by the operator throughout and left paused afterwards.
+Remaining: delete the Replit deployment and archive the workspace after the
+first Railway nightly run is confirmed. The steps, kept for reference:
 
 1. Create the service from `main` with every variable above **except**
    `SCHEDULER_ENABLED`. It boots as API + dashboard only. Log in, check
@@ -168,6 +178,7 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   client no longer writes. Milestone and monthly-recap generation now use the
   shared `AGENT_MODEL` (`anthropicConfig.ts`) instead of a hard-coded
   `claude-sonnet-4-5`. Rewrote `CLAUDE.md` against the code.
+- **2026-10-09**: Production moved to Railway (`pbclub-retention-production.up.railway.app`); cutover details under "Hosting".
 - **2026-10-09**: Removed Replit: `.replit`, artifact configs, the dashboard
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
