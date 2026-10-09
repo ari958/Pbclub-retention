@@ -7,7 +7,7 @@ For the four stranded override-test recipients, archive the complete original hi
 
 **Why:** The user replaced the reset proposal with terminal closure after confirming the old LTP dates would not qualify for normal step-one generation.
 
-**How to apply:** Preserve the archive and audit definition exactly as requested. Clear simulated booked-exit fields on live roots and candidates, not on immutable archived snapshots. Keep actual test send evidence. A written closure proposal is not authorization to apply it, draft, approve, or send.
+**How to apply:** Preserve original archive snapshots and the existing audit view; do not append archive rows to that view. For this four-root close only, use expected-state and exact linked-message/provider-proof checks, not attendance checks or app session-setting gates. Do not update contact-ledger rows. Clear simulated booked-exit fields on live roots and candidates, not on immutable snapshots. Keep actual test send evidence. A written closure proposal is not authorization to apply it, draft, approve, or send.
 
 Test-clock changes require the configured override and proof that every actual sent message went to that override. Current player phones and test flags are not destination evidence.
 
