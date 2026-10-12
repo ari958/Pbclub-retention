@@ -47,6 +47,8 @@ export interface RetentionPlaybook {
   verified_promo_code?: string | null;
   verified_offer_phrase?: string | null;
   booking_url?: string | null;
+  /** Code-side phrase defaults for a sequence flow; added by the approvals route, never stored. */
+  default_sequence_config?: LtpSequenceConfig;
 }
 
 export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | "exited_test";

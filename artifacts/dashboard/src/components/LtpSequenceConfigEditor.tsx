@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import type { LtpSequenceConfig, Playbook } from "@/lib/retentionApi";
 import {
-  DEFAULT_LTP_SEQUENCE_CONFIG,
   ltpPhraseSlot,
   LTP_PHRASE_SLOT_KEYS,
   parsePhraseSlotEditor,
@@ -10,9 +9,15 @@ import {
   validateLtpSequenceConfig,
 } from "@/lib/ltpPhraseSlots";
 
-const SLOTS: Array<{ key: LtpPhraseSlotKey; label: string; purpose: string }> = [
+const EMPTY_CONFIG: LtpSequenceConfig = {
+  step2_gap_days: 7,
+  step1: { opener: [], thanks: [], next_step: [], offer: [], offer_no_program: [] },
+  step2: { opener: [], nudge: [], next_step: [], no_program_cta: [] },
+};
+
+const slotsFor = (playbook: Playbook): Array<{ key: LtpPhraseSlotKey; label: string; purpose: string }> => [
   { key: "step1.opener", label: "Step 1 · opener", purpose: "Supported code-filled fact: {first}." },
-  { key: "step1.thanks", label: "Step 1 · Learn to Play thank-you", purpose: "Use {ltp_date}; do not use only a weekday for past attendance." },
+  { key: "step1.thanks", label: `Step 1 · ${playbook.trigger_program_label ?? "trigger program"} thank-you`, purpose: "Use {ltp_date}; do not use only a weekday for past attendance." },
   { key: "step1.next_step", label: "Step 1 · with-program next step", purpose: "Supported code-filled facts: {program}, {when}." },
   { key: "step1.offer", label: "Step 1 · with-program offer", purpose: "Use {promo} for the verified code; code appends the next-step link." },
   { key: "step1.offer_no_program", label: "Step 1 · no-program offer", purpose: "Use {promo}; code appends the approved PB Club booking page." },
@@ -41,7 +46,8 @@ export function LtpSequenceConfigEditor({
   busy: boolean;
   onSave: (key: string, config: LtpSequenceConfig) => Promise<boolean>;
 }) {
-  const serverConfig = playbook.ltp_sequence_config ?? DEFAULT_LTP_SEQUENCE_CONFIG;
+  const SLOTS = slotsFor(playbook);
+  const serverConfig = playbook.ltp_sequence_config ?? playbook.default_sequence_config ?? EMPTY_CONFIG;
   const serverValue = JSON.stringify(serverConfig);
   const [config, setConfig] = useState<LtpSequenceConfig>(serverConfig);
   const [lastLoadedValue, setLastLoadedValue] = useState(serverValue);
@@ -142,7 +148,7 @@ export function LtpSequenceConfigEditor({
             >Reload saved version</button>
           </div>
         )}
-        {!schemaReady && <div role="alert" data-testid={`warning-ltp-config-schema-${playbook.key}`} style={{ color: "#d4813a", fontSize: 12 }}>Apply migration 013 before editing LTP sequence phrases.</div>}
+        {!schemaReady && <div role="alert" data-testid={`warning-ltp-config-schema-${playbook.key}`} style={{ color: "#d4813a", fontSize: 12 }}>Apply migration 013 before editing sequence phrases.</div>}
           {config.step2_gap_days < 7 || config.step2_gap_days > 30 || !Number.isInteger(config.step2_gap_days)
           ? <div role="alert" data-testid={`warning-ltp-gap-${playbook.key}`} style={{ color: "#ff6b6b", fontSize: 12 }}>Step 2 gap must be an integer from 7 to 30 days.</div>
           : null}

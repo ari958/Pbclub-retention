@@ -7,7 +7,15 @@ export interface Playbook {
   key: string; name: string; enabled: boolean; promo_code: string | null; offer_text: string | null;
   next_program_names: string[]; message_guidance: string | null; holdout_pct: number;
   ltp_sequence_config?: LtpSequenceConfig | null;
+  /** Flow rules; the server fills them from its flow registry when the row predates migration 031. */
+  flow_kind?: "single" | "sequence";
+  trigger_program_label?: string | null;
+  verified_promo_code?: string | null;
+  verified_offer_phrase?: string | null;
+  booking_url?: string | null;
+  default_sequence_config?: LtpSequenceConfig | null;
 }
+export { LTP_FOLLOWUP_KEY, isSequencePlaybook } from "./retentionFlowKeys";
 export interface LtpSequenceConfig {
   step2_gap_days: number;
   step1: {
@@ -143,8 +151,8 @@ export const retentionApi = {
     call<RetryContextEnvelope>(s, `/api/retention/candidates/${id}/retry-context`, "POST", {}),
   retryContextBatch: (s: string, candidate_ids: string[]) =>
     call<RetryContextEnvelope>(s, "/api/retention/retry-context", "POST", { candidate_ids }),
-  regenerateLtpBatch: (s: string, candidate_ids: string[]) =>
-    call<LtpRegenerateBatchEnvelope>(s, "/api/retention/regenerate-batch", "POST", { candidate_ids }),
+  regenerateLtpBatch: (s: string, candidate_ids: string[], playbook_key?: string) =>
+    call<LtpRegenerateBatchEnvelope>(s, "/api/retention/regenerate-batch", "POST", { candidate_ids, ...(playbook_key ? { playbook_key } : {}) }),
   reshuffleLtp: (s: string, id: string) =>
     call<RegenerateResult>(s, `/api/retention/candidates/${id}/reshuffle`, "POST", {}),
   updatePlaybookSequenceConfig: (s: string, key: string, config: LtpSequenceConfig) =>

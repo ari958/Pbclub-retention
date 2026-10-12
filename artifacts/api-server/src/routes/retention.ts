@@ -6,7 +6,7 @@ import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
 import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate, retryRetentionContextBatch } from "../lib/retentionEngine";
 import { withGenerationRun } from "../lib/runHistory";
-import { DEFAULT_RETENTION_FLOW_KEY, findRetentionFlow, isSequenceFlowKey } from "../lib/retentionFlows";
+import { DEFAULT_RETENTION_FLOW_KEY, describePlaybookFlow, findRetentionFlow, isSequenceFlowKey } from "../lib/retentionFlows";
 import {
   ALLOWED_RETENTION_LOOKBACK_DAYS,
   DEFAULT_RETENTION_LOOKBACK_DAYS,
@@ -271,7 +271,7 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
       schema_ready: true,
       retry_context_ready: retryContextReady,
       sequence_schema_ready: sequenceSchemaReady,
-      playbooks: (playbooks ?? []) as RetentionPlaybook[],
+      playbooks: ((playbooks ?? []) as RetentionPlaybook[]).map(describePlaybookFlow),
       candidates: decorateApprovalCandidates(candidates, players, messages).map((candidate) => ({
         ...candidate,
         ...(candidate.step === 2 ? {

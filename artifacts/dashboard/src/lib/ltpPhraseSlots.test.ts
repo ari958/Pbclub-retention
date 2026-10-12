@@ -3,11 +3,11 @@ import test from "node:test";
 import {
   canApproveLtpCandidate,
   canReshuffleLtpCandidate,
-  DEFAULT_LTP_SEQUENCE_CONFIG,
   formatLtpAttendanceDate,
   formatLtpNextProgramFact,
   formatLtpSessionWhen,
   formatLtpTriggerFact,
+  isSequenceCandidate,
   LTP_PHRASE_SLOT_KEYS,
   ltpPhraseSlot,
   parsePhraseSlotEditor,
@@ -20,6 +20,24 @@ test("session-change timestamps use America/New_York regardless of browser timez
   assert.equal(formatLtpSessionWhen("2026-10-04T14:30:00.000Z"), "Sunday, Oct 4 at 10:30am");
   assert.equal(formatLtpSessionWhen("not-a-time"), null);
 });
+
+/** Stands in for the server's default phrase config, which the approvals response now carries. */
+const DEFAULT_LTP_SEQUENCE_CONFIG = {
+  step2_gap_days: 7,
+  step1: {
+    opener: ["Hi {first}, it's PB Club."],
+    thanks: ["Thanks for coming to Learn to Play on {ltp_date}."],
+    next_step: ["A good next step is {program} on {when}."],
+    offer: ["Use code {promo} for 25% off:"],
+    offer_no_program: ["Use code {promo} for 25% off your next program:"],
+  },
+  step2: {
+    opener: ["Hi {first}, it's PB Club."],
+    nudge: ["We'd love to see you back on the court."],
+    next_step: ["{program} on {when} still has spots."],
+    no_program_cta: ["Here's what's coming up:"],
+  },
+};
 
 function candidate(fields: Record<string, unknown> = {}) {
   return {
@@ -91,6 +109,18 @@ test("migration or marker missing keeps legacy LTP drafts from approval and resh
   assert.equal(canApproveLtpCandidate(candidate({ context: { ltp_text: { step: 1 }, reason: "session_changed" } }), true), false);
   assert.equal(canReshuffleLtpCandidate(candidate({ context: { ltp_text: { step: 1 }, reason: "session_changed" } }), true), false);
   assert.equal(canApproveLtpCandidate(candidate({ step: 2, context: { ltp_text: { step: 1 } } }), true), false);
+});
+
+test("sequence-ness comes from the playbook row, falling back to the Learn to Play key", () => {
+  assert.equal(isSequenceCandidate(candidate(), undefined), true);
+  assert.equal(isSequenceCandidate({ playbook_key: "other" }, undefined), false);
+  assert.equal(isSequenceCandidate({ playbook_key: "other" }, { flow_kind: "sequence" }), true);
+  assert.equal(isSequenceCandidate(candidate(), { flow_kind: "single" }), false);
+  // A second sequence flow gets the same approval gate as Learn to Play.
+  assert.equal(canApproveLtpCandidate({ ...candidate(), playbook_key: "winback_followup", context: {} } as any, true, { flow_kind: "sequence" }), false);
+  assert.equal(canApproveLtpCandidate({ ...candidate(), playbook_key: "winback_followup" } as any, true, { flow_kind: "sequence" }), true);
+  assert.equal(canReshuffleLtpCandidate({ ...candidate(), playbook_key: "winback_followup" } as any, true, { flow_kind: "sequence" }), true);
+  assert.equal(formatLtpTriggerFact(candidate({ playbook_key: "winback_followup", context: { trigger: { name: "Open Play Intro", date: "2026-10-06" } } }), { flow_kind: "sequence" }), "Open Play Intro on Oct 6");
 });
 
 test("LTP reshuffle permits either matching step on active drafted LTP rows only", () => {

@@ -183,6 +183,19 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-12**: Retention engine generalization, slice 5 (dashboard; no
+  behavior change for Learn to Play). `GET /retention/approvals` now returns
+  each playbook with its flow kind, trigger label, verified code, offer phrase,
+  booking URL and the flow's default phrase config, filled from the server
+  registry when the row predates migration 031 (`describePlaybookFlow`). The
+  dashboard decides from that row: `isSequenceCandidate(candidate, playbook)`
+  replaces `isLtpCandidate`, the approval card takes a `playbook` prop, the
+  approvals page renders one phrase editor per sequence playbook and gates
+  cohort rebuild per group, and the local copy of the default phrase config is
+  gone. Wording that said "LTP" now says "sequence" or uses the playbook name.
+  The one remaining literal is `LTP_FOLLOWUP_KEY`
+  (`lib/retentionFlowKeys.ts`), used only by the LTP test tools, the Reports
+  default, and as the fallback when a candidate's playbook row is not loaded.
 - **2026-10-12**: Retention engine generalization, slices 4 and 6 (routes
   and scheduler; no behavior change). `POST /retention/generate` and
   `POST /retention/regenerate-batch` accept an optional `playbook_key` (must
@@ -279,11 +292,10 @@ in roughly this order:
    and regenerate-batch. Add it and run `api-spec codegen` (a deliberate,
    reviewed step; do not run codegen casually) when the dashboard starts
    sending it.
-4. **Dashboard.** `lib/ltpPhraseSlots.ts` (`isLtpCandidate`),
-   `components/ApprovalCard.tsx`, `pages/Approvals.tsx`,
-   `components/LtpTestTools.tsx` and `pages/Reports.tsx` branch on
-   `playbook_key === "ltp_followup"` and keep a local copy of the default
-   phrase-slot config.
+4. **Dashboard**: done in slice 5. Dev check before merge: run the dev API
+   and dashboard against a dev database, open Approvals, and confirm the
+   Learn to Play group still shows step badges, the phrase editor, the cohort
+   rebuild button and the test tools exactly as before.
 5. **Scheduler**: done in slice 6; `scheduler.ts` iterates registered flows.
 
 Dry-run and operator approval rules are unchanged throughout; none of this

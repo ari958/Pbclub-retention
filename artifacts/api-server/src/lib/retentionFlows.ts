@@ -185,6 +185,25 @@ export function requireSingleFlow(playbookKeys: Iterable<string>): RetentionFlow
 }
 
 /**
+ * A playbook row as the dashboard should see it: flow kind and rules filled
+ * from the registry when the row predates migration 031, plus the flow's
+ * default phrase config so the dashboard keeps no copy of its own.
+ */
+export function describePlaybookFlow(row: RetentionPlaybook): RetentionPlaybook {
+  const flow = findRetentionFlow(row.key);
+  const rules = flow?.sequence?.rules;
+  return {
+    ...row,
+    flow_kind: row.flow_kind ?? (flow?.sequence ? "sequence" : "single"),
+    trigger_program_label: row.trigger_program_label ?? rules?.triggerProgramLabel ?? null,
+    verified_promo_code: row.verified_promo_code ?? rules?.verifiedPromoCode ?? null,
+    verified_offer_phrase: row.verified_offer_phrase ?? rules?.verifiedOfferPhrase ?? null,
+    booking_url: row.booking_url ?? rules?.bookingUrl ?? null,
+    ...(flow?.sequence ? { default_sequence_config: flow.sequence.defaultConfig } : {}),
+  };
+}
+
+/**
  * The database copy of the rules (migration 031) must agree with the code.
  * Rows read before 031 is applied carry no flow_kind and are accepted as-is.
  */

@@ -12,8 +12,8 @@ import { snapshotBulk } from "@/lib/approvalGuards";
 import { requestApprovalList } from "@/lib/approvalListRequest";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
 import { combineRetryContextEnvelopes, envelopeRunIds } from "@/lib/retryContextEnvelope";
-import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type LtpSequenceConfig, type RetryContextEnvelope } from "@/lib/retentionApi";
-import { canApproveLtpCandidate, canReshuffleLtpCandidate, isLtpCandidate } from "@/lib/ltpPhraseSlots";
+import { retentionApi, ApiError, DEFAULT_LOOKBACK_DAYS, LOOKBACK_DAY_OPTIONS, LTP_FOLLOWUP_KEY, isSequencePlaybook, type ApprovalListStatus, type ApprovalsResponse, type Candidate, type LtpSequenceConfig, type RetryContextEnvelope } from "@/lib/retentionApi";
+import { canApproveLtpCandidate, canReshuffleLtpCandidate, isSequenceCandidate } from "@/lib/ltpPhraseSlots";
 
 const D = { bg: "#161b22", card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", orange: "#d4813a", orangeBg: "rgba(212,129,58,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -109,7 +109,7 @@ export default function Approvals() {
 
   const generate = async () => {
     if (!ltpSequenceReady) {
-      toast.info("Apply migration 013 before generating LTP drafts. No drafts were created.");
+      toast.info("Apply migration 013 before generating sequence drafts. No drafts were created.");
       return;
     }
     setGenerating(true);
@@ -125,7 +125,7 @@ export default function Approvals() {
       const errs = st.errors?.length ?? 0;
       const found = r.stats?.new_ltp_players ?? r.stats?.found;
       const duplicates = r.stats?.skipped_by_reason?.duplicate ?? 0;
-      const msg = `${found === undefined ? "" : `Recent LTP players matched: ${found}. `}Drafts created: ${r.created ?? r.stats?.drafted ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}.${duplicates ? ` Duplicate blocks: ${duplicates}.` : ""}${errs ? ` ${st.errors?.[0] ?? ""}` : ""} Nothing was sent.`;
+      const msg = `${found === undefined ? "" : `Recent trigger attendances matched: ${found}. `}Drafts created: ${r.created ?? r.stats?.drafted ?? 0}, skipped: ${st.skipped ?? 0}, needs context: ${st.needsContext ?? 0}, manual edit: ${st.manualEdit ?? 0}${errs ? `, errors: ${errs}` : ""}.${duplicates ? ` Duplicate blocks: ${duplicates}.` : ""}${errs ? ` ${st.errors?.[0] ?? ""}` : ""} Nothing was sent.`;
       if (errs) toast.info(msg); else toast.success(msg);
       setRunResult({ tone: errs ? "info" : "success", message: msg, runIds: r.run_id ? [r.run_id] : [] });
       await load();
@@ -213,26 +213,26 @@ export default function Approvals() {
     }
   };
 
-  const regenerateLtpBatch = async (ids: string[]) => {
+  const regenerateLtpBatch = async (ids: string[], playbookKey?: string) => {
     if (!data?.sequence_schema_ready || ltpBatchBusy || ltpReshufflingId || ltpConfigBusyKey
       || regeneratingId || generating || busy.size > 0 || retryContextBusy || ids.length === 0) return;
     setLtpBatchBusy(true);
     setSelected(new Set());
     try {
-      const result = await retentionApi.regenerateLtpBatch(slug, ids);
+      const result = await retentionApi.regenerateLtpBatch(slug, ids, playbookKey);
       const statusCounts = result.results.reduce<Record<string, number>>((counts, candidate) => {
         counts[candidate.status] = (counts[candidate.status] ?? 0) + 1;
         return counts;
       }, {});
       const failures = result.failures?.length ?? 0;
       const statuses = Object.entries(statusCounts).map(([status, count]) => `${count} ${status.replace("_", " ")}`).join(", ") || "no candidates rebuilt";
-      const message = `LTP cohort rebuild: ${statuses}${failures ? `, ${failures} failures` : ""}. Drafts only; no approvals or sends.`;
+      const message = `Step 1 cohort rebuild: ${statuses}${failures ? `, ${failures} failures` : ""}. Drafts only; no approvals or sends.`;
       const partial = failures > 0 || result.results.some((candidate) => candidate.status !== "drafted");
       if (partial) toast.info(message); else toast.success(message);
       setRunResult({ tone: partial ? "info" : "success", message, runIds: envelopeRunIds(result) });
       await load();
     } catch (e) {
-      const m = e instanceof Error ? `Could not rebuild the drafted LTP cohort: ${e.message}` : "Could not rebuild the drafted LTP cohort";
+      const m = e instanceof Error ? `Could not rebuild the drafted step 1 cohort: ${e.message}` : "Could not rebuild the drafted step 1 cohort";
       toast.error(m); setRunResult({ tone: "error", message: m, runIds: errRun(e) });
       await load();
     } finally {
@@ -241,16 +241,16 @@ export default function Approvals() {
   };
 
   const reshuffleLtp = async (candidate: Candidate) => {
-    if (!data?.sequence_schema_ready || !canReshuffleLtpCandidate(candidate, true)
+    if (!data?.sequence_schema_ready || !canReshuffleLtpCandidate(candidate, true, playbookFor(candidate))
       || ltpReshufflingId || ltpBatchBusy || regeneratingId || busy.size > 0) return;
     setLtpReshufflingId(candidate.id);
     try {
       const result = await retentionApi.reshuffleLtp(slug, candidate.id);
       const rids = result.run_id ? [result.run_id] : [];
-      if (result.status === "drafted") { const m = "LTP phrase slots reshuffled. Review the new draft; it remains unapproved and unsent."; toast.success(m); setRunResult({ tone: "success", message: m, runIds: rids }); }
+      if (result.status === "drafted") { const m = "Phrase slots reshuffled. Review the new draft; it remains unapproved and unsent."; toast.success(m); setRunResult({ tone: "success", message: m, runIds: rids }); }
       else { const m = `Reshuffle returned ${result.status.replace("_", " ")}${result.reason ? `: ${result.reason}` : ""}. Review the updated candidate.`; toast.info(m); setRunResult({ tone: "info", message: m, runIds: rids }); }
     } catch (e) {
-      const m = e instanceof Error ? `Could not reshuffle this LTP draft: ${e.message}` : "Could not reshuffle this LTP draft";
+      const m = e instanceof Error ? `Could not reshuffle this draft: ${e.message}` : "Could not reshuffle this draft";
       toast.error(m); setRunResult({ tone: "error", message: m, runIds: errRun(e) });
     } finally {
       try { await load(); }
@@ -263,11 +263,11 @@ export default function Approvals() {
     setLtpConfigBusyKey(key);
     try {
       await retentionApi.updatePlaybookSequenceConfig(slug, key, config);
-      toast.success("Stored LTP phrase configuration saved. Existing drafted message text is unchanged.");
+      toast.success("Stored phrase configuration saved. Existing drafted message text is unchanged.");
       await load();
       return true;
     } catch (e) {
-      toast.error(e instanceof Error ? `Could not save LTP phrase configuration: ${e.message}` : "Could not save LTP phrase configuration");
+      toast.error(e instanceof Error ? `Could not save phrase configuration: ${e.message}` : "Could not save phrase configuration");
       return false;
     } finally {
       setLtpConfigBusyKey(null);
@@ -317,14 +317,14 @@ export default function Approvals() {
 
   const confirmBulk = async () => {
     if (!bulkKey || !snap || !needOperator() || snap.ids.length === 0) return;
-    const ltpIds = snap.candidates.filter(isLtpCandidate).map((candidate) => candidate.id);
+    const ltpIds = snap.candidates.filter((candidate) => isSequenceCandidate(candidate, playbookFor(candidate))).map((candidate) => candidate.id);
     if (ltpIds.length > 0) {
       const current = new Map((data?.candidates ?? []).map((candidate) => [candidate.id, candidate]));
       if (!ltpSequenceReady || ltpIds.some((id) => {
         const candidate = current.get(id);
-        return !candidate || !canApproveLtpCandidate(candidate, true);
+        return !candidate || !canApproveLtpCandidate(candidate, true, playbookFor(candidate));
       })) {
-        toast.error("One or more LTP drafts are no longer active, ready, or slot-based. Nothing was approved. Refresh the list and review the sequence again.");
+        toast.error("One or more sequence drafts are no longer active, ready, or slot-based. Nothing was approved. Refresh the list and review the sequence again.");
         closeBulk();
         await load();
         return;
@@ -348,8 +348,9 @@ export default function Approvals() {
 
   const warnings = [...(data?.warnings ?? []), ...(data?.error ? [data.error] : [])];
   const couponFails = (data?.candidates ?? []).filter((c) => c.status === "drafted" && c.context.coupon_warning).length;
+  const playbookFor = (candidate: Pick<Candidate, "playbook_key">) => data?.playbooks.find((p) => p.key === candidate.playbook_key);
   const ltpSequenceReady = data?.sequence_schema_ready === true;
-  const ltpPlaybook = data?.playbooks.find((playbook) => playbook.key === "ltp_followup");
+  const sequencePlaybooks = (data?.playbooks ?? []).filter(isSequencePlaybook);
 
   return (
     <div className="approvals-page" style={{ display: "flex", height: "100vh", fontFamily: "var(--font-sans)", background: D.bg }}>
@@ -417,14 +418,14 @@ export default function Approvals() {
                 data-testid="select-lookback-days"
                 value={lookbackDays}
                 disabled={!ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy}
-                title={!ltpSequenceReady ? "Apply migration 013 before generating LTP drafts" : undefined}
+                title={!ltpSequenceReady ? "Apply migration 013 before generating sequence drafts" : undefined}
                 onChange={(event) => setLookbackDays(Number(event.target.value) as typeof LOOKBACK_DAY_OPTIONS[number])}
                 style={{ background: D.card, color: D.text, border: `1px solid ${D.border}`, borderRadius: 5, padding: "6px 8px", fontSize: 12 }}
               >
                 {LOOKBACK_DAY_OPTIONS.map((days) => <option key={days} value={days}>{days} days</option>)}
               </select>
             </label>
-            <button style={btn(true, !ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy)} disabled={!ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy} title={!ltpSequenceReady ? "Apply migration 013 before generating LTP drafts" : undefined} onClick={generate} data-testid="button-generate">
+            <button style={btn(true, !ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy)} disabled={!ltpSequenceReady || generating || regeneratingId !== null || ltpBatchBusy} title={!ltpSequenceReady ? "Apply migration 013 before generating sequence drafts" : undefined} onClick={generate} data-testid="button-generate">
               {generating ? "Creating drafts..." : "Generate drafts (nothing is sent)"}
             </button>
           </span>
@@ -440,7 +441,7 @@ export default function Approvals() {
             <div role="alert" data-testid="banner-warning" style={{ background: D.orangeBg, border: "1px solid rgba(212,129,58,0.3)", borderRadius: 7, padding: "10px 14px", color: D.orange, fontSize: 12, lineHeight: 1.6 }}>
               {data && !data.schema_ready && <div>Retention tables are unavailable (schema not ready). Approvals cannot be loaded or changed until the database is migrated.</div>}
               {data && !data.retry_context_ready && <div>Migration 012 is missing or not ready. Retry context is disabled until the retry-context schema is migrated.</div>}
-              {data && !ltpSequenceReady && <div data-testid="warning-ltp-sequence-unready">Migration 013 is missing or not ready. LTP step approvals, active-sequence phrase reshuffling, cohort rebuild, and phrase-configuration edits remain disabled. Other playbooks are unaffected.</div>}
+              {data && !ltpSequenceReady && <div data-testid="warning-ltp-sequence-unready">Migration 013 is missing or not ready. Sequence step approvals, active-sequence phrase reshuffling, cohort rebuild, and phrase-configuration edits remain disabled. Single-draft playbooks are unaffected.</div>}
               {couponFails > 0 && <div>{couponFails} draft{couponFails === 1 ? "" : "s"} failed the coupon check. The promo code may not work; review before approving.</div>}
               {warnings.map((w, i) => <div key={i}>{w}</div>)}
             </div>
@@ -474,19 +475,19 @@ export default function Approvals() {
             </div>
           </div>
 
-          {ltpPlaybook && (
-            <section aria-label="Shared global LTP playbook configuration" data-testid="panel-ltp-global-config" style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {sequencePlaybooks.map((sequencePlaybook) => (
+            <section key={sequencePlaybook.key} aria-label={`Shared ${sequencePlaybook.name} playbook configuration`} data-testid={sequencePlaybook.key === LTP_FOLLOWUP_KEY ? "panel-ltp-global-config" : `panel-sequence-config-${sequencePlaybook.key}`} style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               <div style={{ fontSize: 11, color: D.muted }}>
-                Shared configuration for {ltpPlaybook.name}. Phrase edits affect future builds and regenerations; saved draft text stays unchanged. The step 2 gap applies to future eligibility checks, including active sequences.
+                Shared configuration for {sequencePlaybook.name}. Phrase edits affect future builds and regenerations; saved draft text stays unchanged. The step 2 gap applies to future eligibility checks, including active sequences.
               </div>
               <LtpSequenceConfigEditor
-                playbook={ltpPlaybook}
+                playbook={sequencePlaybook}
                 schemaReady={ltpSequenceReady}
-                busy={ltpConfigBusyKey === ltpPlaybook.key}
+                busy={ltpConfigBusyKey === sequencePlaybook.key}
                 onSave={updateLtpConfig}
               />
             </section>
-          )}
+          ))}
 
           <div className="approvals-status-tabs" style={{ display: "flex", borderBottom: `1px solid ${D.border}` }}>
             {(["all", "drafted", "approved", "skipped", "sent", "needs_context", "manual_edit"] as ApprovalListStatus[]).map((k) => (
@@ -561,18 +562,19 @@ export default function Approvals() {
           ) : (
             [...groups.entries()].map(([key, list]) => {
               const pb = data?.playbooks.find((p) => p.key === key);
+              const sequenceGroup = isSequencePlaybook(pb) || (!pb && key === LTP_FOLLOWUP_KEY);
               const drafted = list.filter((c) => c.status === "drafted");
-              const selectableDrafted = drafted.filter((c) => canApproveLtpCandidate(c, ltpSequenceReady));
+              const selectableDrafted = drafted.filter((c) => canApproveLtpCandidate(c, ltpSequenceReady, pb));
               const retryable = list.filter((c) => isRetryContextEligible(c.status, c.context.reason));
               const sel = selectableDrafted.filter((c) => selected.has(c.id));
               const groupEditing = list.some((c) => editingIds.has(c.id));
-              const ltpStepOneDrafts = key === "ltp_followup" && data
+              const ltpStepOneDrafts = sequenceGroup && data
                 ? data.candidates.filter((c) => c.playbook_key === key
                   && c.status === "drafted"
                   && (c.step ?? c.context.ltp_text?.step ?? 1) === 1
                   && c.sequence_status === "active")
                 : [];
-              const canShowLtpBatch = key === "ltp_followup"
+              const canShowLtpBatch = sequenceGroup
                 && (loadedFilter === "all" || loadedFilter === "drafted")
                 && ltpStepOneDrafts.length > 0;
               return (
@@ -597,7 +599,7 @@ export default function Approvals() {
                       {drafted.length > 0 && (
                         <>
                           <button style={btn(false, regeneratingId !== null || busy.size > 0 || ltpBatchBusy || selectableDrafted.length === 0)} onClick={() => setSelected((s) => { const n = new Set(s); const all = selectableDrafted.every((c) => n.has(c.id)); selectableDrafted.forEach((c) => all ? n.delete(c.id) : n.add(c.id)); return n; })} disabled={regeneratingId !== null || busy.size > 0 || ltpBatchBusy || selectableDrafted.length === 0} data-testid={`button-select-${key}`}>
-                            {selectableDrafted.length === 0 ? "No LTP drafts ready for bulk approval" : selectableDrafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
+                            {selectableDrafted.length === 0 ? "No drafts ready for bulk approval" : selectableDrafted.every((c) => selected.has(c.id)) ? "Clear selection" : "Select all drafted"}
                           </button>
                           <button style={btn(true, sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0)} disabled={sel.length === 0 || groupEditing || regeneratingId !== null || busy.size > 0} title={groupEditing ? "Finish or cancel open edits in this group first" : undefined} onClick={() => openBulk(key)} data-testid={`button-bulk-${key}`}>
                             Review bulk approval ({sel.length})
@@ -608,17 +610,17 @@ export default function Approvals() {
                         <button
                           style={btn(false, !ltpSequenceReady || ltpBatchBusy || groupEditing || busy.size > 0 || generating || regeneratingId !== null || ltpReshufflingId !== null || ltpConfigBusyKey !== null)}
                           disabled={!ltpSequenceReady || ltpBatchBusy || groupEditing || busy.size > 0 || generating || regeneratingId !== null || ltpReshufflingId !== null || ltpConfigBusyKey !== null}
-                          title={!ltpSequenceReady ? "Apply migration 013 before rebuilding the LTP cohort" : groupEditing ? "Save or cancel the current edit first" : undefined}
-                          onClick={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id))}
-                          data-testid="button-regenerate-ltp-cohort"
+                          title={!ltpSequenceReady ? "Apply migration 013 before rebuilding the step 1 cohort" : groupEditing ? "Save or cancel the current edit first" : undefined}
+                          onClick={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id), key)}
+                          data-testid={key === LTP_FOLLOWUP_KEY ? "button-regenerate-ltp-cohort" : `button-regenerate-cohort-${key}`}
                         >
-                          {ltpBatchBusy ? "Rebuilding LTP cohort..." : `Rebuild all drafted step 1s (${ltpStepOneDrafts.length})`}
+                          {ltpBatchBusy ? "Rebuilding step 1 cohort..." : `Rebuild all drafted step 1s (${ltpStepOneDrafts.length})`}
                         </button>
                       )}
                     </span>
                   </div>
                   {list.map((c) => (
-                    <ApprovalCard key={c.id} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
+                    <ApprovalCard key={c.id} playbook={pb} onEditingChange={(on) => setEditing(c.id, on)} c={c} busy={busy.has(c.id) || busy.size > 0 || regeneratingId !== null || generating || ltpBatchBusy || ltpReshufflingId !== null || ltpConfigBusyKey !== null} selected={selected.has(c.id)}
                       liveSending={data?.mode.sms_live === true}
                       testTools={data?.mode.test_override_configured ? <LtpTestTools candidate={c} slug={slug} actor={operator} onChanged={load} onRunResult={setRunResult} /> : undefined}
                       onToggle={() => setSelected((s) => { const n = new Set(s); n.has(c.id) ? n.delete(c.id) : n.add(c.id); return n; })}
@@ -627,7 +629,7 @@ export default function Approvals() {
                       onSkip={() => withBusy(c.id, () => retentionApi.skip(slug, c.id), "Skipped")}
                         onRegenerate={() => regenerate(c.id)} regenerating={regeneratingId === c.id}
                         onReshuffle={() => { void reshuffleLtp(c); }} reshuffling={ltpReshufflingId === c.id}
-                        onLtpBatchRegenerate={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id))}
+                        onLtpBatchRegenerate={() => regenerateLtpBatch(ltpStepOneDrafts.map((candidate) => candidate.id), key)}
                         onRetryContext={() => retryContext([c.id], true)} retryContextReady={Boolean(data?.retry_context_ready)} sequenceSchemaReady={ltpSequenceReady} />
                   ))}
                 </section>

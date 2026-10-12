@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { canApprove } from "@/lib/approvalGuards";
-import type { Candidate } from "@/lib/retentionApi";
+import type { Candidate, Playbook } from "@/lib/retentionApi";
 import { displaySequenceStatus } from "@/lib/sequenceStatus";
 import { approvalVariantPresentation } from "@/lib/approvalVariant";
 import { isRetryContextEligible } from "@/lib/retryContextEligibility";
-import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpSessionWhen, formatLtpTriggerFact, isLtpCandidate } from "@/lib/ltpPhraseSlots";
+import { canApproveLtpCandidate, canReshuffleLtpCandidate, formatLtpAttendanceDate, formatLtpNextProgramFact, formatLtpSessionWhen, formatLtpTriggerFact, isSequenceCandidate } from "@/lib/ltpPhraseSlots";
 
 const D = { card: "#0f1117", border: "#30363d", inner: "#1e2530", text: "#e6edf3", muted: "#8b949e", faint: "#6e7681",
   accent: "#E8A838", accentBg: "rgba(232,168,56,0.10)", green: "#2ea043", greenBg: "rgba(46,160,67,0.10)", redText: "#ff6b6b", redBg: "rgba(207,34,46,0.08)" };
@@ -43,7 +43,7 @@ function formatIssue(issue: unknown): string {
   try { return JSON.stringify(issue) ?? String(issue); } catch { return String(issue); }
 }
 
-export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate, testTools, liveSending = true }: {
+export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, onSkip, onRegenerate, regenerating, onEditingChange, onRetryContext, retryContextReady, sequenceSchemaReady, onReshuffle, reshuffling, onLtpBatchRegenerate, testTools, liveSending = true, playbook, }: {
   onEditingChange: (editing: boolean) => void;
   c: Candidate; busy: boolean; selected: boolean; onToggle: () => void;
   liveSending?: boolean;
@@ -54,7 +54,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   onReshuffle: () => void;
   reshuffling: boolean;
   onLtpBatchRegenerate: () => void;
-  testTools?: React.ReactNode;
+  testTools?: React.ReactNode; playbook?: Playbook;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -71,9 +71,11 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   const open = c.status === "drafted";
   const editable = open || c.status === "manual_edit";
   const pendingApproved = c.status === "approved";
-  const ltpCandidate = isLtpCandidate(c);
+  const ltpCandidate = isSequenceCandidate(c, playbook);
+  const flowLabel = playbook?.name ?? (ltpCandidate ? "sequence" : "playbook");
+  const triggerProgram = playbook?.trigger_program_label ?? x.trigger?.name ?? "the session";
   const np = x.next_program;
-  const ltpAttendanceDate = formatLtpAttendanceDate(c);
+  const ltpAttendanceDate = formatLtpAttendanceDate(c, playbook);
   const requiredNoProgramDate = ltpCandidate
     ? ltpAttendanceDate ? `on ${ltpAttendanceDate}` : "NOW (required; missing from stored context)"
     : x.date_phrase ?? "NOW (required; missing from stored context)";
@@ -83,8 +85,8 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
   const retryContextEligible = isRetryContextEligible(c.status, x.reason);
   const step = c.step ?? x.ltp_text?.step ?? 1;
   const legacyLtpDraft = ltpCandidate && c.status === "drafted" && !x.ltp_text && x.reason !== "session_changed";
-  const approvableLtp = canApproveLtpCandidate(c, sequenceSchemaReady);
-  const resharplableLtp = canReshuffleLtpCandidate(c, sequenceSchemaReady);
+  const approvableLtp = canApproveLtpCandidate(c, sequenceSchemaReady, playbook);
+  const resharplableLtp = canReshuffleLtpCandidate(c, sequenceSchemaReady, playbook);
   const sequenceStatusColor = c.sequence_status === "active" ? D.green : D.faint;
   const sessionChanged = ltpCandidate && x.reason === "session_changed";
   const sessionTimeChanged = sessionChanged && x.session_change?.reason === "start_time_changed";
@@ -168,8 +170,8 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         <div style={{ padding: 16 }}>
           <div style={{ fontFamily: mono, fontSize: 10, color: D.faint, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>Stored context facts</div>
           <Fact k="First name" v={x.player_first_name ?? "unavailable"} />
-          <Fact k="Trigger" v={formatLtpTriggerFact(c)} />
-          <Fact k="Next program" v={variant.kind === "no_program" ? "No suggestion" : formatLtpNextProgramFact(c)} />
+          <Fact k="Trigger" v={formatLtpTriggerFact(c, playbook)} />
+          <Fact k="Next program" v={variant.kind === "no_program" ? "No suggestion" : formatLtpNextProgramFact(c, playbook)} />
           {variant.kind === "no_program" && (
             <Fact k="Booking URL" v={x.booking_url
               ? <a href={x.booking_url} target="_blank" rel="noopener noreferrer" style={{ color: D.accent }}>{x.booking_url}</a>
@@ -185,7 +187,7 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
           {variant.kind === "no_program"
             ? <Fact k="Required date phrase" v={requiredNoProgramDate} warn={missingNoProgramDate} />
             : x.date_phrase && <Fact k="Required date phrase" v={x.date_phrase} />}
-          {variant.kind === "no_program" && <Fact k="No-program message" v="Thank the player for attending Learn to Play, then invite them to book now." />}
+          {variant.kind === "no_program" && <Fact k="No-program message" v={`Thank the player for attending ${triggerProgram}, then invite them to book now.`} />}
           {(x.send_date_et || x.send_date) && <Fact k="Intended send date (ET)" v={x.send_date_et ?? x.send_date!} />}
           <Fact k="Evaluated" v={fmt(x.evaluated_at)} />
         </div>
@@ -256,12 +258,12 @@ export function ApprovalCard({ c, busy, selected, onToggle, onSave, onApprove, o
         )}
         {ltpCandidate && c.status === "drafted" && !sequenceSchemaReady && (
           <span role="note" data-testid={`notice-ltp-sequence-schema-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
-            Migration 013 is not ready. LTP approvals, rebuilding, and reshuffling are disabled.
+            Migration 013 is not ready. Sequence approvals, rebuilding, and reshuffling are disabled.
           </span>
         )}
         {ltpCandidate && c.status === "drafted" && sequenceSchemaReady && !approvableLtp && !legacyLtpDraft && !sessionChanged && (
           <span role="note" data-testid={`notice-ltp-approval-blocked-${c.id}`} style={{ width: "100%", color: D.accent, fontSize: 11 }}>
-            This LTP draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${displaySequenceStatus(c.sequence_status)}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
+            This {flowLabel} draft is not eligible for approval{c.context.reason ? `: ${c.context.reason}` : c.sequence_status !== "active" ? `: sequence is ${displaySequenceStatus(c.sequence_status)}` : c.step !== c.context.ltp_text?.step ? ": step marker is inconsistent" : ": required slot-based context is incomplete"}.
             Rebuild the active step-one cohort and review the refreshed text before approving.
           </span>
         )}
