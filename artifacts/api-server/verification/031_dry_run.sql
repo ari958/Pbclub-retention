@@ -123,7 +123,9 @@ END $$;
 -- 3. Amend the installed functions in place. Each pair is (old text, new
 --    text). An amendment already present is skipped; text that is neither the
 --    old nor the new form fails the install so drift is inspected, not patched
---    blindly. This is the same technique migrations 015 and 018 use.
+--    blindly. This is the same technique migrations 015 and 018 use. The new
+--    form is checked first: some new texts contain their old text, and a
+--    re-run must not insert them twice.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION pg_temp.retention_flow_amend(p_name text,p_signature text,p_pairs text[],p_required boolean DEFAULT true)
 RETURNS void LANGUAGE plpgsql AS $$
@@ -138,9 +140,11 @@ BEGIN
   v_amended:=v_source;
   FOR v_index IN 1..array_length(p_pairs,1) BY 2 LOOP
     v_old:=p_pairs[v_index]; v_new:=p_pairs[v_index+1];
-    IF strpos(v_amended,v_old)>0 THEN
+    IF strpos(v_amended,v_new)>0 THEN
+      CONTINUE;
+    ELSIF strpos(v_amended,v_old)>0 THEN
       v_amended:=replace(v_amended,v_old,v_new);
-    ELSIF strpos(v_amended,v_new)=0 THEN
+    ELSE
       RAISE EXCEPTION 'Unexpected % source; inspect before installing. Missing: %',p_name,left(v_old,100);
     END IF;
   END LOOP;

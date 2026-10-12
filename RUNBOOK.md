@@ -265,6 +265,16 @@ in roughly this order:
 
 1. **Apply migration 031 in production** (not yet applied). No dev copy
    (decision 2026-10-12); the dry run stands in for it.
+   - **2026-10-12 production dry run failed, nothing saved**: the live
+     `retention_create_candidate` does not contain the text 031 expects
+     ("Unexpected retention_create_candidate source"). Diagnose with
+     `verification/031_source_check.sql` (read-only; one row per 031
+     substitution, MISMATCH rows show the live text with `<NL>`/`<TAB>`/`<CR>`
+     markers) before changing 031.
+   - **Fixed 2026-10-12**: 031 inserted two blocks twice on a re-run because
+     their new text contains the old text. The amend helper now checks for the
+     new text first; a test asserts a second install changes no function.
+     Apply 031 from this branch, not the earlier copy merged to `main`.
    - **Dry run.** Paste `artifacts/api-server/verification/031_dry_run.sql`
      into the production SQL Editor and run it. It executes the whole
      migration, then raises an error on purpose so nothing is saved. Expect
