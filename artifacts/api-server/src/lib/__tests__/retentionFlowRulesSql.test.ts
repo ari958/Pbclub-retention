@@ -93,6 +93,24 @@ test("migration 031 keeps the LTP writer byte-for-byte in behavior and lets a se
     assert.ok(playbookInsert, "reset assertions seed the LTP playbook");
     sqlFile("playbook.sql", playbookInsert);
 
+    // The production dry run executes all of 031, reports, and saves nothing.
+    const dryRunPath = new URL("../../../verification/031_dry_run.sql", import.meta.url).pathname;
+    const dryRunSource = readFileSync(dryRunPath, "utf8");
+    const migrationBody = migration031.slice(migration031.indexOf("BEGIN;\n"), migration031.indexOf("\nCOMMIT;\n") + 1);
+    assert.ok(dryRunSource.includes(migrationBody), "verification/031_dry_run.sql must embed migration 031 verbatim; regenerate it");
+    assert.doesNotMatch(dryRunSource, /\bCOMMIT\b/, "the dry run must never commit");
+    const dryRun = spawnSync("psql", ["-h", root, "-p", "55443", "-U", "fixture_owner", "-d", "postgres",
+      "-v", "ON_ERROR_STOP=1", "-f", dryRunPath], { encoding: "utf8", timeout: 30_000 });
+    assert.notEqual(dryRun.status, 0, "the dry run ends in its deliberate error");
+    assert.match(dryRun.stderr, /DRY RUN PASSED\. Nothing was saved/);
+    assert.match(dryRun.stderr, /ltp_followup = sequence \/ Learn to Play \/ LTPNEXT25 \/ 25% off \/ https:\/\/pbclub\.podplay\.app/);
+    const query = (sql: string) => run("psql", ["-h", root, "-p", "55443", "-U", "fixture_owner", "-d", "postgres",
+      "-At", "-v", "ON_ERROR_STOP=1", "-c", sql]).stdout.trim();
+    assert.equal(query("SELECT count(*) FROM information_schema.columns WHERE table_name='retention_playbooks' AND column_name='flow_kind'"), "0",
+      "the dry run left no new column behind");
+    assert.equal(query("SELECT strpos(pg_get_functiondef('public.retention_sequence_save_batch(uuid,jsonb)'::regprocedure), '''ltp_followup''')>0"), "t",
+      "the dry run left every function body unamended");
+
     const change = new URL("../../../migrations/031_retention_flow_rules.sql", import.meta.url).pathname;
     const first = psql(change);
     assert.match(first.stdout, /\bt\b/, "readiness verification prints true");

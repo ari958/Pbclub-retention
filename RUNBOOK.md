@@ -263,26 +263,29 @@ Slice 1 (2026-10-09) moved the server code onto a flow registry. Slice 2
 literal key. A second flow still cannot be switched on until these are done,
 in roughly this order:
 
-1. **Apply migration 031** (not yet applied anywhere). Dev first: apply it to
-   a dev database (a Supabase branch or a copy of production) and run the dev
-   API server against it, then production. In the Supabase SQL Editor, run `artifacts/api-server/migrations/031_retention_flow_rules.sql`
-   after 013-030. It is one transaction and safe to re-run. What it does:
-   adds `flow_kind`, `trigger_program_label`, `verified_promo_code`,
-   `verified_offer_phrase` and `booking_url` to `retention_playbooks`, seeds
-   the `ltp_followup` row with the values the functions used to hard-code,
-   replaces 013's literal-keyed candidate CHECK with the
-   `retention_candidates_sequence_identity` trigger, and amends the installed
-   sequence RPCs plus 028's inbound STOP handler in place (same
-   `pg_get_functiondef` technique as 015 and 018, so 018's amendment
-   survives). The install aborts, changing nothing, if any function body has
-   drifted from what 013/018/028 installed, or if an existing candidate row
-   would violate the generalized identity rule. The final `SELECT` must print
-   `retention_sequence_ready = t` and the playbook rows with their rules.
-   Deploying the branch before applying it is safe: the server-side readiness
-   check (`retention_sequence_ready`) is only redefined by 031 itself, so
-   until it is applied nothing changes. Not covered by 031, by design: the
-   LTP test tools (015, 016) and the report views (022-025) stay keyed to
-   `ltp_followup`; they are LTP-specific tooling and reports.
+1. **Apply migration 031 in production** (not yet applied). No dev copy
+   (decision 2026-10-12); the dry run stands in for it.
+   - **Dry run.** Paste `artifacts/api-server/verification/031_dry_run.sql`
+     into the production SQL Editor and run it. It executes the whole
+     migration, then raises an error on purpose so nothing is saved. Expect
+     `DRY RUN PASSED. Nothing was saved...` followed by
+     `ltp_followup = sequence / Learn to Play / LTPNEXT25 / 25% off /
+     https://pbclub.podplay.app`. Any other message: do not apply; it names
+     the drifted function or the candidate rows that break the new rule.
+   - **Apply.** Paste `migrations/031_retention_flow_rules.sql` and run it. One
+     transaction; safe to re-run. The final select must print
+     `retention_sequence_ready = t` and the same playbook rules.
+   - Order relative to the deploy does not matter: old code never reads the
+     new columns, and new code fills them from the registry when absent.
+   - What it does: adds `flow_kind`, `trigger_program_label`,
+     `verified_promo_code`, `verified_offer_phrase` and `booking_url` to
+     `retention_playbooks`, seeds `ltp_followup` with the values the functions
+     used to hard-code, replaces 013's literal-keyed candidate CHECK with the
+     `retention_candidates_sequence_identity` trigger, and amends the
+     installed sequence RPCs plus 028's inbound STOP handler in place (same
+     `pg_get_functiondef` technique as 015 and 018, so 018's amendment
+     survives). Not covered, by design: the LTP test tools (015, 016) and the
+     report views (022-025) stay keyed to `ltp_followup`.
 2. **Flow-specific text rules**: done in slice 3. What remains LTP-shaped by
    name only: the `ltp_*` module and column names (`ltp_sequence_config`,
    `ltp_text`, `ltp_date`) and the `ltp_followup` test tools. Renaming them is
@@ -292,10 +295,12 @@ in roughly this order:
    and regenerate-batch. Add it and run `api-spec codegen` (a deliberate,
    reviewed step; do not run codegen casually) when the dashboard starts
    sending it.
-4. **Dashboard**: done in slice 5. Dev check before merge: run the dev API
-   and dashboard against a dev database, open Approvals, and confirm the
-   Learn to Play group still shows step badges, the phrase editor, the cohort
-   rebuild button and the test tools exactly as before.
+4. **Dashboard**: done in slice 5. Post-deploy check in the live dashboard:
+   the Learn to Play group shows step badges, one phrase editor, the cohort
+   rebuild button and (with a test override set) the test tools, exactly as
+   before. Do not approve anything as part of the check: in production an
+   approval schedules a real text. Generate and rebuild only create
+   unapproved drafts.
 5. **Scheduler**: done in slice 6; `scheduler.ts` iterates registered flows.
 
 Dry-run and operator approval rules are unchanged throughout; none of this
