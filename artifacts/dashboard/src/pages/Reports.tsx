@@ -6,6 +6,10 @@ import { Sidebar } from "@/components/Sidebar";
 import { useClub } from "@/lib/ClubContext";
 import { displaySequenceStatus } from "@/lib/sequenceStatus";
 import "./Reports.css";
+import { LTP_FOLLOWUP_KEY } from "@/lib/retentionApi";
+
+/** Reports have no playbook rows to read names from; the one known flow keeps its display name. */
+const playbookLabel = (key: string) => key === LTP_FOLLOWUP_KEY ? "Learn to Play follow-up" : key.replaceAll("_", " ");
 
 type Period = "30d" | "90d" | "all";
 type SortKey = "name" | "lastSent" | "texts" | "status" | "outcome" | "program" | "days" | "step" | "code" | "opted";
@@ -46,7 +50,7 @@ const displayStatus = displaySequenceStatus;
 export default function Reports() {
   const club = useClub();
   const [period, setPeriod] = useState<Period>("30d");
-  const [playbook, setPlaybook] = useState("ltp_followup");
+  const [playbook, setPlaybook] = useState<string>(LTP_FOLLOWUP_KEY);
   const [sortKey, setSortKey] = useState<SortKey>("lastSent");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -112,7 +116,7 @@ export default function Reports() {
           <div className="intro-copy"><span className="report-eyebrow">RETENTION INTELLIGENCE <i /></span><h1>Reports</h1><p>See what happens after the first message — from delivery through return visit.</p></div>
           <div className="reports-filters">
             <label><span>PLAYBOOK</span><select aria-label="Select playbook" data-testid="select-playbook" value={playbook} onChange={(event) => setPlaybook(event.target.value)}>
-              {availableKeys.length ? availableKeys.map((key) => <option value={key} key={key}>{key === "ltp_followup" ? "Learn to Play follow-up" : key.replaceAll("_", " ")}</option>) : <option value="ltp_followup">Learn to Play follow-up</option>}
+              {availableKeys.length ? availableKeys.map((key) => <option value={key} key={key}>{playbookLabel(key)}</option>) : <option value={LTP_FOLLOWUP_KEY}>{playbookLabel(LTP_FOLLOWUP_KEY)}</option>}
             </select></label>
             <label><span>WINDOW</span><select aria-label="Select date range" data-testid="select-period" value={period} onChange={(event) => setPeriod(event.target.value as Period)}>
               {(Object.entries(periodLabels) as [Period, string][]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}

@@ -3,6 +3,7 @@ import { isRetentionOnlyMode } from "./retentionPolicy";
 import { supabase } from "./supabaseClient";
 import { verifyLtpSequenceSchemaReady } from "./ltpSequenceLifecycle";
 import { assertRetentionDraftFresh } from "./retentionFreshness";
+import { isSequenceFlowKey } from "./retentionFlows";
 
 export class RetentionDispatchAuthorizationError extends Error {
   constructor(message: string, readonly statusCode: 403 | 500) {
@@ -46,7 +47,7 @@ export async function verifyRetentionCandidateDispatch(
     );
   }
 
-  if (!isRetentionOnlyMode() && (candidate as RetentionCandidateDispatchRow | null)?.playbook_key !== "ltp_followup") {
+  if (!isRetentionOnlyMode() && !isSequenceFlowKey((candidate as RetentionCandidateDispatchRow | null)?.playbook_key)) {
     return candidate as RetentionCandidateDispatchRow | null;
   }
 
@@ -62,7 +63,7 @@ export async function verifyRetentionCandidateDispatch(
   try { assertRetentionDraftFresh(linked, now); }
   catch (error: any) { blocked(error.message); }
 
-  if (linked.playbook_key === "ltp_followup") {
+  if (isSequenceFlowKey(linked.playbook_key)) {
     try {
       await verifyLtpSequenceSchemaReady();
     } catch (error: any) {
@@ -92,7 +93,7 @@ export async function verifyRetentionCandidateDispatch(
     blocked("Retention candidate and linked message have not been explicitly approved");
   }
 
-  if (linked.playbook_key === "ltp_followup") {
+  if (isSequenceFlowKey(linked.playbook_key)) {
     const context = linked.context as Record<string, any> | null;
     if (
       !linked.sequence_id

@@ -183,6 +183,71 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-12**: Retention engine generalization, slice 5 (dashboard; no
+  behavior change for Learn to Play). `GET /retention/approvals` now returns
+  each playbook with its flow kind, trigger label, verified code, offer phrase,
+  booking URL and the flow's default phrase config, filled from the server
+  registry when the row predates migration 031 (`describePlaybookFlow`). The
+  dashboard decides from that row: `isSequenceCandidate(candidate, playbook)`
+  replaces `isLtpCandidate`, the approval card takes a `playbook` prop, the
+  approvals page renders one phrase editor per sequence playbook and gates
+  cohort rebuild per group, and the local copy of the default phrase config is
+  gone. Wording that said "LTP" now says "sequence" or uses the playbook name.
+  The one remaining literal is `LTP_FOLLOWUP_KEY`
+  (`lib/retentionFlowKeys.ts`), used only by the LTP test tools, the Reports
+  default, and as the fallback when a candidate's playbook row is not loaded.
+- **2026-10-12**: Retention engine generalization, slices 4 and 6 (routes
+  and scheduler; no behavior change). `POST /retention/generate` and
+  `POST /retention/regenerate-batch` accept an optional `playbook_key` (must
+  name a registered flow; defaults to `ltp_followup`); the OpenAPI spec does
+  not list the field yet, so the dashboard keeps sending none.
+  `PATCH /retention/playbooks/:key/config` accepts any registered sequence
+  flow and validates the phrase slots against that flow's own rules. The
+  approvals list matches step-2 cards to their step 1 by playbook and player,
+  not player alone. The nightly job iterates `RETENTION_FLOWS` for step-1 and
+  step-2 drafting; one flow's failure never blocks the next. The source scan
+  in `retentionFlows.test.ts` now covers the four route files and
+  `scheduler.ts`.
+- **2026-10-09**: Retention engine generalization, slice 3 (server code only,
+  no behavior change). The Learn to Play text rules moved behind the flow
+  definition: `RetentionTextRules` (`retentionTypes.ts`) carries the trigger
+  program label, verified code, offer text and phrase, percentage and booking
+  URL; `ltpPhraseBuilder.ts`, `retentionText.ts`, `retentionCoupons.ts` and
+  the dispatch recheck in `ltpSequenceLifecycle.ts` take those rules instead
+  of literals (Learn to Play stays the default, so every existing call is
+  unchanged). `defineSequenceFlow()` in `retentionFlows.ts` builds a flow from
+  its rules; `retentionFlows.test.ts` defines a throwaway second flow and
+  builds and validates its texts end to end. The engine now refuses to run
+  when a `retention_playbooks` row seeded by migration 031 disagrees with the
+  flow in code (`assertPlaybookMatchesFlow`). Working rule added to
+  `CLAUDE.md`: test in dev before production, always.
+- **2026-10-09**: Retention engine generalization, slice 2: migration 031
+  (`031_retention_flow_rules.sql`, written, not applied). The sequence RPCs
+  from 013/018 and the inbound STOP handler from 028 now read their rules
+  (`flow_kind`, trigger program label, verified promo code, offer phrase,
+  booking URL) from the `retention_playbooks` row instead of the literal
+  `ltp_followup` / `LTPNEXT25` / booking-URL strings. The literal-keyed
+  candidate CHECK becomes a trigger. `retentionFlowRulesSql.test.ts` installs
+  the real 013 writers, 018 and 031 twice on a throwaway Postgres, re-runs the
+  018 reset assertions unchanged, drafts a step 1 for a second sequence flow
+  through the same RPC, and proves an inbound STOP exits every sequence flow.
+  `RetentionPlaybook` gained the new optional columns. Apply instructions
+  under Open items.
+- **2026-10-09**: Retention engine generalization, slice 1 (server code
+  only, no behavior change). New `src/lib/retentionFlows.ts` is the registry
+  of retention flows; `ltp_followup` is the first and only entry and carries
+  everything that used to be a literal in the engine: the Learn to Play
+  trigger matcher, the `LTPNEXT25` verified code and offer text, the opener,
+  the trigger-date format, the booking URL, the phrase-slot config reader and
+  the per-step promo rule (step 1 only). `retentionEngine.ts`,
+  `retentionContext.ts`, `retentionText.ts`, `retentionDispatch.ts`,
+  `ltpSequenceLifecycle.ts`, `twilio.ts` and `queuePoller.ts` now ask the
+  registry instead of comparing against `"ltp_followup"`.
+  `generateRetentionDrafts`, `regenerateLtpCandidateBatch`,
+  `reshuffleLtpCandidate` and `generateDueLtpStep2Drafts` take an optional
+  flow key that defaults to `ltp_followup`. `retentionFlows.test.ts` fails if
+  a literal key creeps back into those files. Remaining steps are listed under
+  "Retention engine generalization" in Open items.
 - **2026-10-09**: Operator test messages moved to the new private table
   `operator_test_messages` (migration 030). They never write `messages` or
   `contact_ledger`, whose live constraints rejected them.
@@ -190,6 +255,51 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 ---
 
 ## Open items
+
+### Retention engine generalization (prerequisite for any new flow)
+
+Slice 1 (2026-10-09) moved the server code onto a flow registry. Slice 2
+(2026-10-09) wrote migration 031, which moves the database rules off the
+literal key. A second flow still cannot be switched on until these are done,
+in roughly this order:
+
+1. **Apply migration 031** (not yet applied anywhere). Dev first: apply it to
+   a dev database (a Supabase branch or a copy of production) and run the dev
+   API server against it, then production. In the Supabase SQL Editor, run `artifacts/api-server/migrations/031_retention_flow_rules.sql`
+   after 013-030. It is one transaction and safe to re-run. What it does:
+   adds `flow_kind`, `trigger_program_label`, `verified_promo_code`,
+   `verified_offer_phrase` and `booking_url` to `retention_playbooks`, seeds
+   the `ltp_followup` row with the values the functions used to hard-code,
+   replaces 013's literal-keyed candidate CHECK with the
+   `retention_candidates_sequence_identity` trigger, and amends the installed
+   sequence RPCs plus 028's inbound STOP handler in place (same
+   `pg_get_functiondef` technique as 015 and 018, so 018's amendment
+   survives). The install aborts, changing nothing, if any function body has
+   drifted from what 013/018/028 installed, or if an existing candidate row
+   would violate the generalized identity rule. The final `SELECT` must print
+   `retention_sequence_ready = t` and the playbook rows with their rules.
+   Deploying the branch before applying it is safe: the server-side readiness
+   check (`retention_sequence_ready`) is only redefined by 031 itself, so
+   until it is applied nothing changes. Not covered by 031, by design: the
+   LTP test tools (015, 016) and the report views (022-025) stay keyed to
+   `ltp_followup`; they are LTP-specific tooling and reports.
+2. **Flow-specific text rules**: done in slice 3. What remains LTP-shaped by
+   name only: the `ltp_*` module and column names (`ltp_sequence_config`,
+   `ltp_text`, `ltp_date`) and the `ltp_followup` test tools. Renaming them is
+   cosmetic and touches the dashboard and generated API types; defer.
+3. **Routes**: done in slices 4 and 6, except that `lib/api-spec/openapi.yaml`
+   does not yet declare the optional `playbook_key` request field on generate
+   and regenerate-batch. Add it and run `api-spec codegen` (a deliberate,
+   reviewed step; do not run codegen casually) when the dashboard starts
+   sending it.
+4. **Dashboard**: done in slice 5. Dev check before merge: run the dev API
+   and dashboard against a dev database, open Approvals, and confirm the
+   Learn to Play group still shows step badges, the phrase editor, the cohort
+   rebuild button and the test tools exactly as before.
+5. **Scheduler**: done in slice 6; `scheduler.ts` iterates registered flows.
+
+Dry-run and operator approval rules are unchanged throughout; none of this
+touches live sends.
 
 ### Broken send paths: must route through approval before enabling
 

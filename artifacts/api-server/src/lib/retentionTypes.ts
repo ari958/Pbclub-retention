@@ -1,6 +1,36 @@
 export const RETENTION_NO_PROGRAM_BOOKING_URL = "https://pbclub.podplay.app";
 export const RETENTION_LTP_VERIFIED_OFFER_TEXT = "25% off your next program";
 
+/**
+ * Plain-data rules a sequence flow's texts are built and validated against.
+ * Mirrors the flow-rule columns migration 031 adds to retention_playbooks.
+ */
+export interface RetentionTextRules {
+  /** Program name step 1 must mention verbatim ("Learn to Play"). */
+  triggerProgramLabel: string;
+  /** The only coupon step 1 may carry; later steps must not mention it. */
+  verifiedPromoCode: string;
+  /** Canonical offer wording that backs the coupon ("25% off your next program"). */
+  verifiedOfferText: string;
+  /** Short offer phrase, case-insensitive, required in offer text and step-1 body ("25% off"). */
+  verifiedOfferPhrase: string;
+  /** The one percentage a step-1 text may claim, or null when the offer is not a percentage. */
+  verifiedPercent: number | null;
+  /** Generic booking page a no-program text must end with. */
+  bookingUrl: string;
+}
+
+export const LTP_TEXT_RULES: RetentionTextRules = Object.freeze({
+  triggerProgramLabel: "Learn to Play",
+  verifiedPromoCode: "LTPNEXT25",
+  verifiedOfferText: RETENTION_LTP_VERIFIED_OFFER_TEXT,
+  verifiedOfferPhrase: "25% off",
+  verifiedPercent: 25,
+  bookingUrl: RETENTION_NO_PROGRAM_BOOKING_URL,
+});
+
+export const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 export interface RetentionPlaybook {
   key: string;
   name: string;
@@ -11,6 +41,14 @@ export interface RetentionPlaybook {
   message_guidance: string | null;
   holdout_pct: number;
   ltp_sequence_config?: LtpSequenceConfig;
+  /** Flow rules read by the sequence RPCs (migration 031). Absent on rows read before it is applied. */
+  flow_kind?: "single" | "sequence";
+  trigger_program_label?: string | null;
+  verified_promo_code?: string | null;
+  verified_offer_phrase?: string | null;
+  booking_url?: string | null;
+  /** Code-side phrase defaults for a sequence flow; added by the approvals route, never stored. */
+  default_sequence_config?: LtpSequenceConfig;
 }
 
 export type LtpSequenceStatus = "active" | "paused_reply" | "exited_booked" | "exited_opt_out" | "completed" | "exited_test";

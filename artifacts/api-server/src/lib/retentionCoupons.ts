@@ -1,5 +1,6 @@
 import { supabase } from "./supabaseClient";
 import { defaultRetentionPodplayBatchClient, type RetentionPodplayFetch } from "./retentionPodplayBatch";
+import { findSequenceFlowByPromoCode } from "./retentionFlows";
 
 export interface RetentionCouponValidation {
   valid: boolean;
@@ -9,28 +10,29 @@ export interface RetentionCouponValidation {
   lookup_failed?: boolean;
 }
 
-const LTP_PROGRAM_BOOKING_TYPES = new Set(["EVENT_CLASS", "EVENT_EVENT"]);
+const PROGRAM_BOOKING_TYPES = new Set(["EVENT_CLASS", "EVENT_EVENT"]);
 
-function getLtpBenefitWarning(coupon: any): string | null {
+/** A flow's verified coupon must be exactly its advertised percentage off generic program bookings. */
+function getBenefitWarning(coupon: any, code: string, percent: number | null): string | null {
   if (coupon.discountType !== "PERCENT_OFF") {
-    return "Coupon LTPNEXT25 does not have a verified percentage discount";
+    return `Coupon ${code} does not have a verified percentage discount`;
   }
-  if (typeof coupon.value !== "number" || coupon.value !== 25) {
-    return "Coupon LTPNEXT25 is not verified as a 25% discount";
+  if (percent === null || typeof coupon.value !== "number" || coupon.value !== percent) {
+    return `Coupon ${code} is not verified as a ${percent ?? "?"}% discount`;
   }
 
   const eligibleTypes = coupon.eligibleTypes;
   if (
     typeof coupon.eligibleType !== "string"
-    || !LTP_PROGRAM_BOOKING_TYPES.has(coupon.eligibleType)
+    || !PROGRAM_BOOKING_TYPES.has(coupon.eligibleType)
     || !Array.isArray(eligibleTypes)
     || eligibleTypes.length === 0
-    || eligibleTypes.some((type: unknown) => typeof type !== "string" || !LTP_PROGRAM_BOOKING_TYPES.has(type))
+    || eligibleTypes.some((type: unknown) => typeof type !== "string" || !PROGRAM_BOOKING_TYPES.has(type))
     || !eligibleTypes.includes(coupon.eligibleType)
     || !Array.isArray(coupon.eligibleEventIds)
     || coupon.eligibleEventIds.length > 0
   ) {
-    return "Coupon LTPNEXT25 applicability is not verified for generic program bookings";
+    return `Coupon ${code} applicability is not verified for generic program bookings`;
   }
 
   return null;
@@ -79,7 +81,8 @@ export async function validateRetentionCoupon(
           && (!ends_at || !!endDate)
           && (!endDate || endDate >= today)
           && (!startDate || startDate <= today);
-        const benefitWarning = code === "LTPNEXT25" ? getLtpBenefitWarning(coupon) : null;
+        const verifiedFlow = findSequenceFlowByPromoCode(code);
+        const benefitWarning = verifiedFlow ? getBenefitWarning(coupon, code, verifiedFlow.sequence.rules.verifiedPercent) : null;
         const warnings = [
           ...(!dateValid ? [`Coupon ${code} is inactive or outside its valid date range`] : []),
           ...(benefitWarning ? [benefitWarning] : []),

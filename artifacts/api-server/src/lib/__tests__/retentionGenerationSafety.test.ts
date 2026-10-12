@@ -114,7 +114,7 @@ test("engine carries context diagnostics, reason/errors, supported lookback, and
   assert.match(engine, /send_date_et: toEtDate\(intendedSendAt\)/);
   assert.match(engine, /retention_create_candidate/);
   assert.match(engine, /function hasLaterNonLtpAttendance[\s\S]*hasNonLtpAttendanceAfterTrigger/);
-  assert.match(engine, /alreadyReturned: hasLaterNonLtpAttendance\(byPlayer\.get\(candidate\.playerId\) \?\? \[\], verified\.date\)/);
+  assert.match(engine, /alreadyReturned: hasLaterNonLtpAttendance\(flow, byPlayer\.get\(candidate\.playerId\) \?\? \[\], verified\.date\)/);
   assert.match(engine, /already_returned/);
 });
 

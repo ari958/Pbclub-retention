@@ -3,7 +3,6 @@ import { isTestPlayer } from "./retentionPolicy";
 import { validateRetentionCoupon } from "./retentionCoupons";
 import {
   calculateRetentionOpenSpots,
-  isLearnToPlayName,
   loadLiveClubCached,
   type RetentionLiveClub,
 } from "./retentionContext";
@@ -14,6 +13,8 @@ import { performance } from "node:perf_hooks";
 import { logDispatchCheck } from "./dispatchAudit";
 import type { LtpBookingSnapshot } from "./ltpBookingSnapshot";
 import { ltpTestRpc, readLtpTestControl } from "./ltpTestTools";
+import { DEFAULT_RETENTION_FLOW_KEY, getSequenceFlow, isSequenceFlowKey, LTP_FOLLOWUP_FLOW, type RetentionSequenceFlowKey } from "./retentionFlows";
+import { escapeRegExp } from "./retentionTypes";
 
 export interface LtpBookingBatchOptions {
   client?: RetentionPodplayBatchClient;
@@ -311,7 +312,7 @@ export async function verifyLtpSequenceSchemaReady(): Promise<void> {
 export async function transitionLtpSequence(
   clubId: string,
   playerId: string,
-  playbookKey: "ltp_followup",
+  playbookKey: RetentionSequenceFlowKey,
   status: "paused_reply" | "exited_booked" | "exited_opt_out" | "completed",
   reason: string,
   bookedEventId: string | null = null,
@@ -375,7 +376,7 @@ export async function permanentlyOptOutPlayerAndExitLtpSequence(
   }
 
   try {
-    await transitionLtpSequence(clubId, playerId, "ltp_followup", "exited_opt_out", reason);
+    await transitionLtpSequence(clubId, playerId, LTP_FOLLOWUP_FLOW.key as RetentionSequenceFlowKey, "exited_opt_out", reason);
   } catch (error) {
     // Players without an LTP sequence need no sequence transition. All other
     // errors (including migration readiness failures) stay visible to callers.
@@ -436,7 +437,7 @@ export async function confirmLtpRecipientDelivery(messageId: string): Promise<bo
     .select("playbook_key,club_id,player_id,step,sequence_id")
     .eq("message_id", messageId).maybeSingle();
   if (candidateError) throw new Error(`Could not resolve LTP sequence for delivered message: ${candidateError.message}`);
-  if (candidate?.playbook_key !== "ltp_followup") return false;
+  if (!isSequenceFlowKey(candidate?.playbook_key)) return false;
 
   const { data: message, error: messageError } = await supabase.from("messages")
     .select("status,delivery_status,delivered_at,retention_delivery_kind")
@@ -694,6 +695,9 @@ export async function recheckLtpSequenceDispatch(
     signupsCache: batchOptions.signupsCache ?? new Map<string, Promise<string[]>>(),
   };
   const context = candidate.context as RetentionCandidate["context"] & Record<string, any>;
+  // Rows written before playbook keys were stored on candidates are Learn to Play.
+  const flow = getSequenceFlow(candidate.playbook_key ?? DEFAULT_RETENTION_FLOW_KEY);
+  const { rules } = flow.sequence;
   const marker = context?.ltp_text;
   if ((candidate.step !== 1 && candidate.step !== 2) || marker?.step !== candidate.step) {
     failClosed("the candidate lacks its matching step marker; legacy LTP copy cannot send");
@@ -707,7 +711,7 @@ export async function recheckLtpSequenceDispatch(
     const { data: trigger, error } = await supabase.from("attendances")
       .select("attended_at").eq("player_id", candidate.player_id)
       .eq("event_id", candidate.trigger_event_id).maybeSingle();
-    if (error || !trigger?.attended_at) failClosed(`Learn to Play trigger attendance is missing: ${error?.message ?? "no attendance"}`);
+    if (error || !trigger?.attended_at) failClosed(`${rules.triggerProgramLabel} trigger attendance is missing: ${error?.message ?? "no attendance"}`);
     cutoff = trigger.attended_at;
     // A contemporaneous PodPlay detail confirms the trigger is still the same
     // event and gives a precise, source-backed step-1 booking cutoff.
@@ -730,10 +734,10 @@ export async function recheckLtpSequenceDispatch(
       || (event.id && String(event.id) !== candidate.trigger_event_id)
       || typeof event.startTime !== "string"
       || !Number.isFinite(Date.parse(event.startTime))
-      || !isLearnToPlayName(String(event.name ?? ""))
+      || !flow.isTriggerProgram(String(event.name ?? ""))
       || event.isCanceled === true
     ) {
-      failClosed("the original Learn to Play trigger is canceled or could not be verified");
+      failClosed(`the original ${rules.triggerProgramLabel} trigger is canceled or could not be verified`);
     }
     cutoff = event.startTime;
   } else {
@@ -777,30 +781,33 @@ export async function recheckLtpSequenceDispatch(
 
   if (candidate.step === 1) {
     const code = context.promo?.code;
-    if (code !== "LTPNEXT25") {
-      failClosed("step 1 does not contain the verified LTPNEXT25 offer");
+    if (code !== rules.verifiedPromoCode) {
+      failClosed(`step 1 does not contain the verified ${rules.verifiedPromoCode} offer`);
     }
     const couponStarted = performance.now();
     const validation = await validateRetentionCoupon(candidate.club_id, code, (input, init) =>
       (batchOptions.client ?? defaultBatchClient).fetch(input, init),
     );
     logDispatchCheck(batchOptions.messageId, "ltp_coupon", validation.valid ? "pass" : "blocked", couponStarted);
-    if (!validation.valid) failClosed(validation.warning ?? "LTPNEXT25 is no longer valid");
+    if (!validation.valid) failClosed(validation.warning ?? `${rules.verifiedPromoCode} is no longer valid`);
   } else {
     const bodyText = JSON.stringify({
       context: context.ltp_text,
       promo: context.promo,
       next_program: context.next_program?.name ?? null,
     });
+    const promoCodePattern = new RegExp(`\\b${escapeRegExp(rules.verifiedPromoCode)}\\b`, "i");
     if (
       context.promo != null
-      || /\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*(?:%|percent\b)|\bdiscount\b|\bsave\s+\d/i.test(bodyText)
+      || promoCodePattern.test(bodyText)
+      || /\b\d+(?:\.\d+)?\s*(?:%|percent\b)|\bdiscount\b|\bsave\s+\d/i.test(bodyText)
     ) {
       failClosed("step 2 contains a prohibited promotion fact");
     }
     if (
       typeof approvedMessageBody !== "string"
-      || /\bLTPNEXT25\b|\b\d+(?:\.\d+)?\s*(?:%|percent\b)|\bdiscount\b|\bcoupon\b|\bpromo(?:tional)?(?:\s+code)?\b|\buse\s+code\b|\bsave\s+\d/i.test(approvedMessageBody)
+      || promoCodePattern.test(approvedMessageBody)
+      || /\b\d+(?:\.\d+)?\s*(?:%|percent\b)|\bdiscount\b|\bcoupon\b|\bpromo(?:tional)?(?:\s+code)?\b|\buse\s+code\b|\bsave\s+\d/i.test(approvedMessageBody)
     ) {
       failClosed("approved step-2 copy contains a prohibited offer, code, or percentage");
     }

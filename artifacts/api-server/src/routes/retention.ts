@@ -6,6 +6,7 @@ import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
 import { isRetentionOnlyMode, requiresMarketingConsent } from "../lib/retentionPolicy";
 import { generateRetentionDrafts, isRetentionSchemaMissing, regenerateRetentionCandidate, retryRetentionContextBatch } from "../lib/retentionEngine";
 import { withGenerationRun } from "../lib/runHistory";
+import { DEFAULT_RETENTION_FLOW_KEY, describePlaybookFlow, findRetentionFlow, isSequenceFlowKey } from "../lib/retentionFlows";
 import {
   ALLOWED_RETENTION_LOOKBACK_DAYS,
   DEFAULT_RETENTION_LOOKBACK_DAYS,
@@ -39,6 +40,8 @@ const BulkSchema = z.object({
 });
 const KillSwitchSchema = z.object({ enabled: z.boolean(), actor: z.string().trim().min(1).max(120).optional() });
 const RetentionGenerationInputSchema = GenerateRetentionDraftsBody.extend({
+  // Optional until the dashboard sends it; the OpenAPI spec gains the field then.
+  playbook_key: z.string().refine((key) => !!findRetentionFlow(key), "Unknown retention flow").optional(),
   lookback_days: z.number().int().refine(
     (value) => ALLOWED_RETENTION_LOOKBACK_DAYS.includes(value as (typeof ALLOWED_RETENTION_LOOKBACK_DAYS)[number]),
     `lookback_days must be one of ${ALLOWED_RETENTION_LOOKBACK_DAYS.join(", ")}`,
@@ -153,7 +156,7 @@ async function approveCandidate(
   if (candidate.status !== "drafted") {
     throw Object.assign(new Error("Only drafted candidates can be approved"), { status: 409 });
   }
-  if (candidate.playbook_key === "ltp_followup") {
+  if (isSequenceFlowKey(candidate.playbook_key)) {
     await requireLtpSequenceSchemaReady();
     if (candidate.sequence_status !== "active" || !candidate.context.ltp_text
       || candidate.context.reason != null || candidate.context.ltp_text.step !== candidate.step) {
@@ -230,12 +233,14 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
       query = applyCandidateStatusFilter(query, status);
       return query.order("created_at", { ascending: false }).range(from, to);
     });
-    const step2PlayerIds = [...new Set(candidates.filter((candidate) => candidate.step === 2).map((candidate) => candidate.player_id))];
+    const step2Candidates = candidates.filter((candidate) => candidate.step === 2);
+    const step2PlayerIds = [...new Set(step2Candidates.map((candidate) => candidate.player_id))];
+    const step2PlaybookKeys = [...new Set(step2Candidates.map((candidate) => candidate.playbook_key))];
     const step1Candidates: RetentionCandidate[] = [];
     if (sequenceSchemaReady) {
       for (let offset = 0; offset < step2PlayerIds.length; offset += 500) {
         const { data, error } = await supabase.from("retention_candidates").select("*")
-          .eq("club_id", clubId).eq("playbook_key", "ltp_followup").eq("step", 1).eq("status", "sent")
+          .eq("club_id", clubId).in("playbook_key", step2PlaybookKeys).eq("step", 1).eq("status", "sent")
           .in("player_id", step2PlayerIds.slice(offset, offset + 500));
         if (error) throw new Error(error.message);
         step1Candidates.push(...(data ?? []) as RetentionCandidate[]);
@@ -250,7 +255,8 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
     ]);
     const players = new Map(playerRows.map((row: any) => [row.id, row]));
     const messages = new Map(messageRows.map((row: any) => [row.id, row]));
-    const priorSteps = new Map(step1Candidates.map((candidate) => [candidate.player_id, messages.get(candidate.message_id)]));
+    const priorSteps = new Map(step1Candidates.map((candidate) =>
+      [`${candidate.playbook_key}:${candidate.player_id}`, messages.get(candidate.message_id)]));
     const mode = await retentionMode(clubId);
     const couponWarnings = await Promise.all((playbooks ?? [])
       .filter((playbook: RetentionPlaybook) => playbook.enabled && playbook.promo_code
@@ -265,12 +271,12 @@ router.get("/retention/approvals", requireClub, async (req, res): Promise<void> 
       schema_ready: true,
       retry_context_ready: retryContextReady,
       sequence_schema_ready: sequenceSchemaReady,
-      playbooks: (playbooks ?? []) as RetentionPlaybook[],
+      playbooks: ((playbooks ?? []) as RetentionPlaybook[]).map(describePlaybookFlow),
       candidates: decorateApprovalCandidates(candidates, players, messages).map((candidate) => ({
         ...candidate,
         ...(candidate.step === 2 ? {
-          step1_text: priorSteps.get(candidate.player_id)?.body ?? null,
-          step1_sent_at: priorSteps.get(candidate.player_id)?.sent_at ?? null,
+          step1_text: priorSteps.get(`${candidate.playbook_key}:${candidate.player_id}`)?.body ?? null,
+          step1_sent_at: priorSteps.get(`${candidate.playbook_key}:${candidate.player_id}`)?.sent_at ?? null,
         } : {}),
       })) as (RetentionCandidate & {
         player: { name: string };
@@ -317,10 +323,11 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
     return;
   }
   const requestedLookbackDays = parsed.data.lookback_days ?? DEFAULT_RETENTION_LOOKBACK_DAYS;
+  const flowKey = parsed.data.playbook_key ?? DEFAULT_RETENTION_FLOW_KEY;
   try {
-    const generated = await withGenerationRun(clubId, "ltp_followup", "Generate", async () => {
+    const generated = await withGenerationRun(clubId, flowKey, "Generate", async () => {
       await requireRetentionSchemaReady();
-      return generateRetentionDrafts(clubId, requestedLookbackDays);
+      return generateRetentionDrafts(clubId, requestedLookbackDays, flowKey);
     });
     const responseStats = {
       ...generated.stats,
@@ -412,7 +419,7 @@ router.post("/retention/generate", requireClub, async (req, res): Promise<void> 
 router.post("/retention/candidates/:id/regenerate", requireClub, async (req, res) => {
   const clubId = (req as ClubScopedRequest).clubId;
   try {
-    const result = await withGenerationRun(clubId, "ltp_followup", "Regenerate", async () => {
+    const result = await withGenerationRun(clubId, DEFAULT_RETENTION_FLOW_KEY, "Regenerate", async () => {
       await requireRetentionSchemaReady();
       return regenerateRetentionCandidate(clubId, req.params.id as string);
     });
@@ -437,7 +444,7 @@ router.post("/retention/retry-context", requireClub, async (req, res) => {
   const parsed = RetryContextSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Provide 1–50 distinct candidate UUIDs" });
   try {
-    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, "ltp_followup", "Retry context batch", async () => {
+    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, DEFAULT_RETENTION_FLOW_KEY, "Retry context batch", async () => {
       await requireRetentionSchemaReady();
       return retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids);
     }));
@@ -452,7 +459,7 @@ router.post("/retention/candidates/:id/retry-context", requireClub, async (req, 
     return res.status(400).json({ error: "A valid candidate UUID and empty request body are required" });
   }
   try {
-    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, "ltp_followup", "Retry context", async () => {
+    return res.json(await withGenerationRun((req as ClubScopedRequest).clubId, DEFAULT_RETENTION_FLOW_KEY, "Retry context", async () => {
       await requireRetentionSchemaReady();
       return retryRetentionContextBatch((req as ClubScopedRequest).clubId, parsed.data.candidate_ids);
     }));
@@ -468,7 +475,7 @@ router.patch("/retention/candidates/:id", requireClub, async (req, res) => {
   try {
     const candidate = await loadCandidate(clubId, req.params.id as string);
     if (!candidate) return res.status(404).json({ error: "Retention candidate not found" });
-    if (candidate.playbook_key === "ltp_followup") {
+    if (isSequenceFlowKey(candidate.playbook_key)) {
       await requireLtpSequenceSchemaReady();
       if (candidate.sequence_status !== "active" || !candidate.context.ltp_text) {
         return res.status(409).json({ error: "Only an active rebuilt LTP sequence can be edited" });

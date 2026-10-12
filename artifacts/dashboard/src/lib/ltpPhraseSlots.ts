@@ -1,46 +1,7 @@
 import type { Candidate, LtpSequenceConfig } from "./retentionApi";
+import { LTP_FOLLOWUP_KEY, type FlowPlaybookFields } from "./retentionFlowKeys";
 
-export const DEFAULT_LTP_SEQUENCE_CONFIG: LtpSequenceConfig = {
-  step2_gap_days: 7,
-  step1: {
-    opener: ["Hi {first}, it's PB Club."],
-    thanks: [
-      "Thanks for coming to Learn to Play on {ltp_date}.",
-      "Great having you at Learn to Play on {ltp_date}.",
-      "Glad you made it to Learn to Play on {ltp_date}.",
-      "Hope you enjoyed Learn to Play on {ltp_date}.",
-    ],
-    next_step: [
-      "A good next step is {program} on {when}.",
-      "If you're ready for more, {program} is on {when}.",
-      "{program} on {when} is a natural next step.",
-      "Next up for a lot of new players: {program} on {when}.",
-    ],
-    offer: [
-      "Use code {promo} for 25% off:",
-      "Here's 25% off with code {promo}:",
-      "Code {promo} takes 25% off:",
-    ],
-    offer_no_program: [
-      "Use code {promo} for 25% off your next program:",
-      "Here's 25% off your next program with code {promo}:",
-    ],
-  },
-  step2: {
-    opener: ["Hi {first}, it's PB Club.", "Hey {first}, PB Club here."],
-    nudge: [
-      "Hope you're ready to get back out there.",
-      "We'd love to see you back on the court.",
-      "Thinking about your next session?",
-    ],
-    next_step: [
-      "{program} on {when} still has spots.",
-      "{program} on {when} is a great fit after Learn to Play.",
-      "There's room in {program} on {when}.",
-    ],
-    no_program_cta: ["Here's what's coming up:"],
-  },
-};
+type FlowPlaybook = FlowPlaybookFields | null | undefined;
 
 export type LtpPhraseSlotKey =
   | "step1.opener" | "step1.thanks" | "step1.next_step" | "step1.offer" | "step1.offer_no_program"
@@ -86,32 +47,38 @@ export function validateLtpSequenceConfig(
   return true;
 }
 
-export function isLtpCandidate(candidate: Pick<Candidate, "playbook_key">): boolean {
-  return candidate.playbook_key === "ltp_followup";
+/**
+ * A candidate belongs to a two-step sequence flow when its playbook row says
+ * so. Without the row (older callers, tests) the Learn to Play key is the
+ * only sequence flow we can assume.
+ */
+export function isSequenceCandidate(candidate: Pick<Candidate, "playbook_key">, playbook?: FlowPlaybook): boolean {
+  if (playbook?.flow_kind) return playbook.flow_kind === "sequence";
+  return candidate.playbook_key === LTP_FOLLOWUP_KEY;
 }
 
 /** Prefer the code-filled value embedded in the copy, not a legacy display format. */
-export function formatLtpTriggerFact(candidate: Candidate): string {
+export function formatLtpTriggerFact(candidate: Candidate, playbook?: FlowPlaybook): string {
   const trigger = candidate.context.trigger;
   if (!trigger) return "unavailable";
   const name = trigger.name ?? "Unknown event";
-  if (isLtpCandidate(candidate) && candidate.context.ltp_text) {
+  if (isSequenceCandidate(candidate, playbook) && candidate.context.ltp_text) {
     return `${name} on ${candidate.context.ltp_text.ltp_date}`;
   }
-  if (isLtpCandidate(candidate)) return `${name} on ${formatLtpDateFact(trigger.date) ?? "date unavailable"}`;
+  if (isSequenceCandidate(candidate, playbook)) return `${name} on ${formatLtpDateFact(trigger.date) ?? "date unavailable"}`;
   return `${name} on ${trigger.date ?? "date unavailable"}`;
 }
 
-export function formatLtpAttendanceDate(candidate: Candidate): string | null {
-  if (!isLtpCandidate(candidate)) return null;
+export function formatLtpAttendanceDate(candidate: Candidate, playbook?: FlowPlaybook): string | null {
+  if (!isSequenceCandidate(candidate, playbook)) return null;
   return candidate.context.ltp_text?.ltp_date ?? formatLtpDateFact(candidate.context.trigger?.date);
 }
 
 /** Keep the session date/time in the facts panel byte-for-byte in sync with LTP copy. */
-export function formatLtpNextProgramFact(candidate: Candidate): string {
+export function formatLtpNextProgramFact(candidate: Candidate, playbook?: FlowPlaybook): string {
   const program = candidate.context.next_program;
   if (!program) return "none found";
-  if (isLtpCandidate(candidate)) {
+  if (isSequenceCandidate(candidate, playbook)) {
     const when = candidate.context.ltp_text?.when ?? formatLtpSessionWhen(program.start_time);
     return `${program.name}, ${when ?? "session time unavailable"}`;
   }
@@ -146,9 +113,10 @@ export function formatLtpSessionWhen(startTime: string): string | null {
 export function canReshuffleLtpCandidate(
   candidate: Pick<Candidate, "playbook_key" | "status" | "step" | "context" | "sequence_status">,
   schemaReady: boolean,
+  playbook?: FlowPlaybook,
 ): boolean {
   const step = candidate.step ?? candidate.context.ltp_text?.step;
-  return schemaReady && isLtpCandidate(candidate)
+  return schemaReady && isSequenceCandidate(candidate, playbook)
     && candidate.status === "drafted"
     && step !== undefined
     && candidate.context.ltp_text?.step === step
@@ -160,8 +128,9 @@ export function canReshuffleLtpCandidate(
 export function canApproveLtpCandidate(
   candidate: Pick<Candidate, "playbook_key" | "status" | "step" | "context" | "sequence_status">,
   schemaReady: boolean,
+  playbook?: FlowPlaybook,
 ): boolean {
-  if (!isLtpCandidate(candidate)) return true;
+  if (!isSequenceCandidate(candidate, playbook)) return true;
   const step = candidate.step ?? candidate.context.ltp_text?.step ?? 1;
   return schemaReady
     && candidate.context.ltp_text?.step === step

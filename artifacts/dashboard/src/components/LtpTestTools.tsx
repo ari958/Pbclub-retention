@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { envelopeRunIds } from "@/lib/retryContextEnvelope";
-import { retentionApi, type Candidate } from "@/lib/retentionApi";
+import { LTP_FOLLOWUP_KEY, retentionApi, type Candidate } from "@/lib/retentionApi";
 import type { RunResult } from "./RunResultBanner";
 
 export function LtpTestTools({ candidate, slug, actor, onChanged, onRunResult }: {
@@ -15,7 +15,8 @@ export function LtpTestTools({ candidate, slug, actor, onChanged, onRunResult }:
     && candidate.message?.retention_delivery_kind === "test";
   const stepTwo = candidate.step === 2 && candidate.status === "drafted" && candidate.context.ltp_test_mode === true;
   const resettable = candidate.status === "sent" && candidate.message?.simulated === true;
-  if (candidate.playbook_key !== "ltp_followup" || (!resettable && candidate.sequence_status !== "active") || (!stepOne && !stepTwo && !resettable)) return null;
+  // The test tools drive the LTP-specific test RPCs (migrations 015 and 016); other flows have none.
+  if (candidate.playbook_key !== LTP_FOLLOWUP_KEY || (!resettable && candidate.sequence_status !== "active") || (!stepOne && !stepTwo && !resettable)) return null;
   const run = async (action: "backdate" | "draft" | "simulate_booking" | "dispatch_check" | "reset_simulated") => {
     if (!actor.trim()) { setResult("Enter your operator name above before using test tools."); return; }
     setBusy(true); setResult(null); setRunIds([]);

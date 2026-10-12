@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { DEFAULT_RETENTION_FLOW_KEY, LTP_FOLLOWUP_FLOW } from "../lib/retentionFlows";
 import { GetRetentionReportsQueryParams, GetRetentionReportsResponse } from "@workspace/api-zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
@@ -32,7 +33,7 @@ router.get("/retention/reports", requireClub, async (req, res) => {
   if (!parsed.success) return void res.status(400).json({ error: "Invalid report filters" });
   const { clubId } = req as ClubScopedRequest;
   const period = parsed.data.period ?? "30d";
-  const playbookKey = parsed.data.playbook_key ?? "ltp_followup";
+  const playbookKey = parsed.data.playbook_key ?? DEFAULT_RETENTION_FLOW_KEY;
   const cutoff = period === "all" ? null
     : new Date(Date.now() - (period === "90d" ? 90 : 30) * 86400_000).toISOString();
   try {
@@ -47,7 +48,8 @@ router.get("/retention/reports", requireClub, async (req, res) => {
       }),
       readAll(() => supabase.from("sms_optouts").select(optoutColumns).eq("club_id", clubId)
         .order("opted_out_at", { ascending: false, nullsFirst: false }).order("id")),
-      playbookKey === "ltp_followup"
+      // The baseline view is a Learn to Play report; other flows have none yet.
+      playbookKey === LTP_FOLLOWUP_FLOW.key
         ? supabase.from("ltp_baseline").select("n_players,n_booked,rate").eq("club_id", clubId).maybeSingle()
         : Promise.resolve({ data: null, error: null }),
       readAll(() => supabase.from("players").select("id").eq("club_id", clubId).eq("is_test", true).order("id")),
