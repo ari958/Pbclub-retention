@@ -114,7 +114,7 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 
 ## How to work in this repo
 
-- **Test in dev before production, always.** Every change, migration included, is exercised in a dev environment (local throwaway Postgres, the dev API server, a dev Supabase copy) before anything is applied to or deployed against production, and then tested again in production. Never skip the dev pass because a change looks small.
+- **Production-direct, dry run first.** Ari's decision (2026-10-12): no dev or backup Supabase copy; iterate on the production project. Before merge, code still passes typecheck and the automated suites, including the throwaway-Postgres SQL tests. Every schema migration ships with a `verification/NNN_dry_run.sql` that runs the whole migration in production and then raises a deliberate error so nothing is saved (pattern: `artifacts/api-server/verification/031_dry_run.sql`). Run the dry run, read its message, then apply the real migration. Don't re-raise the dev-copy question.
 - **Audit before fixing.** Read the relevant code and report what's actually there before changing anything. Runbook items have gone stale before (4 of 5 in the June sweep were already fixed).
 - For multi-item tasks, keep items independent and report a per-item status: `CLOSED` / `PARTIAL` / `DEFERRED` / `REVERTED`, with one line of evidence (file:line, query result).
 - Stop and ask on anything ambiguous, anything irreversible, and anything touching live sends or production data.

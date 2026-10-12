@@ -93,10 +93,71 @@ test("migration 031 keeps the LTP writer byte-for-byte in behavior and lets a se
     assert.ok(playbookInsert, "reset assertions seed the LTP playbook");
     sqlFile("playbook.sql", playbookInsert);
 
+    // The production dry run executes all of 031, reports, and saves nothing.
+    const dryRunPath = new URL("../../../verification/031_dry_run.sql", import.meta.url).pathname;
+    const dryRunSource = readFileSync(dryRunPath, "utf8");
+    const migrationBody = migration031.slice(migration031.indexOf("BEGIN;\n"), migration031.indexOf("\nCOMMIT;\n") + 1);
+    assert.ok(dryRunSource.includes(migrationBody), "verification/031_dry_run.sql must embed migration 031 verbatim; regenerate it");
+    assert.doesNotMatch(dryRunSource, /\bCOMMIT\b/, "the dry run must never commit");
+    // Files reach the Supabase editor through a browser clipboard, which turns
+    // LF into CR+LF. Every production-facing script is exercised in that form.
+    const asPasted = (path: string) => {
+      const pasted = join(root, `pasted-${path.split("/").pop()}`);
+      writeFileSync(pasted, readFileSync(path, "utf8").replaceAll("\n", "\r\n"));
+      return pasted;
+    };
+    const dryRun = spawnSync("psql", ["-h", root, "-p", "55443", "-U", "fixture_owner", "-d", "postgres",
+      "-v", "ON_ERROR_STOP=1", "-f", asPasted(dryRunPath)], { encoding: "utf8", timeout: 30_000 });
+    assert.notEqual(dryRun.status, 0, "the dry run ends in its deliberate error");
+    assert.match(dryRun.stderr, /DRY RUN PASSED\. Nothing was saved/);
+    assert.match(dryRun.stderr, /ltp_followup = sequence \/ Learn to Play \/ LTPNEXT25 \/ 25% off \/ https:\/\/pbclub\.podplay\.app/);
+    const query = (sql: string) => run("psql", ["-h", root, "-p", "55443", "-U", "fixture_owner", "-d", "postgres",
+      "-At", "-v", "ON_ERROR_STOP=1", "-c", sql]).stdout.trim();
+    assert.equal(query("SELECT count(*) FROM information_schema.columns WHERE table_name='retention_playbooks' AND column_name='flow_kind'"), "0",
+      "the dry run left no new column behind");
+    assert.equal(query("SELECT strpos(pg_get_functiondef('public.retention_sequence_save_batch(uuid,jsonb)'::regprocedure), '''ltp_followup''')>0"), "t",
+      "the dry run left every function body unamended");
+
+    // The read-only source check reports every 031 substitution; on the
+    // installed 013/018/028 functions each one must match.
+    const sourceCheckPath = new URL("../../../verification/031_source_check.sql", import.meta.url).pathname;
+    const sourceCheck = readFileSync(sourceCheckPath, "utf8");
+    const substitutions = migration031.slice(
+      migration031.indexOf("END $$;\n", migration031.indexOf("CREATE FUNCTION pg_temp.retention_flow_amend(")) + "END $$;\n".length,
+      migration031.indexOf("DROP FUNCTION pg_temp.retention_flow_amend("),
+    ).replaceAll("pg_temp.retention_flow_amend(", "pg_temp.retention_flow_check(");
+    assert.ok(sourceCheck.includes(substitutions), "verification/031_source_check.sql must copy 031's substitution list verbatim; regenerate it");
+    assert.doesNotMatch(sourceCheck, /\bCOMMIT\b|\bALTER TABLE\b|\bINSERT INTO public\.|\bUPDATE public\./, "the source check must stay read-only");
+    const checkRows = (expected: RegExp) => {
+      const out = run("psql", ["-h", root, "-p", "55443", "-U", "fixture_owner", "-d", "postgres",
+        "-At", "-F", "|", "-v", "ON_ERROR_STOP=1", "-f", asPasted(sourceCheckPath)]).stdout.trim().split("\n")
+        .filter((line) => line.includes("|"));
+      assert.ok(out.length >= 19, `source check reports every substitution (${out.length} rows)`);
+      for (const line of out) assert.match(line.split("|")[2], expected, line);
+    };
+    checkRows(/^ok: (will amend|optional function absent)$/);
+
     const change = new URL("../../../migrations/031_retention_flow_rules.sql", import.meta.url).pathname;
-    const first = psql(change);
+    const first = psql(asPasted(change)); // First install exactly as a browser paste delivers it.
     assert.match(first.stdout, /\bt\b/, "readiness verification prints true");
+    // Functions 031 writes out in full keep the paste's line endings (harmless);
+    // compare definitions with carriage returns removed.
+    const definitions = () => query(`SELECT string_agg(replace(pg_get_functiondef(p.oid), chr(13), ''), E'\n----\n' ORDER BY p.oid::regprocedure::text)
+      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'`);
+    const afterFirstInstall = definitions();
     psql(change); // Reinstallation is idempotent, including every function amendment.
+    // The functions 031 edits in place are rebuilt from their CR-free live text.
+    assert.equal(query(`WITH fns AS MATERIALIZED (SELECT p.oid FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+        WHERE n.nspname='public' AND p.prokind='f' AND p.proname IN (
+          'retention_create_candidate','retention_create_draft','retention_regenerate_draft',
+          'retention_manual_edit_candidate','retention_retry_context','retention_sequence_transition',
+          'retention_sequence_player_optout_changed','retention_sequence_session_changed',
+          'retention_sequence_due_step2','retention_sequence_save_batch','retention_sequence_save_batch_test',
+          'retention_sequence_claim','retention_sequence_record_send','retention_update_candidate','capture_sms_inbound'))
+      SELECT count(*) FROM fns WHERE strpos(pg_get_functiondef(fns.oid), chr(13))>0`), "0",
+      "a pasted install leaves no carriage return inside any function it edits");
+    assert.equal(definitions(), afterFirstInstall, "a second install leaves every function byte-for-byte unchanged");
+    checkRows(/^ok: (already amended|optional function absent)$/);
 
     const reset = sqlFile("reset.assert.sql", resetAssertions.replace(playbookInsert, ""));
     assert.match(reset.stderr, /all original candidate fields unchanged/);
