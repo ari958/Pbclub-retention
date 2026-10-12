@@ -320,7 +320,9 @@ in roughly this order:
    and regenerate-batch. Add it and run `api-spec codegen` (a deliberate,
    reviewed step; do not run codegen casually) when the dashboard starts
    sending it.
-4. **Dashboard**: done in slice 5. Post-deploy check in the live dashboard:
+4. **Dashboard**: done in slice 5. Live check PASSED 2026-10-12 (Ari): step
+   and sequence badges, one Learn to Play phrase editor, cohort rebuild button,
+   Reports default all as before. The check, for future changes:
    the Learn to Play group shows step badges, one phrase editor, the cohort
    rebuild button and (with a test override set) the test tools, exactly as
    before. Do not approve anything as part of the check: in production an
