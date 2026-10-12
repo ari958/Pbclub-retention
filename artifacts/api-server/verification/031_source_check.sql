@@ -9,6 +9,10 @@
 --                           <NL> newlines, <TAB> tabs and <CR> carriage returns.
 -- Only session-local temp objects are created; they vanish with the session.
 --
+-- Carriage returns are ignored on both sides: copying this file through a
+-- browser or Windows clipboard turns its line breaks into CR+LF, while the
+-- installed functions use LF. Without this, every multi-line search misses.
+--
 -- The substitution list below is copied from migration 031 (a test enforces it).
 CREATE TEMP TABLE IF NOT EXISTS retention_flow_report(
   function_name text, pair integer, status text, expected_text text, live_text text);
@@ -25,9 +29,9 @@ BEGIN
       CASE WHEN p_required THEN 'MISMATCH: function is missing' ELSE 'ok: optional function absent' END,NULL,NULL);
     RETURN;
   END IF;
-  v_source:=pg_get_functiondef(v_proc);
+  v_source:=replace(pg_get_functiondef(v_proc),chr(13),'');
   FOR v_index IN 1..array_length(p_pairs,1) BY 2 LOOP
-    v_old:=p_pairs[v_index]; v_new:=p_pairs[v_index+1]; v_live:=NULL;
+    v_old:=replace(p_pairs[v_index],chr(13),''); v_new:=replace(p_pairs[v_index+1],chr(13),''); v_live:=NULL;
     IF strpos(v_source,v_new)>0 THEN
       v_status:='ok: already amended';
     ELSIF strpos(v_source,v_old)>0 THEN

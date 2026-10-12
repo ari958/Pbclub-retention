@@ -128,6 +128,9 @@ END $$;
 --    blindly. This is the same technique migrations 015 and 018 use. The new
 --    form is checked first: some new texts contain their old text, and a
 --    re-run must not insert them twice.
+--    Carriage returns are ignored on both sides: copying this file through a
+--    browser or Windows clipboard turns its line breaks into CR+LF, while the
+--    installed functions use LF. Without this, every multi-line search misses.
 -- ---------------------------------------------------------------------------
 CREATE FUNCTION pg_temp.retention_flow_amend(p_name text,p_signature text,p_pairs text[],p_required boolean DEFAULT true)
 RETURNS void LANGUAGE plpgsql AS $$
@@ -138,10 +141,10 @@ BEGIN
     IF p_required THEN RAISE EXCEPTION 'Install migrations 013-030 first: % is missing',p_name; END IF;
     RETURN;
   END IF;
-  v_source:=pg_get_functiondef(v_proc);
+  v_source:=replace(pg_get_functiondef(v_proc),chr(13),'');
   v_amended:=v_source;
   FOR v_index IN 1..array_length(p_pairs,1) BY 2 LOOP
-    v_old:=p_pairs[v_index]; v_new:=p_pairs[v_index+1];
+    v_old:=replace(p_pairs[v_index],chr(13),''); v_new:=replace(p_pairs[v_index+1],chr(13),'');
     IF strpos(v_amended,v_new)>0 THEN
       CONTINUE;
     ELSIF strpos(v_amended,v_old)>0 THEN
