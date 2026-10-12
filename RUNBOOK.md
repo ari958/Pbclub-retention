@@ -270,7 +270,14 @@ in roughly this order:
      ("Unexpected retention_create_candidate source"). Diagnose with
      `verification/031_source_check.sql` (read-only; one row per 031
      substitution, MISMATCH rows show the live text with `<NL>`/`<TAB>`/`<CR>`
-     markers) before changing 031.
+     markers) before changing 031. Result: no drift. All 27 single-line
+     searches matched; every multi-line search failed because the pasted copy
+     had Windows line endings (CR+LF) while the live functions use LF. The
+     repo files are LF; the CRs came in on copy and paste.
+   - **Fixed 2026-10-12**: 031 and the source check now ignore carriage
+     returns on both sides of every match. The migration test runs the source
+     check, the dry run and the first install from CR+LF copies, then asserts
+     a clean re-install changes nothing and no edited function contains a CR.
    - **Fixed 2026-10-12**: 031 inserted two blocks twice on a re-run because
      their new text contains the old text. The amend helper now checks for the
      new text first; a test asserts a second install changes no function.
