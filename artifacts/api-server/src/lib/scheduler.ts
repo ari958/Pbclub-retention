@@ -16,6 +16,7 @@ import { logger } from "./logger";
 import { supabase } from "./supabaseClient";
 import { isRetentionOnlyMode } from "./retentionPolicy";
 import { generateDueLtpStep2Drafts, generateRetentionDrafts } from "./retentionEngine";
+import { RETENTION_FLOWS } from "./retentionFlows";
 import { backgroundJobsEnabled } from "./backgroundPolicy";
 import { withBackgroundLock } from "./backgroundLock";
 import { recordRuntime, alertOperator, resolveOperatorAlert } from "./operatorMonitoring";
@@ -166,32 +167,40 @@ async function executeNightlyChain(todayStr?: string, incrementalDaysOverride?: 
         }
         // Retention generation is isolated from the event sync job result and
         // creates drafts only; a draft-generation failure must not fail sync.
-        try {
-          const drafts = await observeSyncStep("Retention step-1 drafts", () => generateRetentionDrafts(CLUB_ID));
-          const summary = `Retention drafts generated — created=${drafts.stats.created}, skipped=${drafts.stats.skipped}, errors=${drafts.errors.length}`;
-          await appendJobLog(JOB_NIGHTLY, summary);
-          if (drafts.errors.length) logger.warn({ errors: drafts.errors }, "[scheduler] retention draft generation reported item errors");
-        } catch (draftError) {
-          logger.error({ err: draftError }, "[scheduler] retention draft generation failed after successful event sync");
-          await appendJobLog(JOB_NIGHTLY, `Retention draft generation failed (non-fatal): ${draftError instanceof Error ? draftError.message : String(draftError)}`);
-        }
-        // Step 2 is an independent, migration-gated draft-only cohort. It may
-        // create only an unscheduled draft and still requires later approval.
-        try {
-          const stepTwo = await observeSyncStep("LTP step-2 drafts", () => generateDueLtpStep2Drafts(CLUB_ID));
-          const summary =
-            `LTP step-2 drafts generated — created=${stepTwo.results.length}, ` +
-            `blocked=${stepTwo.failures.length}`;
-          await appendJobLog(JOB_NIGHTLY, summary);
-          if (stepTwo.failures.length) {
-            logger.warn({ failures: stepTwo.failures }, "[scheduler] LTP step-2 draft generation reported item failures");
+        // Every registered flow runs in turn; a flow whose playbook row is
+        // missing or disabled produces no drafts. One flow's failure never
+        // blocks the next.
+        for (const flow of RETENTION_FLOWS) {
+          try {
+            const drafts = await observeSyncStep(`Retention step-1 drafts (${flow.shortLabel})`, () =>
+              generateRetentionDrafts(CLUB_ID, undefined, flow.key));
+            const summary = `${flow.name} drafts generated — created=${drafts.stats.created}, skipped=${drafts.stats.skipped}, errors=${drafts.errors.length}`;
+            await appendJobLog(JOB_NIGHTLY, summary);
+            if (drafts.errors.length) logger.warn({ flow: flow.key, errors: drafts.errors }, "[scheduler] retention draft generation reported item errors");
+          } catch (draftError) {
+            logger.error({ flow: flow.key, err: draftError }, "[scheduler] retention draft generation failed after successful event sync");
+            await appendJobLog(JOB_NIGHTLY, `${flow.name} draft generation failed (non-fatal): ${draftError instanceof Error ? draftError.message : String(draftError)}`);
           }
-        } catch (stepTwoError) {
-          logger.error({ err: stepTwoError }, "[scheduler] LTP step-2 draft generation failed after successful event sync");
-          await appendJobLog(
-            JOB_NIGHTLY,
-            `LTP step-2 draft generation failed (non-fatal): ${stepTwoError instanceof Error ? stepTwoError.message : String(stepTwoError)}`,
-          );
+          if (!flow.sequence) continue;
+          // Step 2 is an independent, migration-gated draft-only cohort. It may
+          // create only an unscheduled draft and still requires later approval.
+          try {
+            const stepTwo = await observeSyncStep(`${flow.shortLabel} step-2 drafts`, () =>
+              generateDueLtpStep2Drafts(CLUB_ID, undefined, flow.key));
+            const summary =
+              `${flow.shortLabel} step-2 drafts generated — created=${stepTwo.results.length}, ` +
+              `blocked=${stepTwo.failures.length}`;
+            await appendJobLog(JOB_NIGHTLY, summary);
+            if (stepTwo.failures.length) {
+              logger.warn({ flow: flow.key, failures: stepTwo.failures }, "[scheduler] step-2 draft generation reported item failures");
+            }
+          } catch (stepTwoError) {
+            logger.error({ flow: flow.key, err: stepTwoError }, "[scheduler] step-2 draft generation failed after successful event sync");
+            await appendJobLog(
+              JOB_NIGHTLY,
+              `${flow.shortLabel} step-2 draft generation failed (non-fatal): ${stepTwoError instanceof Error ? stepTwoError.message : String(stepTwoError)}`,
+            );
+          }
         }
       } catch (err: any) {
         const wasCancelled = err.name === "CancelledError";

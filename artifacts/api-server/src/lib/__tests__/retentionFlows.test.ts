@@ -199,7 +199,8 @@ test("the engine, context, text, dispatch and send paths no longer hard-code the
   const root = join(import.meta.dirname, "..");
   for (const file of [
     "retentionEngine.ts", "retentionContext.ts", "retentionText.ts", "retentionDispatch.ts",
-    "ltpSequenceLifecycle.ts", "twilio.ts", "queuePoller.ts",
+    "ltpSequenceLifecycle.ts", "twilio.ts", "queuePoller.ts", "scheduler.ts",
+    "../routes/retention.ts", "../routes/ltpSequence.ts", "../routes/ltpTestTools.ts", "../routes/retentionReports.ts",
   ]) {
     const source = readFileSync(join(root, file), "utf8");
     assert.equal(source.includes('"ltp_followup"'), false, `${file} still hard-codes the LTP playbook key`);

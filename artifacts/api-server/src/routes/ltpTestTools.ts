@@ -8,6 +8,7 @@ import { generateDueLtpStep2Drafts, regenerateRetentionCandidate } from "../lib/
 import { recheckLtpSequenceDispatch } from "../lib/ltpSequenceLifecycle";
 import type { RetentionCandidate } from "../lib/retentionTypes";
 import { withGenerationRun } from "../lib/runHistory";
+import { DEFAULT_RETENTION_FLOW_KEY } from "../lib/retentionFlows";
 
 const router: IRouter = Router();
 const actionSchema = LtpTestActionBody.extend({ actor: z.string().trim().min(1).max(120) }).strict();
@@ -28,7 +29,7 @@ router.post("/retention/test-tools/candidates/:id", requireClub, async (req, res
   const clubId = (req as ClubScopedRequest).clubId;
   try {
     if (parsed.data.action === "reset_simulated") {
-      res.json(await withGenerationRun(clubId, "ltp_followup", "Test reset and regenerate", async () => {
+      res.json(await withGenerationRun(clubId, DEFAULT_RETENTION_FLOW_KEY, "Test reset and regenerate", async () => {
         await resetSimulatedLtpTestMessage(clubId, id.data, parsed.data.actor);
         return regenerateRetentionCandidate(clubId, id.data);
       }));

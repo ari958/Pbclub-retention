@@ -183,6 +183,18 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-12**: Retention engine generalization, slices 4 and 6 (routes
+  and scheduler; no behavior change). `POST /retention/generate` and
+  `POST /retention/regenerate-batch` accept an optional `playbook_key` (must
+  name a registered flow; defaults to `ltp_followup`); the OpenAPI spec does
+  not list the field yet, so the dashboard keeps sending none.
+  `PATCH /retention/playbooks/:key/config` accepts any registered sequence
+  flow and validates the phrase slots against that flow's own rules. The
+  approvals list matches step-2 cards to their step 1 by playbook and player,
+  not player alone. The nightly job iterates `RETENTION_FLOWS` for step-1 and
+  step-2 drafting; one flow's failure never blocks the next. The source scan
+  in `retentionFlows.test.ts` now covers the four route files and
+  `scheduler.ts`.
 - **2026-10-09**: Retention engine generalization, slice 3 (server code only,
   no behavior change). The Learn to Play text rules moved behind the flow
   definition: `RetentionTextRules` (`retentionTypes.ts`) carries the trigger
@@ -262,17 +274,17 @@ in roughly this order:
    name only: the `ltp_*` module and column names (`ltp_sequence_config`,
    `ltp_text`, `ltp_date`) and the `ltp_followup` test tools. Renaming them is
    cosmetic and touches the dashboard and generated API types; defer.
-3. **Routes.** `routes/retention.ts`, `routes/ltpSequence.ts`,
-   `routes/ltpTestTools.ts` and `routes/retentionReports.ts` tag runs and
-   filter on the literal key; they should pass the requested flow key through
-   to the engine's new optional parameter.
+3. **Routes**: done in slices 4 and 6, except that `lib/api-spec/openapi.yaml`
+   does not yet declare the optional `playbook_key` request field on generate
+   and regenerate-batch. Add it and run `api-spec codegen` (a deliberate,
+   reviewed step; do not run codegen casually) when the dashboard starts
+   sending it.
 4. **Dashboard.** `lib/ltpPhraseSlots.ts` (`isLtpCandidate`),
    `components/ApprovalCard.tsx`, `pages/Approvals.tsx`,
    `components/LtpTestTools.tsx` and `pages/Reports.tsx` branch on
    `playbook_key === "ltp_followup"` and keep a local copy of the default
    phrase-slot config.
-5. **Scheduler.** `scheduler.ts` runs generation and step-2 drafting for the
-   default flow only; it should iterate enabled flows.
+5. **Scheduler**: done in slice 6; `scheduler.ts` iterates registered flows.
 
 Dry-run and operator approval rules are unchanged throughout; none of this
 touches live sends.
