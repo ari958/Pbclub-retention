@@ -183,6 +183,11 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
   proxy gateway, `post-merge.sh`, the mockup-sandbox package and the Replit Vite
   plugins. Added `railway.json`, pinned Node 22. Production is one Railway
   service; see "Hosting" below for the cutover.
+- **2026-10-12**: Migration 031 applied in production after a passing dry
+  run. The first dry run had stopped on Windows line endings introduced by
+  copy and paste (no production drift); 031 now ignores carriage returns, and
+  a re-run duplication bug the new tests found is fixed. Use the branch copy
+  of 031, now merged, not the earlier one.
 - **2026-10-12**: Retention engine generalization, slice 5 (dashboard; no
   behavior change for Learn to Play). `GET /retention/approvals` now returns
   each playbook with its flow kind, trigger label, verified code, offer phrase,
@@ -263,7 +268,10 @@ Slice 1 (2026-10-09) moved the server code onto a flow registry. Slice 2
 literal key. A second flow still cannot be switched on until these are done,
 in roughly this order:
 
-1. **Apply migration 031 in production** (not yet applied). No dev copy
+1. **Migration 031: APPLIED in production 2026-10-12.** Dry run passed
+   (`retention_sequence_ready = true`, 18 candidate rows satisfy the new rule);
+   the apply returned `ltp_followup = sequence / Learn to Play / LTPNEXT25 /
+   25% off / https://pbclub.podplay.app`. History of the apply below. No dev copy
    (decision 2026-10-12); the dry run stands in for it.
    - **2026-10-12 production dry run failed, nothing saved**: the live
      `retention_create_candidate` does not contain the text 031 expects
