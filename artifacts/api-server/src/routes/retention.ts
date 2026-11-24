@@ -11,6 +11,7 @@ import {
   ALLOWED_RETENTION_LOOKBACK_DAYS,
   DEFAULT_RETENTION_LOOKBACK_DAYS,
   retentionSendDateMatchesSchedule,
+  toEtDate,
 } from "../lib/retentionDates";
 import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
@@ -25,13 +26,20 @@ import {
 import ltpSequenceRouter from "./ltpSequence";
 import { approveCandidate, requireLtpSequenceSchemaReady } from "../lib/retentionCandidateApproval";
 import { logWinbackResult, runWinback } from "../lib/winback";
+import { parseSendTimeEt } from "../lib/approvalKey";
+import { etWallClock } from "../lib/retentionAutoApprove";
 import { observeKillSwitch } from "../lib/operatorMonitoring";
 import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
 const router: IRouter = Router();
 router.use(ltpSequenceRouter);
 const ExpectedBodySchema = z.string().refine((value) => value.trim().length > 0);
-const ApproverSchema = z.object({ approved_by: z.string().trim().min(1), expected_body: ExpectedBodySchema });
+const ApproverSchema = z.object({
+  approved_by: z.string().trim().min(1),
+  expected_body: ExpectedBodySchema,
+  /** Optional "HH:MM" New York send time today (e.g. "14:00"); default is the next minute. */
+  send_at_et: z.string().optional(),
+});
 const EditSchema = z.object({ body: z.string().trim().min(1) });
 const BulkSchema = z.object({
   approved_by: z.string().trim().min(1),
@@ -482,7 +490,16 @@ router.post("/retention/candidates/:id/approve", requireClub, async (req, res) =
     await requireRetentionSchemaReady();
     const candidate = await loadCandidate(clubId, req.params.id as string);
     if (!candidate) return res.status(404).json({ error: "Retention candidate not found" });
-    return res.json(await approveCandidate(clubId, candidate, parsed.data.approved_by, parsed.data.expected_body));
+    let schedule: Date | undefined;
+    if (parsed.data.send_at_et) {
+      const time = parseSendTimeEt(parsed.data.send_at_et);
+      if (!time) return res.status(400).json({ error: "send_at_et must be HH:MM between 08:30 and 19:30 New York time" });
+      schedule = etWallClock(toEtDate(new Date()), time.hour, time.minute);
+      if (schedule.getTime() <= Date.now() + 60_000) {
+        return res.status(409).json({ error: `${parsed.data.send_at_et} New York time has already passed today; approve without a time to send now` });
+      }
+    }
+    return res.json(await approveCandidate(clubId, candidate, parsed.data.approved_by, parsed.data.expected_body, schedule));
   } catch (error: any) {
     const missingSchema = isRetentionSchemaMissing(error) || error.status === 503;
     return res.status(error.status ?? (missingSchema ? 503 : 500)).json({ schema_ready: !missingSchema, error: error.message });
