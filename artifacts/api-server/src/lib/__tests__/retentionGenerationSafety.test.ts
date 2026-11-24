@@ -87,8 +87,10 @@ test("schema readiness fails closed on absent new RPCs/status constraint and rou
 });
 
 test("single and bulk approvals require the stored generated ET date to match their schedule", () => {
-  assert.match(routes, /retentionSendDateMatchesSchedule\(context\.send_date_et, schedule\)/);
-  assert.match(routes, /The intended ET send date changed\. Regenerate and review this candidate before approving\./);
+  // Single approval lives in the shared approveCandidate (used by the routes and the auto-approver).
+  const approval = readFileSync(new URL("../retentionCandidateApproval.ts", import.meta.url), "utf8");
+  assert.match(approval, /retentionSendDateMatchesSchedule\(context\.send_date_et, schedule\)/);
+  assert.match(approval, /The intended ET send date changed\. Regenerate and review this candidate before approving\./);
   assert.match(routes, /retentionSendDateMatchesSchedule\(row\.context\?\.send_date_et, bulkSchedule\)/);
   assert.match(routes, /The intended ET send date changed\. Regenerate and review candidates before approving\./);
 });

@@ -24,6 +24,7 @@ import {
 } from "../lib/retentionApprovals";
 import ltpSequenceRouter from "./ltpSequence";
 import { approveCandidate, requireLtpSequenceSchemaReady } from "../lib/retentionCandidateApproval";
+import { logWinbackResult, runWinback } from "../lib/winback";
 import { observeKillSwitch } from "../lib/operatorMonitoring";
 import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
@@ -485,6 +486,23 @@ router.post("/retention/candidates/:id/approve", requireClub, async (req, res) =
   } catch (error: any) {
     const missingSchema = isRetentionSchemaMissing(error) || error.status === 503;
     return res.status(error.status ?? (missingSchema ? 503 : 500)).json({ schema_ready: !missingSchema, error: error.message });
+  }
+});
+
+// Lapsing-regular win-back: build today's drafts now (no approvals, no sends).
+router.post("/retention/winback/run", requireClub, async (req, res) => {
+  const clubId = (req as ClubScopedRequest).clubId;
+  try {
+    const result = await runWinback(clubId);
+    logWinbackResult(result);
+    const status = result.status === "not_installed" ? 503 : 200;
+    return res.status(status).json({
+      ...result,
+      ...(result.status === "not_installed" ? { error: "Apply migration 032_winback_flow.sql first" } : {}),
+      ...(result.status === "stale_data" ? { error: `Attendance data only runs through ${result.data_through ?? "nothing"}; run the nightly sync first` } : {}),
+    });
+  } catch (error: any) {
+    return res.status(error.status ?? 500).json({ error: error.message });
   }
 });
 
