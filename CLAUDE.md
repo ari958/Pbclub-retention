@@ -97,7 +97,7 @@ Run from the repo root. pnpm only (`preinstall` rejects npm/yarn). Verified 2026
 ## Locked decisions. Don't re-raise these.
 
 - Consent is implicit for retention texts. Any player with a phone number is eligible, and Twilio handles opt-outs.
-- Every outbound text is operator-approved before it sends.
+- Every outbound text is approved before it sends. Since 2026-11-24 (Ari), Learn to Play texts (steps 1 and 2) are approved by the nightly auto-approver (`src/lib/retentionAutoApprove.ts`, recorded as `approved_by = auto-approver`) when `RETENTION_AUTO_APPROVE=true` and live SMS is on. It uses the same `approveCandidate` checks as the dashboard, schedules for 3:00pm ET (`RETENTION_AUTO_SEND_TIME`), and caps at 25 per ET day (`RETENTION_AUTO_APPROVE_DAILY_CAP`); anything it can't approve stays a draft for the operator.
 - Learn to Play follow-up: max 2 texts. Text 1 is a thank-you plus promo code `LTPNEXT25`, plus a next beginner program if one exists (skip the suggestion if none). Text 2 goes 7 days later if they haven't booked, with no promo code. Booking moves the player to the next flow.
 - Experiments: 70/30 treatment/control, 30-day holdout, max 2 promotional SMS per player per 30 days, 7-day cooldown, and manual approval before dispatch.
 - Cancellation thresholds: N=4 / T-2h for open play, N=2 / T-2h for clinics.

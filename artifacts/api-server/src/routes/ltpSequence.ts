@@ -6,6 +6,9 @@ import { regenerateLtpCandidateBatch, reshuffleLtpCandidate } from "../lib/reten
 import { LtpSequenceConfigSchema } from "../lib/ltpPhraseBuilder";
 import { DEFAULT_RETENTION_FLOW_KEY, findRetentionFlow, isSequenceFlowKey } from "../lib/retentionFlows";
 import ltpTestToolsRouter from "./ltpTestTools";
+import { requireLtpSequenceSchemaReady } from "../lib/retentionCandidateApproval";
+
+export { requireLtpSequenceSchemaReady };
 
 const router: IRouter = Router();
 router.use(ltpTestToolsRouter);
@@ -16,15 +19,6 @@ const CandidateIdsSchema = z.object({
   playbook_key: PlaybookKeySchema,
 }).strict();
 const EmptyBodySchema = z.object({}).strict();
-
-export async function requireLtpSequenceSchemaReady() {
-  const { data, error } = await supabase.rpc("retention_sequence_ready");
-  if (error || data !== true) {
-    throw Object.assign(new Error(
-      "Apply migration 013_retention_ltp_sequence.sql in the existing Supabase SQL Editor before using the two-step LTP sequence",
-    ), { status: 503 });
-  }
-}
 
 function operationErrorStatus(error: any): number {
   if (error.status) return error.status;
