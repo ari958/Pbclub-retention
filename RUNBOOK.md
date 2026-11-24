@@ -173,6 +173,16 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-24**: Chat approvals. `src/lib/approvalKey.ts` adds a narrow
+  machine credential: header `x-retention-approval-key` matching
+  `RETENTION_APPROVAL_KEY` (Railway, 32+ chars) may only `GET
+  /api/retention/approvals` and `POST /api/retention/candidates/:id/approve|skip`;
+  every other route still needs the dashboard login, and a request carrying
+  the header never falls back to the cookie. Approvals are recorded as
+  `approved_by = chat-approval` and go through the same `approveCandidate`.
+  The approve route also accepts `send_at_et: "HH:MM"` (8:30-19:30 New York,
+  today, must be in the future), used to send win-back texts at 2pm. Rotate by
+  changing the Railway variable and the cloud environment's network secret.
 - **2026-11-24**: Lapsing-regular win-back flow. Migration 032 seeds the
   `winback_regular` playbook (single-draft, no promo, 20% holdout) and adds
   `retention_winback_create_candidate`, the only writer for win-back rows. A

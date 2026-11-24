@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { operatorRouter, requireOperator, requireSameOrigin } from "./lib/operatorAuth";
 import { validateTwilioWebhook, WEBHOOK_PATHS } from "./lib/twilioWebhook";
+import { APPROVAL_KEY_ACTOR, checkApprovalKey } from "./lib/approvalKey";
 
 const app: Express = express();
 
@@ -39,6 +40,19 @@ app.use("/api/operator", operatorRouter);
 app.use((req, res, next) => {
   if (["GET", "HEAD"].includes(req.method) && req.path === "/api/healthz") return next();
   if (req.method === "POST" && WEBHOOK_PATHS.has(req.path)) return validateTwilioWebhook(req, res, next);
+  // Narrow approval key (list / approve / skip retention drafts only). A request
+  // that carries the header never falls back to the cookie login.
+  const approvalKey = checkApprovalKey(req);
+  if (approvalKey !== "absent") {
+    res.setHeader("Cache-Control", "no-store");
+    if (approvalKey !== "ok") {
+      const status = approvalKey === "route_not_allowed" ? 403 : 401;
+      return void res.status(status).json({ error: `Approval key ${approvalKey.replace(/_/g, " ")}` });
+    }
+    res.locals.operator = { actor: APPROVAL_KEY_ACTOR };
+    if (req.body && typeof req.body === "object" && req.path.endsWith("/approve")) req.body.approved_by = APPROVAL_KEY_ACTOR;
+    return next();
+  }
   requireOperator(req, res, next);
 });
 app.use(requireSameOrigin);
