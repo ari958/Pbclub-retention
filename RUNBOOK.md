@@ -307,9 +307,12 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ### Win-back flow (2026-11-24)
 
-1. **Apply migration 032**: run `verification/032_dry_run.sql` in production,
-   expect `DRY RUN PASSED`, then run `migrations/032_winback_flow.sql`.
-   Until it is applied the nightly log says `Win-back not_installed`.
+1. **Migration 032: APPLIED in production 2026-11-24.** Dry run passed
+   (`winback_regular / single / enabled=t / holdout=20% / promo=none; Learn to
+   Play unchanged`); the apply returned `winback_ready = true`, holdout 20, no
+   promo code, booking URL `https://pbclub.podplay.app`. (A first dry-run attempt
+   ran only the final check block, a partial selection in the SQL Editor, and
+   failed harmlessly with "retention_winback_ready() does not exist".)
 2. Two weeks of manual approval, then decide on `RETENTION_AUTO_APPROVE_WINBACK`.
 3. Lift report: compare 14/30-day return rates of `winback_regular` drafted+sent
    rows vs `skipped` rows with `context->>'reason' = 'holdout'`. Not yet on the
