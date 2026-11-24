@@ -1,5 +1,6 @@
 // @ts-ignore — plain JS module
 import { importAllPlayers } from "../importAllPlayers.js";
+import { autoApproveRetentionDrafts } from "./retentionAutoApprove";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, heartbeatJob, reclaimStaleJobs } from "./jobStore";
@@ -183,7 +184,7 @@ async function executeNightlyChain(todayStr?: string, incrementalDaysOverride?: 
           }
           if (!flow.sequence) continue;
           // Step 2 is an independent, migration-gated draft-only cohort. It may
-          // create only an unscheduled draft and still requires later approval.
+          // create only an unscheduled draft; approval happens below (auto-approver) or in the dashboard.
           try {
             const stepTwo = await observeSyncStep(`${flow.shortLabel} step-2 drafts`, () =>
               generateDueLtpStep2Drafts(CLUB_ID, undefined, flow.key));
@@ -199,6 +200,29 @@ async function executeNightlyChain(todayStr?: string, incrementalDaysOverride?: 
             await appendJobLog(
               JOB_NIGHTLY,
               `${flow.shortLabel} step-2 draft generation failed (non-fatal): ${stepTwoError instanceof Error ? stepTwoError.message : String(stepTwoError)}`,
+            );
+          }
+        }
+        // Auto-approve this flow's fresh drafts (steps 1 and 2) when
+        // RETENTION_AUTO_APPROVE=true and live SMS is on. Same checks as an
+        // operator approval; failures and over-cap drafts stay for review.
+        for (const flow of RETENTION_FLOWS) {
+          try {
+            const auto = await observeSyncStep(`${flow.shortLabel} auto-approve`, () =>
+              autoApproveRetentionDrafts(CLUB_ID, flow.key));
+            if (auto.status !== "disabled") {
+              await appendJobLog(
+                JOB_NIGHTLY,
+                `${flow.shortLabel} auto-approve ${auto.status} — approved=${auto.approved.length}, held=${auto.held.length}, ` +
+                `cap=${auto.cap}, already_today=${auto.approved_today_before}`,
+              );
+            }
+            if (auto.held.length) logger.warn({ flow: flow.key, held: auto.held }, "[scheduler] auto-approve held drafts for review");
+          } catch (autoError) {
+            logger.error({ flow: flow.key, err: autoError }, "[scheduler] auto-approve failed; drafts remain for manual review");
+            await appendJobLog(
+              JOB_NIGHTLY,
+              `${flow.shortLabel} auto-approve failed (non-fatal): ${autoError instanceof Error ? autoError.message : String(autoError)}`,
             );
           }
         }

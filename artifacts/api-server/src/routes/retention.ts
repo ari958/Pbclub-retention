@@ -14,8 +14,6 @@ import {
 } from "../lib/retentionDates";
 import { validateRetentionCoupon } from "../lib/retentionCoupons";
 import { sanitizeScheduledSendAt } from "../lib/playerTiming";
-import { isStaleReviewedBodyError } from "../lib/retentionApproval";
-import { assertRetentionDraftFresh } from "../lib/retentionFreshness";
 import { validateRetentionTextBody } from "../lib/retentionText";
 import type { RetentionCandidate, RetentionContext, RetentionMessage, RetentionPlaybook } from "../lib/retentionTypes";
 import {
@@ -24,7 +22,8 @@ import {
   decorateApprovalCandidates,
   parseApprovalListStatus,
 } from "../lib/retentionApprovals";
-import ltpSequenceRouter, { requireLtpSequenceSchemaReady } from "./ltpSequence";
+import ltpSequenceRouter from "./ltpSequence";
+import { approveCandidate, requireLtpSequenceSchemaReady } from "../lib/retentionCandidateApproval";
 import { observeKillSwitch } from "../lib/operatorMonitoring";
 import { smsLiveEnabled } from "../lib/backgroundPolicy";
 
@@ -143,65 +142,6 @@ async function requireRetentionSchemaReady() {
 async function retentionContextRetryReady(): Promise<boolean> {
   const { data, error } = await supabase.rpc("retention_context_retry_ready");
   return !error && data === true;
-}
-
-async function approveCandidate(
-  clubId: string,
-  candidate: RetentionCandidate,
-  approvedBy: string,
-  expectedBody: string,
-  requestedSchedule?: Date,
-) {
-  assertRetentionDraftFresh(candidate);
-  if (candidate.status !== "drafted") {
-    throw Object.assign(new Error("Only drafted candidates can be approved"), { status: 409 });
-  }
-  if (isSequenceFlowKey(candidate.playbook_key)) {
-    await requireLtpSequenceSchemaReady();
-    if (candidate.sequence_status !== "active" || !candidate.context.ltp_text
-      || candidate.context.reason != null || candidate.context.ltp_text.step !== candidate.step) {
-      throw Object.assign(new Error("Rebuild and review an active two-step LTP draft before approving"), { status: 409 });
-    }
-  }
-  const context = candidate.context as RetentionContext;
-  try {
-    validateRetentionTextBody(expectedBody, context, {
-      key: candidate.playbook_key,
-      name: candidate.playbook_key,
-      enabled: true,
-      promo_code: context.promo?.code ?? null,
-      offer_text: context.promo?.offer_text ?? null,
-      next_program_names: [],
-      message_guidance: null,
-      holdout_pct: 0,
-    });
-  } catch (error: any) {
-    throw Object.assign(new Error(error.message), { status: 409 });
-  }
-  if ((candidate.step ?? 1) === 1 && context.promo?.code) {
-    const validation = await validateRetentionCoupon(clubId, context.promo.code);
-    if (!validation.valid) throw Object.assign(new Error(validation.warning ?? "Promotion could not be verified"), { status: 409 });
-  }
-  const schedule = requestedSchedule ?? sanitizeScheduledSendAt(new Date(Date.now() + 60_000));
-  if (!schedule) throw Object.assign(new Error("Could not find an open TCPA send window"), { status: 409 });
-  if (!retentionSendDateMatchesSchedule(context.send_date_et, schedule)) {
-    throw Object.assign(
-      new Error("The intended ET send date changed. Regenerate and review this candidate before approving."),
-      { status: 409 },
-    );
-  }
-  const { data, error } = await supabase.rpc("retention_update_candidate", {
-    p_id: candidate.id,
-    p_club_id: clubId,
-    p_action: "approve",
-    p_body: expectedBody,
-    p_actor: approvedBy.trim(),
-    p_scheduled_at: schedule.toISOString(),
-  });
-  if (error) {
-    throw Object.assign(new Error(error.message), { status: isStaleReviewedBodyError(error.message) ? 409 : 500 });
-  }
-  return data;
 }
 
 router.get("/retention/approvals", requireClub, async (req, res): Promise<void> => {

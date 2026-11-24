@@ -173,6 +173,23 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-24**: Auto-approval for Learn to Play texts (Ari's decision;
+  replaces "every text is operator-approved"). New
+  `src/lib/retentionAutoApprove.ts` runs in the nightly job after step-1 and
+  step-2 drafts are generated. It approves each draft through the shared
+  `approveCandidate` (moved to `src/lib/retentionCandidateApproval.ts`), so all
+  existing checks still apply and dispatch still requires an approved
+  candidate. Recorded as `approved_by = auto-approver`.
+  - On only when `RETENTION_AUTO_APPROVE=true` (Railway production only) and
+    `smsLiveEnabled()`; does nothing while `sms_kill_switch` is on.
+  - Sends at 3:00pm ET on the draft's `send_date_et`
+    (`RETENTION_AUTO_SEND_TIME`, default `15:00`, clamped to 8:30am-7:30pm).
+    If that time has passed when the nightly job runs, the draft is held.
+  - Cap: 25 auto-approvals per ET day (`RETENTION_AUTO_APPROVE_DAILY_CAP`).
+    Over-cap and failing drafts stay in Approvals for manual review; reasons
+    are in the nightly job log and the `auto-approve held drafts` warning.
+  - To turn off: set `RETENTION_AUTO_APPROVE=false` on Railway, or flip the
+    kill switch to stop all sends.
 - **2026-10-09**: Added the `SCHEDULER_ENABLED` kill switch (above). Routed the
   dashboard's mark-as-read through `POST /api/messages/mark-read`; the anon
   client no longer writes. Milestone and monthly-recap generation now use the
