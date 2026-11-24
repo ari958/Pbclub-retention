@@ -173,6 +173,33 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-24**: Lapsing-regular win-back flow. Migration 032 seeds the
+  `winback_regular` playbook (single-draft, no promo, 20% holdout) and adds
+  `retention_winback_create_candidate`, the only writer for win-back rows. A
+  player can start a new win-back cycle 90+ days after their last one; the old
+  row stays as history, linked through `prelaunch_superseded_by` (which takes
+  it out of the one-row-per-player unique index). No existing function, index
+  or LTP row changes. Code: `src/lib/winbackRules.ts` (pure rules, templates,
+  validator), `src/lib/winback.ts` (nightly run), wired into the nightly job
+  after Learn to Play, plus `POST /api/retention/winback/run` (drafts only).
+  - The run refuses to draft when attendance data is more than 3 days old
+    (status `stale_data`), so a broken sync cannot make every regular look lapsed.
+  - Waiting drafts are refreshed each night (new date, live session check) or
+    skipped when the player booked, came back, or the draft is 7+ days old.
+    Dashboard "Regenerate" is refused for win-back rows by design.
+  - Approval goes through the shared `approveCandidate`; `validateRetentionTextBody`
+    routes win-back bodies to `validateWinbackText` (opener, link allow-list,
+    no promo/price words, no dashes or exclamation points, 320 chars).
+  - Auto-approve for win-back is off until `RETENTION_AUTO_APPROVE_WINBACK=true`;
+    it shares the 25-a-day cap with Learn to Play.
+  - Sizing/baseline query: `verification/lapsing_regulars_sizing.sql`
+    (2026-11-24 run: 340 lapses over 26 weeks, 39% back within 14 days, 51% within 30).
+- **2026-11-24**: Outage 2026-10-16 to 2026-11-24. The Railway service stopped
+  (last worker heartbeat 2026-10-16 12:58 UTC) and a later build failed on a
+  missing `PUBLIC_API_URL`; both the build (`production-build.mjs`) and server
+  start (`src/index.ts`) require it. No nightly sync, drafts or texts ran for
+  5.5 weeks. Detect next time: `SELECT * FROM operator_worker_instances ORDER BY
+  last_seen_at DESC LIMIT 3;` and the `jobs` row for `nightly_sync`.
 - **2026-11-24**: Auto-approval for Learn to Play texts (Ari's decision;
   replaces "every text is operator-approved"). New
   `src/lib/retentionAutoApprove.ts` runs in the nightly job after step-1 and
@@ -277,6 +304,19 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 ---
 
 ## Open items
+
+### Win-back flow (2026-11-24)
+
+1. **Apply migration 032**: run `verification/032_dry_run.sql` in production,
+   expect `DRY RUN PASSED`, then run `migrations/032_winback_flow.sql`.
+   Until it is applied the nightly log says `Win-back not_installed`.
+2. Two weeks of manual approval, then decide on `RETENTION_AUTO_APPROVE_WINBACK`.
+3. Lift report: compare 14/30-day return rates of `winback_regular` drafted+sent
+   rows vs `skipped` rows with `context->>'reason' = 'holdout'`. Not yet on the
+   Reports page.
+4. Not built: "friends signed up" line (buddy notifications are all opted out).
+5. Pre-existing test failures, unrelated to retention: `operatorMonitoring.test.ts`
+   (watchdog) and `inboundInbox.test.ts` (fake client lacks `.neq`).
 
 ### Retention engine generalization (prerequisite for any new flow)
 

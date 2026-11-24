@@ -1,6 +1,8 @@
 // @ts-ignore — plain JS module
 import { importAllPlayers } from "../importAllPlayers.js";
 import { autoApproveRetentionDrafts } from "./retentionAutoApprove";
+import { logWinbackResult, runWinback } from "./winback";
+import { WINBACK_PLAYBOOK_KEY } from "./winbackRules";
 // @ts-ignore — plain JS module
 import { syncEventAttendance } from "../syncEventAttendance.js";
 import { getJob, startJob, finishJob, appendJobLog, isCancelled, heartbeatJob, reclaimStaleJobs } from "./jobStore";
@@ -225,6 +227,33 @@ async function executeNightlyChain(todayStr?: string, incrementalDaysOverride?: 
               `${flow.shortLabel} auto-approve failed (non-fatal): ${autoError instanceof Error ? autoError.message : String(autoError)}`,
             );
           }
+        }
+        // Lapsing-regular win-back (migration 032). Drafts only; its auto-approve
+        // has its own switch (RETENTION_AUTO_APPROVE_WINBACK) and starts off.
+        try {
+          const winback = await observeSyncStep("Win-back drafts", () => runWinback(CLUB_ID));
+          logWinbackResult(winback);
+          await appendJobLog(
+            JOB_NIGHTLY,
+            `Win-back ${winback.status} — data_through=${winback.data_through ?? "none"}, lapsing=${winback.lapsing}, ` +
+            `drafted=${winback.drafted}, holdout=${winback.holdout}, refreshed=${winback.refreshed}, ` +
+            `skipped=${JSON.stringify(winback.skipped_by_reason)}, errors=${winback.errors.length}`,
+          );
+          if (winback.errors.length) logger.warn({ errors: winback.errors.slice(0, 20) }, "[scheduler] win-back reported item errors");
+          if (process.env.RETENTION_AUTO_APPROVE_WINBACK?.trim().toLowerCase() === "true") {
+            const auto = await observeSyncStep("Win-back auto-approve", () =>
+              autoApproveRetentionDrafts(CLUB_ID, WINBACK_PLAYBOOK_KEY));
+            if (auto.status !== "disabled") {
+              await appendJobLog(JOB_NIGHTLY,
+                `Win-back auto-approve ${auto.status} — approved=${auto.approved.length}, held=${auto.held.length}, cap=${auto.cap}`);
+            }
+          }
+        } catch (winbackError) {
+          logger.error({ err: winbackError }, "[scheduler] win-back failed; nothing was sent");
+          await appendJobLog(
+            JOB_NIGHTLY,
+            `Win-back failed (non-fatal): ${winbackError instanceof Error ? winbackError.message : String(winbackError)}`,
+          );
         }
       } catch (err: any) {
         const wasCancelled = err.name === "CancelledError";

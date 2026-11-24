@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { validateWinbackText, WINBACK_PLAYBOOK_KEY } from "./winbackRules";
 import { AGENT_MODEL } from "./anthropicConfig";
 import { isSequenceFlowKey, textRulesForPlaybook } from "./retentionFlows";
 import { retentionWeekday } from "./retentionDates";
@@ -445,6 +446,11 @@ export function validateRetentionTextBody(
   if (!text) throw new RetentionTextValidationError(["Claude did not return a non-empty retention text body"]);
   if (context.reason === "context_lookup_failed" || hasUnresolvedLiveLookupError(context.diagnostics)) {
     throw new RetentionTextValidationError(["Live retention context lookups are unresolved"]);
+  }
+  if (playbook.key === WINBACK_PLAYBOOK_KEY) {
+    const winbackErrors = validateWinbackText(text, context);
+    if (winbackErrors.length) throw new RetentionTextValidationError(winbackErrors);
+    return text;
   }
   const rules = textRulesForPlaybook(playbook.key);
   const errors = validateUrls(text, context, rules);

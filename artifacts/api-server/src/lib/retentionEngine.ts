@@ -1,4 +1,5 @@
 import { supabase } from "./supabaseClient";
+import { WINBACK_PLAYBOOK_KEY } from "./winbackRules";
 import { randomUUID } from "node:crypto";
 import { getTextEligibilitySkipReason, isTestPlayer } from "./retentionPolicy";
 import { buildRetentionContext, loadLiveClubCached, verifyRetentionTriggerEvent, type RetentionLiveClub, type VerifiedRetentionTrigger } from "./retentionContext";
@@ -1617,6 +1618,11 @@ async function rebuildRetentionCandidate(
   if (candidateError) throw new Error(candidateError.message);
   if (!candidateRow) throw Object.assign(new Error("Retention candidate not found"), { status: 404 });
   const candidate = candidateRow as RetentionCandidate;
+  if (candidate.playbook_key === WINBACK_PLAYBOOK_KEY) {
+    throw Object.assign(new Error(
+      "Win-back drafts are rebuilt automatically each night; skip this one instead of regenerating it",
+    ), { status: 409 });
+  }
   recordCandidatePlayer(candidate.id, candidate.player_id);
   if (operation === "retry_context" && !canRetryRetentionContext(candidate)) {
     throw Object.assign(new Error("Only eligible needs_context candidates can retry context"), { status: 409 });
