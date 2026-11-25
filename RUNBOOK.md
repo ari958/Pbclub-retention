@@ -173,6 +173,15 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-25**: Player replies are forwarded to the operator's phone.
+  `src/lib/replyForwarding.ts`, called from the watchdog right after
+  `alertUnmatchedInbound`, texts `ALERT_OPERATOR_TO` for each matched player
+  reply (`sms_inbound_receipts.kind = 'reply'`): "Reply from Karen S.
+  (win-back): "..." Answer it in the dashboard: <Messages URL>". One alert per
+  receipt through `observeOperatorCondition('player_reply:<id>')`, then
+  `operator_alert_attempted_at` is set. Only replies from the last 6 hours are
+  forwarded (no backlog flood). Off with `REPLY_FORWARDING=false`. Needs
+  `ALERT_OPERATOR_TO` (E.164) set on Railway, like other operator alerts.
 - **2026-11-25**: Retention scorecard. `GET /api/retention/scorecard?days=7`
   (`src/lib/retentionScorecard.ts`, read-only) reports, per flow: drafted /
   sent / delivered / failed (with Twilio error codes), auto-approved, waiting,

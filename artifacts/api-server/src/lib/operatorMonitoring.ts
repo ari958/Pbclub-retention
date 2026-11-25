@@ -172,6 +172,7 @@ export async function runOperatorWatchdog() {
       await observeKillSwitch(await resolveClubSlug(getDefaultClubSlug()), "watchdog");
       await resolveDeliveredDispatchAlerts();
       await alertUnmatchedInbound();
+      await (await import("./replyForwarding")).forwardPlayerReplies();
       // Lazy import avoids a module-init cycle with the per-event alert helper.
       await (await import("./smsOptouts")).alertPendingOptOutEvents();
     }
