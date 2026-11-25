@@ -6,7 +6,8 @@ import type { Request } from "express";
  * session (Ari, 2026-11-24). Sent as a header the cloud environment's network
  * proxy injects; the value never appears in chat or in the repo.
  *
- * It can only: list approvals, approve one candidate, skip one candidate.
+ * It can only: list approvals, approve one candidate, skip one candidate,
+ * and read the retention scorecard (weekly email).
  * Every other route still requires the dashboard's operator login.
  * Off unless RETENTION_APPROVAL_KEY is set (32+ characters) on the server.
  */
@@ -16,6 +17,7 @@ const MIN_KEY_LENGTH = 32;
 
 const ALLOWED: ReadonlyArray<readonly [string, RegExp]> = [
   ["GET", /^\/api\/retention\/approvals$/],
+  ["GET", /^\/api\/retention\/scorecard$/],
   ["POST", /^\/api\/retention\/candidates\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/(?:approve|skip)$/i],
 ];
 

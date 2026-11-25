@@ -3,6 +3,7 @@ import { DEFAULT_RETENTION_FLOW_KEY, LTP_FOLLOWUP_FLOW } from "../lib/retentionF
 import { GetRetentionReportsQueryParams, GetRetentionReportsResponse } from "@workspace/api-zod";
 import { supabase } from "../lib/supabaseClient";
 import { requireClub, type ClubScopedRequest } from "../lib/clubResolver";
+import { loadScorecard } from "../lib/retentionScorecard";
 
 const router: IRouter = Router();
 const outcomeColumns = [
@@ -68,6 +69,18 @@ router.get("/retention/reports", requireClub, async (req, res) => {
       error: missing ? "Reports are unavailable until migrations 022, 023 and 027 are applied in Supabase SQL Editor."
         : "Could not read retention reports",
     });
+  }
+});
+
+// Plain scorecard for both flows: running / working / annoying anyone. Read-only.
+router.get("/retention/scorecard", requireClub, async (req, res) => {
+  const days = Number(req.query.days ?? 7);
+  if (!Number.isInteger(days) || days < 1 || days > 90) return void res.status(400).json({ error: "days must be 1-90" });
+  try {
+    res.json(await loadScorecard((req as ClubScopedRequest).clubId, days));
+  } catch (error: any) {
+    req.log.error({ reason: error?.message }, "Retention scorecard failed");
+    res.status(500).json({ error: "Could not build the retention scorecard" });
   }
 });
 

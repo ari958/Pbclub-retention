@@ -173,6 +173,16 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-25**: Retention scorecard. `GET /api/retention/scorecard?days=7`
+  (`src/lib/retentionScorecard.ts`, read-only) reports, per flow: drafted /
+  sent / delivered / failed (with Twilio error codes), auto-approved, waiting,
+  replies within 7 days, opt-outs, and whether players came back. "Came back" =
+  any session within 14/30 days of the anchor (LTP: non-LTP sessions after the
+  step-1 send, vs LTP first-timers in the 6 months before 2026-10-08; win-back:
+  texted vs the 20% holdout). Rates use only players whose window has fully
+  passed; a verdict needs 30+ per group (two-proportion test, p<0.05). The
+  approval key may GET it. A Monday ~8:47am ET scheduled task emails a summary
+  to ari@playpbclub.com through the Gmail connector.
 - **2026-11-24**: Chat approvals. `src/lib/approvalKey.ts` adds a narrow
   machine credential: header `x-retention-approval-key` matching
   `RETENTION_APPROVAL_KEY` (Railway, 32+ chars) may only `GET
