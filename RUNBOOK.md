@@ -173,6 +173,14 @@ URL and are lost; doing step 2 after 7:30pm makes that set empty.
 
 ## Changelog
 
+- **2026-11-28**: Fixed: win-back drafts assumed the earliest legal send time
+  (8:30am on a Saturday), so a refreshed draft named an 11am session that the
+  2pm approved send would miss (Xiaocheng, caught at the check-in, not sent).
+  `winback.ts intendedSendAt` now assumes today's win-back send time
+  (`RETENTION_WINBACK_SEND_TIME`, default 14:00 ET) or the next open minute
+  after it. `approveCandidate` now refuses any text (all flows) whose named
+  session starts less than 1 hour after its scheduled send
+  (`assertNamedSessionAfterSend`).
 - **2026-11-25**: Retention scorecard. `GET /api/retention/scorecard?days=7`
   (`src/lib/retentionScorecard.ts`, read-only) reports, per flow: drafted /
   sent / delivered / failed (with Twilio error codes), auto-approved, waiting,
