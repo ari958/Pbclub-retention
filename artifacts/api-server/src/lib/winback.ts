@@ -15,6 +15,8 @@
 import { supabase } from "./supabaseClient";
 import { logger } from "./logger";
 import { sanitizeScheduledSendAt } from "./playerTiming";
+import { parseSendTimeEt } from "./approvalKey";
+import { etWallClock } from "./retentionAutoApprove";
 import { calendarDayDistance, toEtDate } from "./retentionDates";
 import { buildRetentionContext, RetentionContextError, type RetentionLiveClub } from "./retentionContext";
 import { RetentionPodplayBatchClient } from "./retentionPodplayBatch";
@@ -111,8 +113,16 @@ function firstName(name: string | null): string {
   return name?.trim().split(/\s+/)[0] ?? "";
 }
 
-function intendedSendAt(now: Date): Date {
-  return sanitizeScheduledSendAt(new Date(now.getTime() + 60_000)) ?? new Date(now.getTime() + 60_000);
+/**
+ * When the text will really go out: today's win-back send time (2pm ET by
+ * default, RETENTION_WINBACK_SEND_TIME), or the next open minute if that has
+ * passed. Sessions named in the text must start 2+ hours after this.
+ */
+export function intendedSendAt(now: Date, env: NodeJS.ProcessEnv = process.env): Date {
+  const earliest = sanitizeScheduledSendAt(new Date(now.getTime() + 60_000)) ?? new Date(now.getTime() + 60_000);
+  const time = parseSendTimeEt(env.RETENTION_WINBACK_SEND_TIME ?? "14:00") ?? { hour: 14, minute: 0 };
+  const planned = etWallClock(toEtDate(earliest), time.hour, time.minute);
+  return planned.getTime() > earliest.getTime() ? planned : earliest;
 }
 
 /** The text and context for one player today. */
