@@ -11,7 +11,7 @@ import {
   WINBACK_PLAYBOOK_KEY,
   type WinbackVisit,
 } from "../winbackRules";
-import { composeWinbackDraft, runWinback, type WinbackDeps, type WinbackDraftRow, type WinbackPlayer } from "../winback";
+import { composeWinbackDraft, intendedSendAt, runWinback, type WinbackDeps, type WinbackDraftRow, type WinbackPlayer } from "../winback";
 import { addCalendarDays } from "../retentionDates";
 import { validateRetentionTextBody } from "../retentionText";
 
@@ -274,4 +274,22 @@ test("a draft nobody approved for a week is retired", async () => {
   await runWinback("club", deps);
   assert.equal(regenerated[0].status, "skipped");
   assert.equal(regenerated[0].newContext.reason, "expired");
+});
+
+test("drafts assume the 2pm send, so a morning session that day is never named", () => {
+  const saturday3am = new Date("2026-11-28T08:05:00Z");
+  assert.equal(intendedSendAt(saturday3am, {} as NodeJS.ProcessEnv).toISOString(), "2026-11-28T19:00:00.000Z");
+  assert.equal(intendedSendAt(new Date("2026-11-28T20:00:00Z"), {} as NodeJS.ProcessEnv).toISOString(), "2026-11-28T20:01:00.000Z",
+    "after 2pm: next minute");
+  const draft = composeWinbackDraft({
+    player: { id: "x", name: "Xiaocheng", phone: "+1", opted_out: false, external_id: "e" },
+    lapse: evaluateWinbackLapse(weekly("2026-11-13"), "2026-11-28")!,
+    facts: { already_booked: false, diagnostics: {}, session: {
+      event_id: "e1", name: "Advanced Beginner 60&60 Clinic", start_time: "2026-11-28T16:00:00Z", // 11am ET
+      signup_url: "https://pbclub.podplay.app/community/events/e1", spots_remaining: 2,
+    } },
+    now: saturday3am, bookingUrl: "https://pbclub.podplay.app",
+  });
+  assert.equal((draft.context as any).winback.template, "generic");
+  assert.doesNotMatch(draft.body, /11am/);
 });

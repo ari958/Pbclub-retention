@@ -8,6 +8,20 @@ import { assertRetentionDraftFresh } from "./retentionFreshness";
 import { validateRetentionTextBody } from "./retentionText";
 import type { RetentionCandidate, RetentionContext } from "./retentionTypes";
 
+/** A text must never point at a session that starts within an hour of (or before) it goes out. */
+export const MIN_SESSION_LEAD_AFTER_SEND_MS = 60 * 60 * 1000;
+export function assertNamedSessionAfterSend(
+  context: { next_program?: { start_time?: string | null; name?: string | null } | null },
+  schedule: Date,
+): void {
+  const start = context.next_program?.start_time ? Date.parse(context.next_program.start_time) : NaN;
+  if (Number.isFinite(start) && start < schedule.getTime() + MIN_SESSION_LEAD_AFTER_SEND_MS) {
+    throw Object.assign(new Error(
+      `The session this text names (${context.next_program?.name ?? "next program"}) starts too soon after the send time; it will be rebuilt tonight, or skip it`,
+    ), { status: 409 });
+  }
+}
+
 export async function requireLtpSequenceSchemaReady() {
   const { data, error } = await supabase.rpc("retention_sequence_ready");
   if (error || data !== true) {
@@ -62,6 +76,7 @@ export async function approveCandidate(
   }
   const schedule = requestedSchedule ?? sanitizeScheduledSendAt(new Date(Date.now() + 60_000));
   if (!schedule) throw Object.assign(new Error("Could not find an open TCPA send window"), { status: 409 });
+  assertNamedSessionAfterSend(context, schedule);
   if (!retentionSendDateMatchesSchedule(context.send_date_et, schedule)) {
     throw Object.assign(
       new Error("The intended ET send date changed. Regenerate and review this candidate before approving."),
